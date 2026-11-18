@@ -149,6 +149,9 @@ const ZoneData = (() => {
         zonas.forEach(z => { snaps[z] = { ...mk0(), zona: z, regional: zoneRegional(z), month }; });
         const zoneSet = new Set(zonas), scopedNorm = new Set(zonas.map(norm));
         const byShop = {}; allStores.forEach(st => { if (st.shopId) byShop[norm(st.shopId)] = st; });
+        // Tiendas inhabilitadas: su venta pasa a la tienda que recibió su target, o se ignora si el target se descontó
+        const off = new Set();
+        (State.storesDeleted || []).forEach(st => { if (!st.shopId) return; const d = st.mergedInto && storeById(st.mergedInto); if (d) byShop[norm(st.shopId)] = d; else off.add(norm(st.shopId)); });
         const cache = {};
         parsed.rows.forEach(r => {
             const get = role => map[role] === undefined ? '' : String(r[map[role]] ?? '').trim();
@@ -157,6 +160,7 @@ const ZoneData = (() => {
             if (d) { if (month && d.slice(0, 7) !== month) { tot.rowsOtherMonth++; return; } if (d > tot.maxDate) tot.maxDate = d; tot.dayRows[d] = (tot.dayRows[d] || 0) + 1; }
             if ((map.channel !== undefined && /^IR\b/i.test(get('channel'))) || (map.chain !== undefined && get('chain') && !OFFICIAL_ALIAS.test(norm(get('chain'))))) { tot.rowsNoOficial++; return; }
             const sid = get('storeId'), name = get('store'); if (!name && !sid) return;
+            if (sid && off.has(norm(sid))) { tot.rowsDisabled = (tot.rowsDisabled || 0) + 1; return; }
             const k = norm(sid) + '|' + norm(name);
             if (!(k in cache)) cache[k] = (sid && byShop[norm(sid)]) || matchStore(name, stores, manualStores) || matchStore(name, allStores, manualStores);
             const st = cache[k] && normLogoKey(cache[k].logoKey) !== 'otro' ? cache[k] : null;
@@ -213,6 +217,24 @@ const ZoneData = (() => {
         return '';
     }
 
+    // Une en la tienda que recibió el target la venta ya guardada de una tienda inhabilitada (y quita la de las descontadas)
+    function foldMerged(snap) {
+        if (!snap || !snap.stores) return snap;
+        const addMap = (a, b) => { Object.entries(b || {}).forEach(([k, v]) => { a[k] = typeof v === 'object' && v ? addMap(a[k] || {}, v) : (a[k] || 0) + (v || 0); }); return a; };
+        (State.storesDeleted || []).forEach(st => {
+            const S = snap.stores[st.id]; if (!S) return;
+            const d = st.mergedInto && storeById(st.mergedInto);
+            if (d) {
+                const D = snap.stores[d.id] = snap.stores[d.id] || { storeId: d.id, tienda: d.tienda, total: 0, ventas: {}, otros: 0, asesores: {}, refsOtras: {}, accesorios: {}, cedulas: {} };
+                D.total += S.total || 0; D.otros = (D.otros || 0) + (S.otros || 0);
+                ['ventas', 'refsOtras', 'accesorios', 'sem', 'dias', 'diasRef'].forEach(k => { if (S[k]) D[k] = addMap(D[k] || {}, S[k]); });
+                Object.values(S.asesores || {}).forEach(x => { const A = D.asesores[x.nombre] = D.asesores[x.nombre] || { nombre: x.nombre, cedula: x.cedula, total: 0, ventas: {} }; A.total += x.total || 0; A.ventas = addMap(A.ventas || {}, x.ventas); if (x.sem) A.sem = addMap(A.sem || {}, x.sem); if (x.semRef) A.semRef = addMap(A.semRef || {}, x.semRef); });
+            }
+            delete snap.stores[st.id];
+        });
+        return snap;
+    }
+
     // ---- Persistencia: el último snapshot de cada zona/mes --------------
     const snapId = (zona, month) => `${slug(zona)}_${month}`;
     // Guarda un snapshot por zona (solo las que traen tiendas) y los deja en memoria
@@ -234,6 +256,7 @@ const ZoneData = (() => {
         // Sin data guardada de la zona: se usa el corte precargado del mes (opscore-snap.js), si es más nuevo que nada
         const seedSnap = z => typeof SNAP_SEED !== 'undefined' && SNAP_SEED[z] && SNAP_SEED[z].month === month ? JSON.parse(JSON.stringify(SNAP_SEED[z])) : null;
         zonas.forEach((z, i) => { if (!docs[i]) docs[i] = seedSnap(z); if (docs[i] && seedSnap(z) && ((docs[i].corte || '') < SNAP_SEED[z].corte || ((docs[i].corte || '') <= SNAP_SEED[z].corte && !Object.values(docs[i].stores || {}).some(s => s.dias)))) docs[i] = seedSnap(z); });
+        docs.forEach(d => { if (d) foldMerged(d); });
         zonas.forEach((z, i) => { if (docs[i]) State.zoneSnaps[z] = docs[i]; else if (State.zoneSnaps[z] && State.zoneSnaps[z].month !== month) delete State.zoneSnaps[z]; });
         return Object.fromEntries(zonas.map((z, i) => [z, docs[i] || State.zoneSnaps[z] || null]));
     }
@@ -315,7 +338,7 @@ const ZoneData = (() => {
         return { lectura: out, recomendaciones: rec };
     }
 
-    return { readFile, guessMapping, build, merge, analyze, save, saveAll, load, loadMany, current, forStore, norm, PRIORITY, matchModelName, parseAdvisor };
+    return { readFile, guessMapping, build, merge, analyze, save, saveAll, load, loadMany, current, forStore, norm, PRIORITY, matchModelName, parseAdvisor, matchStore, titleCase, foldMerged };
 })();
 
 // ---------------------------------------------------------------------------
@@ -511,6 +534,8 @@ registerModule('zona', (() => {
         <nav class="ztabs" id="z-tabs">${tabs.map(([k, l]) => `<button class="ztab ${ztab === k ? 'on' : ''}" data-ztab="${k}">${l}</button>`).join('')}</nav>
 
         <div class="zpanel" data-zp="resumen" ${ztab === 'resumen' ? '' : 'hidden'}>
+            ${(() => { if (typeof DayStatus === 'undefined') return ''; const L = DayStatus.zoneDay(an.rows.map(r => r.st)); return `<section class="card ds-today"><div class="row between wrap"><h3 class="h3">👥 Hoy fuera del PDV y novedades <small class="mute">${L.length ? L.length + ' asesor(es)' : 'todos en turno'}</small></h3><button class="btn btn-ghost sm" data-nvnew>⚑ Registrar novedad</button></div>
+                ${L.length ? `<div class="ds-list">${L.slice(0, 8).map(x => `<div class="ds-row"><span><b>${esc(x.nombre)}</b> <small class="mute">${esc(x.st.tienda)}</small></span>${DayStatus.chip(x.s)}<button class="nv-dot" title="Novedad" data-nvd="${esc(x.st.id)}|${esc(x.nombre)}">⚑</button></div>`).join('')}</div>${L.length > 8 ? `<p class="hint">y ${L.length - 8} más en Cargar datos.</p>` : ''}` : '<p class="hint">Según la malla y las novedades, hoy todos los asesores están en su PDV. Evita visitas a quien esté compensando.</p>'}</section>`; })()}
             <div class="grid2">
                 <section class="card"><div class="row between"><h3 class="h3">🚨 Asesores más críticos</h3><button class="btn btn-link sm" data-goto="asesores">Ver todos →</button></div>
                     <div class="mini-list">${critA.map(d => { const ev = d.evaluacion; return `<button class="mini" data-ficha-or-sel="${esc(d.id)}">${advisorAvatar(d.storeId, d.nombre, 38)}<span class="mini-t"><b>${esc(d.nombre)}</b><small>${esc(d.pdv.tienda)}</small></span>
@@ -637,7 +662,7 @@ registerModule('zona', (() => {
             const foco = d.inventario.oportunidad ? d.inventario.oportunidad.name : (d.inventario.estrella ? '⭐ ' + d.inventario.estrella.name : dash);
             return `<div class="rl-row sem-${sem} ${radarSel.has(d.id) ? 'picked' : ''}">
                 <div class="rl-who"><span class="rl-n">${i + 1}</span>${typeof advisorAvatar === 'function' ? advisorAvatar(d.storeId, d.nombre, 36) : `<i class="rd-dot" style="background:${S.color}"></i>`}
-                    <div><b>${esc(d.nombre)}</b><small>${esc(d.pdv.tienda)} · ${esc(d.pdv.cadena)}${viewZonas().length > 1 ? ' · ' + esc(d.pdv.zona) : ''}${d.apoyo ? ' · apoyo' : ''}</small></div></div>
+                    <div><b>${esc(d.nombre)}</b> ${typeof DayStatus !== 'undefined' ? DayStatus.chip(((s) => s && (s.off || s.src === 'novedad') ? s : null)(DayStatus.ofAdvisor(storeById(d.storeId), d.nombre))) + `<button class="nv-dot" title="Registrar novedad" data-nvd="${esc(d.storeId)}|${esc(d.nombre)}">⚑</button>` : ''}<small>${esc(d.pdv.tienda)} · ${esc(d.pdv.cadena)}${viewZonas().length > 1 ? ' · ' + esc(d.pdv.zona) : ''}${d.apoyo ? ' · apoyo' : ''}</small></div></div>
                 <div class="rl-nums">
                     <div><small>Meta</small><b>${pa.meta || dash}</b></div>
                     <div><small>Venta</small><b>${pa.venta}</b></div>
@@ -712,7 +737,7 @@ registerModule('zona', (() => {
             <input class="input" id="ap-q" placeholder="Buscar por nombre o tienda…" style="margin:8px 0">
             <div class="ap-list" id="ap-list"></div>
             <div class="row between wrap" style="margin-top:12px;gap:8px"><button class="btn btn-link" id="ap-none">Ver todos (quitar selección)</button><button class="btn btn-primary" id="ap-ok">Ver selección</button></div>`);
-        const paint = q => { const n = String(q || '').toLowerCase(); $('#ap-list', m).innerHTML = list.filter(a => !n || (a.nombre + ' ' + a.tienda).toLowerCase().includes(n)).map(a => `<label class="ap-i ${pick.has(a.id) ? 'on' : ''}"><input type="checkbox" value="${esc(a.id)}" ${pick.has(a.id) ? 'checked' : ''}>${advisorAvatar(a.storeId, a.nombre, 34)}<span><b>${esc(a.nombre)}</b><small>${esc(a.tienda)}</small></span></label>`).join(''); };
+        const paint = q => { const n = String(q || '').toLowerCase(); $('#ap-list', m).innerHTML = list.filter(a => !n || (a.nombre + ' ' + a.tienda).toLowerCase().includes(n)).map(a => `<label class="ap-i ${pick.has(a.id) ? 'on' : ''}"><input type="checkbox" value="${esc(a.id)}" ${pick.has(a.id) ? 'checked' : ''}>${advisorAvatar(a.storeId, a.nombre, 34)}<span><b>${esc(a.nombre)}</b><small>${esc(a.tienda)}</small></span>${typeof DayStatus !== 'undefined' ? DayStatus.chip(((s) => s && (s.off || s.src === 'novedad') ? s : null)(DayStatus.ofAdvisor(storeById(a.storeId), a.nombre))) : ''}</label>`).join(''); };
         $('#ap-q', m).oninput = e => paint(e.target.value);
         $('#ap-list', m).onchange = e => { e.target.checked ? pick.add(e.target.value) : pick.delete(e.target.value); e.target.closest('.ap-i').classList.toggle('on', e.target.checked); };
         $('#ap-none', m).onclick = () => { advSel = new Set(); closeModal(m); paintAdvBtn(); paintAdvPanel(); };
@@ -940,6 +965,7 @@ function buildZoneCanvas(stage, d) {
     ${visitar.length ? `<div class="rp-sec light">PLAN DE VISITAS PROPUESTO · ${visitar.length} PDV</div>
     <div class="z-visits">${visitar.map(r => `<div class="zv"><i class="ztag" style="background:${STAT[r.status][1]}">${STAT[r.status][0]}</i><b>${esc(r.st.tienda)}</b><span>${r.venta}/${r.meta || dash} · proy. ${pct(r.cumplProj)} · foco ${esc(r.foco.name)} (${r.foco.venta}/${r.foco.meta})${r.sinStock.length ? ' · sin stock: ' + r.sinStock.map(x => esc(x.name)).join(', ') : ''}</span></div>`).join('')}</div>` : ''}
 
+    ${typeof DayStatus !== 'undefined' ? DayStatus.reportBlock(an.rows.map(r => r.st)) : ''}
     <footer class="rp-foot"><span>Proyección = venta ÷ días transcurridos × días del mes · ROI = unidades ÷ promotores (HC) · Estados por proyección: en meta ≥100%, bien ≥85%, en riesgo ≥70%, crítico &lt;70% · Fuente: data plana de la zona.</span><b>Infinix · Central de Operaciones</b></footer>
     <div class="rp-bar"></div>`;
     stage.appendChild(el);

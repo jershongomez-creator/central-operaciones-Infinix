@@ -262,6 +262,8 @@ registerModule('m2', (() => {
                 <button class="icon-btn" data-del="${i}" title="Quitar tienda">🗑️</button>
             </div>
             <div class="auto-strip" data-strip="${i}">${stripHTML(r)}</div>
+            ${(() => { const st = storeById(r.storeId); if (!st || typeof DayStatus === 'undefined') return ''; const L = DayStatus.zoneDay([st], fecha), act = activeAdvisors(st).length, off = L.filter(x => x.s.off).length;
+                return L.length ? `<div class="ds-warn">${act && off >= act ? '⚠️ <b>Ese día nadie está en el PDV</b> · ' : ''}${L.map(x => `${esc(x.nombre.split(' ').slice(0, 2).join(' '))} ${DayStatus.chip(x.s)}`).join(' · ')}</div>` : ''; })()}
             ${visitHTML(r)}
             ${advisorsHTML(i)}
             <div class="grid-num">
@@ -412,6 +414,7 @@ function buildPlanCanvas(stage, doc, fase) {
     </header>
     <div class="pl-cols"><div>📍 PUNTO DE VENTA</div><div>🎯 FOCO Y RADIOGRAFÍA NUMÉRICA</div><div>⚙️ ${cierre ? 'ACCIONES EJECUTADAS' : 'ACCIÓN PRINCIPAL'}</div><div>📊 ${cierre ? 'RESULTADO AL CIERRE' : 'IMPACTO ESPERADO'}</div></div>
     ${R.map(row).join('')}
+    ${typeof DayStatus !== 'undefined' ? DayStatus.reportBlock(R.map(r => storeById(r.storeId)).filter(Boolean), doc.fecha, 'ASESORES FUERA DEL PDV Y NOVEDADES') : ''}
     <div class="pl-foot">${chips.map(c => `<div><small>${c[0]}</small><b>${c[1]}</b></div>`).join('')}</div>
     <div class="rp-bar"></div>`;
     stage.appendChild(el);

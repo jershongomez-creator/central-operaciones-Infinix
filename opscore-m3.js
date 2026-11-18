@@ -417,6 +417,7 @@ function buildVisitCanvas(stage, doc, fotos) {
         <div class="vbox"><div class="vbox-t">Compromisos · cierre de semana</div><p class="vtxt">${lines(f.compromisos)}</p></div>
     </div>
 
+    ${typeof DayStatus !== 'undefined' && storeById(doc.storeId) ? DayStatus.reportBlock([storeById(doc.storeId)], doc.fecha || todayStr(), 'ESTADO DE LOS ASESORES') : ''}
     ${ph.length ? `<div class="rp-sec">EVIDENCIAS FOTOGRÁFICAS</div><div class="v-fotos n${ph.length}">${ph.map(p => `<img src="${p}" alt="Evidencia">`).join('')}</div>` : ''}
 
     <footer class="rp-foot"><span>ROI = ventas del mes ÷ promotores (HC). Proyección con los días transcurridos del mes.</span><b>Infinix · Central de Operaciones</b></footer>

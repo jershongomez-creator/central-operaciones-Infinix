@@ -1,4 +1,4 @@
-# Infinix · Central de Operaciones v1.8
+# Infinix · Central de Operaciones v1.9
 
 Aplicación web (PWA) de ejecución retail de Infinix para tiendas, supervisores, formadores, coordinadores y gerencia. Funciona en computador y en celular, en el navegador o instalada como app.
 
@@ -181,6 +181,17 @@ Resultado: quién presentó, quién falta, quién repitió y con qué notas, pro
 - **Todo automático, todo editable a mano:** lo que llega con la data (asesores, metas por asesor, HC, targets) se puede corregir en Gestión › Tiendas (⚙️) o en Gestión › Asesores. Lo corregido a mano queda marcado **✋ manual** y ninguna carga automática lo pisa. En ⚙️ Ajustes de la tienda, «↺ Volver a datos automáticos» quita la marca y devuelve la tienda a la data base.
 - **Gestión › Asesores:** lista por zona con venta del mes, meta (vacío = reparto del target de la tienda), retirar / reactivar, mover a otra tienda y agregar asesor. Se guarda al cambiar cada dato.
 - **Lectura de la data plana verificada** con la DCR real del 1 al 18 de noviembre: 9.348 celulares y 305 accesorios (la tablet XPAD 30E cuenta como accesorio, como en el plan comisional) en 234 tiendas, iguales unidad por unidad a un conteo independiente; IR y cadenas no oficiales quedan fuera.
+
+## 5g. Novedades v1.9
+
+- **Cargar datos** (supervisor, formador, coordinador, gerente, admin):
+  - **Target del mes:** el mismo Excel de target (ZONA, CADENA, TIENDA, HC, ROI, TARGET y una columna por referencia). Muestra el total por zona del archivo frente al de la app y aplica target por referencia, HC y umbrales ROI. Mes nuevo = reemplaza (la meta por asesor vuelve a reparto hasta ajustarla); mismo mes = respeta lo ajustado a mano (✋).
+  - **Malla de horarios:** el Excel de la malla con todas sus hojas. Toma los días de ±1 mes: turnos, compensatorios, descansos, incapacidades, vacaciones, vacantes y apoyos en otra tienda.
+  - **Data plana:** acceso directo a la carga del Análisis de zona.
+  - **Hoy y mañana:** asesores fuera del PDV y novedades, con ⚑ para registrar una.
+- **Novedades (⚑):** en cualquier lista de asesores (análisis de zona, selector, Gestión › Asesores, Cargar datos) se registra incapacidad, compensatorio, vacaciones, permiso, calamidad, capacitación, apoyo, retiro, llegada tarde u otra, con fechas y detalle. Las ve toda la zona y salen en el reporte de zona, el plan de trabajo y la visita. La novedad manda sobre la malla.
+- **Plan de trabajo:** cada tienda avisa si ese día su asesor está compensando o con novedad («nadie en el PDV») para evitar visitas innecesarias.
+- **Inhabilitar tienda:** muestra su target, HC y el total de la zona, y deja elegir: pasar target, HC, asesores y metas a otra tienda (el total de la zona no cambia y la venta que llegue con su código se suma a la que la recibe) o descontar su target. Se registra quién la inhabilitó; restaurar devuelve todo como estaba.
 
 ## 6. Calculadora (tienda)
 

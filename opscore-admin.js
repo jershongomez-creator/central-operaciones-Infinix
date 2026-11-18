@@ -58,13 +58,13 @@ registerModule('admin', (() => {
                 <label class="chip"><input type="checkbox" id="st-fpend" ${fPend ? 'checked' : ''}><span>📅 Sin target/HC de ${esc(mesLargo(todayStr().slice(0, 7)).split(' ')[0])} (${scopedStoresAll().filter(s => chainOn(s) && targetPending(s)).length})</span></label>
             </div>
             <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>Tienda</th><th>Zona</th><th>Ciudad</th><th>Estado</th><th>Target</th><th>HC</th><th>Acciones</th></tr></thead><tbody>
-            ${list.map(s => `<tr><td class="l">${storeLogo(s, 'xs')} <b>${esc(s.tienda)}</b><br><small class="mute">${esc(s.cadena || '')}${s.shopId ? ' · ' + esc(s.shopId) : ''}</small></td><td>${esc(s.zona || '')}</td><td>${esc(s.ciudad || '')}</td>
-                <td>${s.isConfigured ? '<i class="pill ok">Configurada</i>' : '<i class="pill warn">Pendiente</i>'}${targetPending(s) ? ` <i class="pill warn" title="Aún no se carga el target y HC de este mes">📅 target ${storeTargetMonth(s) ? 'de ' + esc(mesLargo(storeTargetMonth(s)).split(' ')[0]) : 'sin cargar'}</i>` : ''}${(s.manualFields || []).length ? ` <i class="pill man" title="Ajustado a mano${s.manualBy ? ' por ' + esc(s.manualBy) : ''}">✋ manual</i>` : ''}${chainOn(s) ? '' : ' <i class="pill off" title="Su cadena no está en las cadenas de trabajo">fuera de trabajo</i>'}</td><td>${storeMetaMes(s) || '—'}</td><td>${int(s.hc && s.hc.INFINIX) || '—'}</td>
+            ${list.map(s => `<tr><td class="l">${storeLogo(s, 'xs')} <b>${esc(s.tienda)}</b><br><small class="mute">${esc(s.cadena || '')}${s.shopId ? ' · ' + esc(s.shopId) : ''}${(s.absorbed || []).length ? ' · incluye ' + s.absorbed.map(x => esc(x.tienda)).join(', ') : ''}</small></td><td>${esc(s.zona || '')}</td><td>${esc(s.ciudad || '')}</td>
+                <td>${s.isConfigured ? '<i class="pill ok">Configurada</i>' : '<i class="pill warn">Pendiente</i>'}${targetPending(s) ? ` <i class="pill warn" title="Aún no se carga el target y HC de este mes">📅 target ${storeTargetMonth(s) ? 'de ' + esc(mesLargo(storeTargetMonth(s)).split(' ')[0]) : 'sin cargar'}</i>` : ''}${(s.manualFields || []).length ? ` <i class="pill man" title="Ajustado a mano${s.manualBy ? ' por ' + esc(s.manualBy) : ''}">✋ manual</i>` : ''}${chainOn(s) ? '' : ' <i class="pill off" title="Su cadena no está en las cadenas de trabajo">fuera de trabajo</i>'}</td><td>${storeMetaMes(s) || '—'}</td><td>${(+(s.hc && s.hc.INFINIX) || 0) ? fmt1(s.hc.INFINIX) : '—'}</td>
                 <td class="acts"><button class="icon-btn" title="Editar nombre, cadena, ciudad y zona" data-a="store-edit" data-id="${esc(s.id)}">✏️</button><button class="icon-btn" title="Asesores, metas, HC, targets, inventario, foco y contraseña" data-a="store-cfg" data-id="${esc(s.id)}">⚙️</button>
-                <button class="icon-btn" title="Contraseña de la tienda" data-a="store-pass" data-id="${esc(s.id)}">🔑</button><button class="icon-btn" title="Eliminar" data-a="store-del" data-id="${esc(s.id)}">🗑️</button></td></tr>`).join('') || '<tr><td colspan="7">Sin tiendas con ese filtro.</td></tr>'}
+                <button class="icon-btn" title="Contraseña de la tienda" data-a="store-pass" data-id="${esc(s.id)}">🔑</button><button class="icon-btn" title="Inhabilitar" data-a="store-del" data-id="${esc(s.id)}">🚫</button></td></tr>`).join('') || '<tr><td colspan="7">Sin tiendas con ese filtro.</td></tr>'}
             </tbody></table></div>
-            ${(() => { const D = (State.storesDeleted || []).filter(s => inScope(s.zona)); return D.length ? `<details class="del-list"><summary>🗑️ Tiendas eliminadas (${D.length})</summary>
-                <table class="tbl compact"><tbody>${D.map(s => `<tr><td class="l">${storeLogo(s, 'xs')} <b>${esc(s.tienda)}</b> <small class="mute">· ${esc(s.zona || '')}${s.deletedBy ? ' · eliminada por ' + esc(s.deletedBy) : ''}${s.deletedAt ? ' el ' + dstr(new Date(s.deletedAt)) : ''}</small></td><td class="acts"><button class="btn btn-ghost sm" data-a="store-restore" data-id="${esc(s.id)}">↺ Restaurar</button></td></tr>`).join('')}</tbody></table></details>` : ''; })()}
+            ${(() => { const D = (State.storesDeleted || []).filter(s => inScope(s.zona)); return D.length ? `<details class="del-list"><summary>🚫 Tiendas inhabilitadas (${D.length})</summary>
+                <table class="tbl compact"><tbody>${D.map(s => `<tr><td class="l">${storeLogo(s, 'xs')} <b>${esc(s.tienda)}</b> <small class="mute">· ${esc(s.zona || '')}${s.mergedInto && storeById(s.mergedInto) ? ' · target pasado a ' + esc(storeById(s.mergedInto).tienda) : ' · target descontado'}${s.deletedBy ? ' · inhabilitada por ' + esc(s.deletedBy) : ''}${s.deletedAt ? ' el ' + dstr(new Date(s.deletedAt)) : ''}</small></td><td class="acts"><button class="btn btn-ghost sm" data-a="store-restore" data-id="${esc(s.id)}">↺ Restaurar</button></td></tr>`).join('')}</tbody></table></details>` : ''; })()}
             </section>`;
     }
 
@@ -84,7 +84,7 @@ registerModule('admin', (() => {
             n += L.length;
             return `<tr class="grp"><td colspan="5" class="l">${storeLogo(st, 'xs')} <b>${esc(st.tienda)}</b> <small class="mute">· ${esc(st.ciudad || '')} · target ${storeMetaMes(st) || '—'} · HC ${int(st.hc && st.hc.INFINIX) || '—'}</small>${isManual(st, 'metasAsesor') || isManual(st, 'asesores') ? ' <i class="pill man">✋ manual</i>' : ''}</td></tr>`
                 + (L.map(a => { const k = metaKey(st, a); return `<tr class="${a.activo ? '' : 'off'}" data-sid="${esc(st.id)}">
-                    <td class="l"><b>${esc(a.nombre)}</b>${a.home ? `<br><small class="mute">apoyo · su meta está en ${esc(a.homeTienda)}</small>` : ''}</td>
+                    <td class="l"><b>${esc(a.nombre)}</b> ${typeof DayStatus !== 'undefined' ? DayStatus.chip(DayStatus.ofAdvisor(st, a.nombre)) + `<button class="nv-dot" title="Registrar novedad" data-nvd="${esc(st.id)}|${esc(a.nombre)}">⚑</button>` : ''}${a.home ? `<br><small class="mute">apoyo · su meta está en ${esc(a.homeTienda)}</small>` : ''}</td>
                     <td>${a.total || 0}</td>
                     <td><input class="input num" type="number" min="0" inputmode="numeric" data-am="${esc(a.nombre)}" data-sid="${esc(st.id)}" value="${k ? int(st.metasAsesor[k]) : ''}" placeholder="reparto" ${a.activo ? '' : 'disabled'}></td>
                     <td>${!a.asignado && a.activo ? `<i class="pill plan" title="Aparece en la data de esta tienda pero no está asignado al PDV: sus unidades suman a la tienda">No asignado</i> <button class="btn btn-ghost sm" data-a="adv-assign" data-sid="${esc(st.id)}" data-n="${esc(a.nombre)}">Asignar</button>` : a.activo ? '<i class="pill ok">Activo</i>' : '<i class="pill off">Retirado</i>'} ${a.asignado || !a.activo ? `<button class="btn btn-ghost sm" data-a="adv-toggle" data-sid="${esc(st.id)}" data-n="${esc(a.nombre)}">${a.activo ? 'Retirar' : 'Reactivar'}</button>` : ''}</td>
@@ -183,6 +183,55 @@ registerModule('admin', (() => {
             await Data.set(COL.stores, id, data, true);
             if (st) Object.assign(st, data); else upsertState('stores', { ...data, id });
             closeModal(m); toast(st ? 'Tienda actualizada' : 'Tienda creada. Ya aparece en el acceso de PDV.', 'ok'); paint();
+        };
+    }
+
+    // Inhabilitar una tienda: se muestra qué pasa con su target y HC. Se puede pasar todo a otra tienda (p. ej. el asesor
+    // que estaba 0,5 en cada una y la data le carga todo a una sola): el total de la zona no cambia y la venta de la
+    // data que llegue con el código de la tienda inhabilitada se suma a la que la recibe. O se descuenta del total.
+    const zoneTarget = z => sum(State.stores.filter(x => x.zona === z && chainOn(x)).map(storeMetaMes));
+    function disableForm(st) {
+        if (!st) return;
+        const meta = storeMetaMes(st), hc = +((st.hc || {}).INFINIX) || 0, advs = assigned(st), zt = zoneTarget(st.zona);
+        const others = scopedStoresAll().filter(x => x.id !== st.id && x.zona === st.zona);
+        const shares = x => assigned(x).some(n => advs.some(a => sameAdvisor({ nombre: a }, { nombre: n }) || nameSubset(a, n)));
+        const sugg = others.find(shares) || others.find(x => normLogoKey(x.logoKey) === normLogoKey(st.logoKey)) || null;
+        const m = openModal(`<h3 class="modal-title">Inhabilitar ${esc(st.tienda)}</h3>
+            <div class="dis-facts"><div><b>${meta || 0}</b><span>uds de target</span></div><div><b>${hc || '—'}</b><span>HC Infinix</span></div><div><b>${zt}</b><span>target ${esc(st.zona)}</span></div></div>
+            <p class="mute">Asesores: ${advs.length ? advs.map(esc).join(', ') : 'ninguno asignado'}. Sus cierres y reportes anteriores se conservan.</p>
+            <label class="opt"><input type="radio" name="dis" value="mv" ${meta > 0 ? 'checked' : ''}><span><div><b>Pasar su target y HC a otra tienda</b> · el target de la zona sigue en <b>${zt}</b></div>
+                <select class="input" id="dis-to">${others.map(x => `<option value="${esc(x.id)}" ${sugg && sugg.id === x.id ? 'selected' : ''}>${esc(x.tienda)} · target ${storeMetaMes(x)}${shares(x) ? ' · comparte asesor' : ''}</option>`).join('')}</select>
+                <small class="mute">También pasan sus asesores y sus metas. Lo que llegue en la data con el código de esta tienda se suma a la tienda elegida.</small></span></label>
+            <label class="opt"><input type="radio" name="dis" value="drop" ${meta > 0 ? '' : 'checked'}><span><div><b>Descontar su target del total</b> · el target de ${esc(st.zona)} pasa de ${zt} a <b>${zt - meta}</b></div>
+                <small class="mute">Las ventas que lleguen con el código de esta tienda no se cuentan.</small></span></label>
+            <p class="hint">Queda registrado quién la inhabilitó. Se puede restaurar desde «Tiendas inhabilitadas» y todo vuelve como estaba.</p>
+            <div class="row end" style="margin-top:14px"><button class="btn btn-ghost" data-x>Cancelar</button><button class="btn btn-danger" data-ok>Inhabilitar</button></div>`);
+        $('[data-x]', m).onclick = () => closeModal(m);
+        $('[data-ok]', m).onclick = async () => {
+            const mode = $('input[name="dis"]:checked', m).value, dest = mode === 'mv' ? storeById($('#dis-to', m).value) : null;
+            if (mode === 'mv' && !dest) return toast('Elige la tienda que recibe el target.', 'warn');
+            const del = { deleted: true, deletedAt: Date.now(), deletedBy: me().nombre, deletedRol: me().rol, mergedInto: null, mergedSnapshot: null, updatedAt: Date.now() };
+            if (dest) {
+                const added = advs.filter(a => !assigned(dest).some(n => sameAdvisor({ nombre: a }, { nombre: n }) || nameSubset(a, n)));
+                const M = { metas: { ...(st.metas || {}) }, metaMes: meta, hc, kpi: st.kpi || null, capa: int(st.capa), metasAsesor: { ...(st.metasAsesor || {}) }, addedAsesores: added };
+                const add = (o, x) => { const r = { ...(o || {}) }; Object.entries(x || {}).forEach(([k, v]) => { r[k] = int(r[k]) + int(v); }); return r; };
+                const dm = { ...(dest.metasAsesor || {}) }; Object.entries(M.metasAsesor).forEach(([n, v]) => { const k = Object.keys(dm).find(x => sameAdvisor({ nombre: x }, { nombre: n }) || nameSubset(x, n)); dm[k || n] = int(dm[k || n]) + int(v); });
+                const upd = {
+                    metas: add(dest.metas, M.metas), metaMes: storeMetaMes(dest) + meta, hc: { ...(dest.hc || {}), INFINIX: Math.round(((+(dest.hc || {}).INFINIX || 0) + hc) * 10) / 10 },
+                    metasAsesor: Object.keys(dm).length ? dm : null, asesores: [...new Set([...assigned(dest), ...added])],
+                    absorbed: (dest.absorbed || []).filter(x => x.id !== st.id).concat({ id: st.id, tienda: st.tienda, metaMes: meta, hc, at: Date.now(), by: me().nombre })
+                };
+                if (dest.kpi && st.kpi) upd.kpi = { base: int(dest.kpi.base) + int(st.kpi.base), k400: int(dest.kpi.k400) + int(st.kpi.k400), k700: int(dest.kpi.k700) + int(st.kpi.k700) };
+                if (st.capa) upd.capa = int(dest.capa) + int(st.capa);
+                if (!await saveStore(dest, upd, ['metas', 'metaMes', 'hc', 'metasAsesor', 'asesores', 'kpi'])) return;
+                Object.assign(del, { mergedInto: dest.id, mergedSnapshot: M });
+            }
+            await Data.set(COL.stores, st.id, del, true); Object.assign(st, del);
+            State.stores = State.stores.filter(s => s.id !== st.id); State.storesDeleted = (State.storesDeleted || []).filter(s => s.id !== st.id).concat(st);
+            Object.values(State.zoneSnaps || {}).forEach(sn => ZoneData.foldMerged(sn));
+            closeModal(m);
+            toast(dest ? `${st.tienda} inhabilitada: ${meta} uds de target y HC ${hc} pasaron a ${dest.tienda}. Target ${st.zona}: ${zoneTarget(st.zona)}` : `${st.tienda} inhabilitada. Target ${st.zona}: ${zoneTarget(st.zona)}`, 'ok', 6500);
+            paint();
         };
     }
 
@@ -334,19 +383,27 @@ registerModule('admin', (() => {
             }
             return paint();
         }
-        if (a === 'store-del') {
-            const st = storeById(id);
-            if (!await confirmBox(`Se eliminará "${st.tienda}" del acceso de PDV. Sus cierres históricos se conservan. ¿Continuar?`, 'Eliminar')) return;
-            const del = { deleted: true, deletedAt: Date.now(), deletedBy: me().nombre, updatedAt: Date.now() };
-            await Data.set(COL.stores, id, del, true); Object.assign(st, del);
-            State.stores = State.stores.filter(s => s.id !== id); State.storesDeleted = (State.storesDeleted || []).filter(s => s.id !== id).concat(st);
-            toast('Tienda eliminada. Si fue un error, la restauras al final de la lista.', 'ok', 5000); return paint();
-        }
+        if (a === 'store-del') return disableForm(storeById(id));
         if (a === 'store-restore') {
             const st = (State.storesDeleted || []).find(s => s.id === id); if (!st) return;
-            const upd = { deleted: false, deletedAt: null, deletedBy: null, updatedAt: Date.now() };
+            const dest = st.mergedInto && storeById(st.mergedInto), M = st.mergedSnapshot;
+            if (!await confirmBox(dest && M ? `${st.tienda} vuelve a estar activa y ${dest.tienda} devuelve lo que recibió: ${M.metaMes} uds de target y HC ${M.hc}. ¿Restaurar?` : `¿Restaurar ${st.tienda}? Su target vuelve a sumar en el total de la zona.`, 'Restaurar')) return;
+            if (dest && M) {
+                const sub = (o, m) => { const r = { ...(o || {}) }; Object.entries(m || {}).forEach(([k, v]) => { r[k] = Math.max(0, int(r[k]) - int(v)); }); return r; };
+                const dm = { ...(dest.metasAsesor || {}) }; Object.entries(M.metasAsesor || {}).forEach(([n, v]) => { const k = Object.keys(dm).find(x => sameAdvisor({ nombre: x }, { nombre: n }) || nameSubset(x, n)); if (k) { dm[k] = int(dm[k]) - int(v); if (dm[k] <= 0 && (M.addedAsesores || []).some(a => sameAdvisor({ nombre: a }, { nombre: k }))) delete dm[k]; } });
+                const upd = {
+                    metas: sub(dest.metas, M.metas), metaMes: Math.max(0, storeMetaMes(dest) - int(M.metaMes)), hc: { ...(dest.hc || {}), INFINIX: Math.max(0, Math.round(((+(dest.hc || {}).INFINIX || 0) - (+M.hc || 0)) * 10) / 10) },
+                    metasAsesor: Object.keys(dm).length ? dm : null, asesores: assigned(dest).filter(n => !(M.addedAsesores || []).some(a => sameAdvisor({ nombre: a }, { nombre: n }))),
+                    absorbed: (dest.absorbed || []).filter(x => x.id !== st.id)
+                };
+                if (dest.kpi && M.kpi) upd.kpi = { base: Math.max(0, int(dest.kpi.base) - int(M.kpi.base)), k400: Math.max(0, int(dest.kpi.k400) - int(M.kpi.k400)), k700: Math.max(0, int(dest.kpi.k700) - int(M.kpi.k700)) };
+                if (M.capa) upd.capa = Math.max(0, int(dest.capa) - int(M.capa));
+                if (!await saveStore(dest, upd, ['metas', 'metaMes', 'hc', 'metasAsesor', 'asesores', 'kpi'])) return;
+            }
+            const upd = { deleted: false, deletedAt: null, deletedBy: null, mergedInto: null, mergedSnapshot: null, updatedAt: Date.now() };
             await Data.set(COL.stores, id, upd, true); Object.assign(st, upd);
             State.storesDeleted = State.storesDeleted.filter(s => s.id !== id); upsertState('stores', st);
+            ZoneData.loadMany(scopedZones(), todayStr().slice(0, 7)).catch(() => { });
             toast(`${st.tienda} restaurada`, 'ok'); return paint();
         }
         if (a === 'zone-new') {

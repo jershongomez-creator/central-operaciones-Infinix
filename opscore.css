@@ -733,3 +733,31 @@ details.card.acc > summary::after { content: '▾'; color: #64748B; } details.ca
 .month-banner b { color: #4ADE80; }
 .month-banner .btn-sm { padding: 5px 12px; font-size: 12px; border-radius: 8px; background: #00C853; color: #0B0F14; font-weight: 700; border: 0; }
 .month-banner .btn-sm.ghost { background: transparent; color: #fff; border: 1px solid #475569; }
+
+/* Inhabilitar tienda */
+.dis-facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 6px 0 10px; }
+.dis-facts div { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px; text-align: center; }
+.dis-facts b { display: block; font-size: 20px; } .dis-facts span { font-size: 12px; color: var(--mute); }
+.opt { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 8px 0; cursor: pointer; }
+.opt:has(input:checked) { border-color: var(--green2); background: #F0FDF4; }
+.opt > span { display: flex; flex-direction: column; gap: 6px; flex: 1; } .opt select { margin-top: 2px; }
+
+/* Cargar datos */
+.up-card .up-h { display: flex; gap: 12px; align-items: flex-start; }
+.up-ico { font-size: 26px; line-height: 1; margin-top: 2px; }
+.up-card .h3 { margin: 0 0 4px; }
+.up-sum { margin: 12px 0 8px; font-size: 14px; } .warn-t { color: #B45309; }
+.up-det summary { cursor: pointer; font-weight: 600; font-size: 13px; color: var(--mute); margin: 6px 0; }
+/* Estado del asesor en el día y novedades */
+.ds-chip { display: inline-flex; align-items: center; gap: 4px; font-style: normal; font-size: 11.5px; font-weight: 700; border-radius: 999px; padding: 2px 9px; white-space: nowrap; }
+.ds-chip.off { background: #F3E8FF; color: #6B21A8; } .ds-chip.on { background: var(--green-l); color: #166534; }
+.ds-chip.ds-incap, .ds-chip.ds-retiro, .ds-chip.ds-calamidad { background: var(--red-l); color: #991B1B; }
+.ds-chip.ds-vac, .ds-chip.ds-permiso, .ds-chip.ds-tarde, .ds-chip.ds-otro { background: var(--amber-l); color: #92400E; }
+.ds-chip.ds-apoyo, .ds-chip.ds-cap { background: #DBEAFE; color: #1E40AF; }
+.ds-list { display: flex; flex-direction: column; gap: 6px; }
+.ds-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; background: #fff; }
+.ds-row > span { flex: 1; min-width: 0; }
+.nv-dot { border: 0; background: none; cursor: pointer; font-size: 15px; padding: 2px 4px; opacity: .55; } .nv-dot:hover { opacity: 1; }
+.rp-nov td { text-align: left; }
+.ds-warn { background: #FAF5FF; border: 1px solid #E9D5FF; border-radius: 10px; padding: 6px 10px; font-size: 13px; margin: 6px 0; }
+.ds-today .h3 small { font-weight: 500; font-size: 13px; }
