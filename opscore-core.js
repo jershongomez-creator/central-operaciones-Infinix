@@ -190,6 +190,8 @@ const Data = (() => {
             if (typeof firebase === 'undefined') throw new Error('SDK de Firebase no disponible');
             if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
             db = firebase.firestore();
+            // Cola sin conexión del propio Firebase (guardada en el teléfono): lo que no alcanza a subir se envía al volver a abrir
+            try { db.enablePersistence({ synchronizeTabs: true }).catch(() => { }); } catch (e) { /* navegador sin IndexedDB */ }
             if (firebase.firestore.setLogLevel) firebase.firestore.setLogLevel('silent');   // sin ruido en consola cuando no hay red
         } catch (e) { console.warn('[Central] Firebase no disponible; modo local.', e.message); db = null; setOnline(false); }
         window.addEventListener('online', flush);
@@ -239,7 +241,7 @@ const Data = (() => {
         const payload = JSON.parse(JSON.stringify(data)); delete payload.id;       // Firestore no admite valores undefined
         if (db) {
             try { await withTimeout(db.collection(col).doc(id).set(payload, { merge })); setOnline(true); return { synced: true }; }
-            catch (e) { setOnline(false, e); }
+            catch (e) { setOnline(false, e); if (!denied) return { synced: false }; }      // Firebase ya lo tiene en su cola y lo sube solo
         }
         const q = readQueue().filter(p => !(p.col === col && p.id === id && p.op === 'set' && !merge));
         q.push({ op: 'set', col, id, data: payload, merge: !!merge }); writeQueue(q);
@@ -271,7 +273,7 @@ const Data = (() => {
         });
         if (db) {
             try { await commit(clean); setOnline(true); return { synced: true }; }
-            catch (e) { setOnline(false, e); }
+            catch (e) { setOnline(false, e); if (!denied) return { synced: false }; }
         }
         writeQueue(readQueue().concat(clean));
         return { synced: false };
@@ -281,7 +283,7 @@ const Data = (() => {
         const cache = readCache(col); delete cache[id]; writeCache(col, cache);
         if (db) {
             try { await withTimeout(db.collection(col).doc(id).delete()); setOnline(true); return { synced: true }; }
-            catch (e) { setOnline(false, e); }
+            catch (e) { setOnline(false, e); if (!denied) return { synced: false }; }
         }
         const q = readQueue(); q.push({ op: 'del', col, id }); writeQueue(q);
         return { synced: false };
@@ -295,7 +297,15 @@ const Data = (() => {
             for (;;) {
                 const q = readQueue(); if (!q.length) break;
                 const part = q.slice(0, 400);
-                await commit(part);
+                // Un cambio guardado hace tiempo en este equipo no pisa uno más nuevo que otra persona ya subió
+                const fresh = [];
+                for (const o of part) {
+                    if (o.op === 'set' && o.data && o.data.updatedAt) {
+                        try { const sn = await withTimeout(db.collection(o.col).doc(o.id).get()); const cur = sn.exists ? sn.data() : null; if (cur && (cur.updatedAt || 0) > o.data.updatedAt) continue; } catch (e) { throw e; }
+                    }
+                    fresh.push(o);
+                }
+                if (fresh.length) await commit(fresh);
                 writeQueue(readQueue().slice(part.length)); sent += part.length; setOnline(true);
             }
         } catch (e) { setOnline(false, e); }
@@ -523,7 +533,10 @@ async function boot() {
     // La data base del mes se aplica una sola vez, y solo si Firebase respondió de verdad: con red lenta o sin conexión
     // no se sabe si ya se aplicó, y aplicarla de nuevo pisaría lo que el equipo cambió en la app
     if (st.fromServer || !Data.hasCloud()) await applySeedUpgrade(cfgSeed, st.docs);
-    Data.watch(COL.stores, docs => applyCollections({ stores: docs }));
+    // Hasta tener la versión de la nube no se editan tiendas ni asesores (se reintenta sola)
+    State.cloudReady = !Data.hasCloud() || st.fromServer;
+    if (!State.cloudReady) waitCloud();
+    Data.watch(COL.stores, docs => { if (!State.cloudReady) cloudOk(); applyCollections({ stores: docs }); });
     Data.watch(COL.zones, docs => applyCollections({ zones: docs }));
     Data.watch(COL.staff, docs => applyCollections({ staff: docs }));
     Data.flush();
@@ -535,6 +548,32 @@ async function boot() {
         if (State.session && State.tab) navigate(State.tab);
     }
 }
+
+// ---------- Una sola versión de los datos para todos -----------------------------------
+// Un teléfono nuevo o con red lenta arranca con la data base guardada en la app. Mientras no baje la versión de la nube,
+// se ve un aviso y no se guardan cambios de tiendas ni asesores: así nadie pisa la nube con datos viejos.
+function cloudOk() {
+    State.cloudReady = true;
+    const ban = $('#sync-banner'); if (ban) ban.remove();
+}
+async function waitCloud() {
+    if (!$('#sync-banner')) { const b = document.createElement('div'); b.id = 'sync-banner'; b.className = 'sync-banner'; b.textContent = 'Sincronizando con la nube… Mientras tanto puedes consultar, pero los cambios de tiendas y asesores se habilitan al terminar.'; document.body.prepend(b); }
+    for (let i = 0; i < 40 && !State.cloudReady; i++) {
+        await new Promise(r => setTimeout(r, i < 5 ? 5000 : 15000));
+        if (State.cloudReady) break;
+        const r = await Data.fetch(COL.stores);
+        if (r.fromServer) {
+            cloudOk(); applyCollections({ stores: r.docs }); const z = await Data.fetch(COL.zones); if (z.fromServer) applyCollections({ zones: z.docs });
+            if (State.session && typeof ZoneData !== 'undefined') { const zs = State.session.type === 'store' ? [(currentStore() || {}).zona] : scopedZones(); await ZoneData.loadMany(zs.filter(Boolean), todayStr().slice(0, 7)).catch(() => { }); }
+            if (State.session && State.tab && !$('#modal-root').children.length) navigate(State.tab);
+        }
+    }
+}
+const canWrite = () => {
+    if (!Data.hasCloud() || State.cloudReady) return true;
+    toast('Aún no hay conexión con la nube. Espera a que sincronice para no guardar datos desactualizados.', 'warn', 5500);
+    return false;
+};
 
 // Regla de oro: en toda la app solo existen las tiendas de las 7 cadenas oficiales
 // Eliminar = marcar como eliminada (no se borra el documento): así la siembra de la data base no la vuelve a crear
@@ -554,12 +593,13 @@ function seedFields(st, s) {
         metas: s.metas || {}, metaMes: s.metaMes || 0, kpi: s.kpi || null, capa: s.capa || 0,
         hc: { ...(st.demoConfig ? {} : (st.hc || {})), ...(s.hc || {}) },
         metasAsesor: s.metasAsesor || null, asesoresApoyo: s.asesoresApoyo || [], targetsAsesor: null,
-        metasComp: null, isConfigured: true, demoConfig: false, seedVersion: SEED_VERSION, updatedAt: Date.now()
+        metasComp: null, isConfigured: true, demoConfig: false, seedVersion: SEED_VERSION, targetMes: '2026-11', updatedAt: Date.now()
     };
     if (s.inventario) { upd.inventario = s.inventario; upd.invAt = '2026-11-17'; }
     if (s.asesoresSeed && s.asesoresSeed.length) upd.asesores = s.asesoresSeed.slice();
     if (s.ciudad && !st.ciudad) upd.ciudad = s.ciudad;
     (st.manualFields || []).forEach(f => { delete upd[f]; if (f === 'metas') delete upd.metaMes; });      // lo manual manda
+    if (st.targetMes && st.targetMes > upd.targetMes) delete upd.targetMes;
     return upd;
 }
 // Devuelve una tienda a los datos automáticos (data base del mes) y quita las marcas de ajuste manual
@@ -836,6 +876,49 @@ function renderHeader() {
         const amb = isAllZones() ? 'Nacional' : (['coordinador', 'gerente'].includes(s.rol) && myRegional() ? `Regional ${esc(myRegional())}` : `Zona ${esc(s.zona || '—')}`);
         box.innerHTML = `<span class="avatar">${esc((s.nombre || '?').charAt(0).toUpperCase())}</span><span class="uc-txt"><b>${slug(s.nombre || '').startsWith(slug(ROLES[s.rol].label)) ? '' : ROLES[s.rol].label + ' '}${esc(s.nombre)}</b><small>${amb}${s.dcr ? ' · DCR ' + esc(s.dcr) : ''}</small></span>`;
     }
+    paintReminder();
+}
+
+// ---------- Recordatorio mensual: target y HC (del 1 al 5 de cada mes) ------------------
+// Cada tienda guarda de qué mes es su target (targetMes). Del 1 al 5 se avisa en la app y, si se dieron permisos,
+// con una notificación del teléfono al abrirla (una vez al día) cuáles PDV aún no tienen target y HC del mes.
+const storeTargetMonth = st => (st && (st.targetMes || (st.seedVersion ? '2026-11' : ''))) || '';
+const targetPending = st => storeTargetMonth(st) !== todayStr().slice(0, 7);
+const reminderDay = () => window.__reminderDay || int(todayStr().slice(8));
+const inReminderWindow = () => reminderDay() >= 1 && reminderDay() <= 5;
+function pendingTargetStores() {
+    const s = State.session; if (!s) return [];
+    if (s.type === 'store') { const st = currentStore(); return st && targetPending(st) ? [st] : []; }
+    if (!ROLES[s.rol].modules.includes('admin')) return [];
+    return scopedStoresAll().filter(chainOn).filter(targetPending);
+}
+function paintReminder() {
+    const ban = $('#month-banner'); if (!ban) return;
+    const s = State.session, P = inReminderWindow() ? pendingTargetStores() : [];
+    if (!s || !P.length) { ban.hidden = true; return; }
+    const mes = mesLargo(todayStr().slice(0, 7)), tot = s.type === 'store' ? 1 : scopedStoresAll().filter(chainOn).length;
+    const canAsk = typeof Notification !== 'undefined' && Notification.permission === 'default';
+    ban.innerHTML = s.type === 'store'
+        ? `<span>📅 Del 1 al 5: confirma el <b>target y el HC de ${esc(mes)}</b> de tu tienda.</span><button class="btn btn-sm" id="mb-go">Revisar ⚙️</button>${canAsk ? '<button class="btn btn-sm ghost" id="mb-notif">🔔 Activar avisos</button>' : ''}`
+        : `<span>📅 Del 1 al 5: carga el <b>target y el HC de ${esc(mes)}</b>. Faltan <b>${P.length}</b> de ${tot} PDV.</span><button class="btn btn-sm" id="mb-go">Ver pendientes</button>${canAsk ? '<button class="btn btn-sm ghost" id="mb-notif">🔔 Activar avisos</button>' : ''}`;
+    ban.hidden = false;
+    $('#mb-go', ban).onclick = () => { if (s.type === 'store') openStoreSettings(currentStore().id); else { State.adminPend = true; navigate('admin'); } };
+    if ($('#mb-notif', ban)) $('#mb-notif', ban).onclick = async () => { try { await Notification.requestPermission(); } catch (e) { } paintReminder(); notifyReminder(true); };
+    notifyReminder(false);
+}
+async function notifyReminder(force) {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted' || !inReminderWindow()) return;
+    const key = 'opscore_notif_' + todayStr() + '_' + ((State.session && (State.session.userId || State.session.storeId)) || '');
+    if (!force) { try { if (localStorage.getItem(key)) return; } catch (e) { } }
+    const P = pendingTargetStores(); if (!P.length) return;
+    const mes = mesLargo(todayStr().slice(0, 7));
+    const body = State.session.type === 'store' ? `Confirma el target y el HC de ${mes} de tu tienda en ⚙️ Ajustes.` : `Faltan ${P.length} PDV por cargar target y HC de ${mes}: ${P.slice(0, 3).map(x => x.tienda).join(', ')}${P.length > 3 ? '…' : ''}`;
+    const opts = { body, icon: 'icon-192.png', badge: 'favicon-64.png', tag: 'target-mes', data: { url: './index.html' } };
+    try {
+        const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
+        if (reg && reg.showNotification) await reg.showNotification('Central Infinix · Target y HC del mes', opts); else new Notification('Central Infinix · Target y HC del mes', opts);
+        localStorage.setItem(key, '1');
+    } catch (e) { console.warn('notificación', e); }
 }
 
 function navigate(tab) {
@@ -938,6 +1021,7 @@ function openStoreSettings(storeId, opts = {}) {
         closeModal(m); toast('Tienda de nuevo con datos automáticos', 'ok'); openStoreSettings(st.id, opts);
     };
     $('#sc-save', m).onclick = async () => {
+        if (!canWrite()) return;
         const rows = $$('#sc-advs [data-row]', m).map(r => ({ n: $('[data-asn]', r).value.trim().replace(/\s+/g, ' '), meta: staffEdit ? $('[data-asm]', r).value.trim() : '' })).filter(x => x.n);
         const asesores = [...new Set(rows.map(x => x.n))];
         const err = $('#sc-err', m);
@@ -960,6 +1044,7 @@ function openStoreSettings(storeId, opts = {}) {
         // Si cambia la cadena, el nombre comercial sigue al logo; si no, se conserva (p. ej. "ALKOSTO CENTRO")
         if (logoKey === 'otro') upd.cadena = chainName;
         else if (normLogoKey(st.logoKey) !== logoKey || !st.cadena) upd.cadena = CHAINS[logoKey].name.toUpperCase();
+        upd.targetMes = todayStr().slice(0, 7);                  // target y HC confirmados para este mes (recordatorio del 1 al 5)
         const sumMetas = sum(Object.values(upd.metas));
         if (sumMetas > 0) upd.metaMes = sumMetas;               // las metas por referencia definen el total del mes
         if (pass) upd.passHash = pwdHash(pass);

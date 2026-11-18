@@ -25,6 +25,7 @@ registerModule('admin', (() => {
         $('#adm-body').addEventListener('click', onClick);
         $('#adm-body').addEventListener('change', async e => {
             if (e.target.id === 'st-fzona') { fZona = e.target.value; paint(); }
+            if (e.target.id === 'st-fpend') { fPend = e.target.checked; paint(); }
             if (e.target.id === 'as-fzona') { aZona = e.target.value; paint(); }
             if (e.target.dataset.am !== undefined) await advMeta(e.target);
             if (e.target.dataset.amove !== undefined) await advMove(e.target);
@@ -43,20 +44,22 @@ registerModule('admin', (() => {
     }
 
     // ------------------------------------------------------------- Tiendas
-    let fZona = '', fQ = '';
+    let fZona = '', fQ = '', fPend = false;
     function tiendasHTML() {
         const zs = scopedZones();
-        const all = scopedStoresAll().filter(s => !fZona || s.zona === fZona).filter(s => !fQ || slug(s.tienda + ' ' + s.ciudad + ' ' + (s.cadena || '')).includes(slug(fQ)));
+        if (State.adminPend) { fPend = true; State.adminPend = false; }
+        const all = scopedStoresAll().filter(s => !fPend || (chainOn(s) && targetPending(s))).filter(s => !fZona || s.zona === fZona).filter(s => !fQ || slug(s.tienda + ' ' + s.ciudad + ' ' + (s.cadena || '')).includes(slug(fQ)));
         const list = all.sort((a, b) => (a.zona + a.tienda).localeCompare(b.zona + b.tienda, 'es'));
         return `<section class="card">
             <div class="row between wrap"><h3 class="h3">Puntos de venta (${list.length})</h3><button class="btn btn-primary" data-a="store-new">➕ Nueva tienda</button></div>
             <div class="row wrap" style="gap:8px;margin:8px 0 12px">
                 ${zs.length > 1 ? `<select class="input" id="st-fzona"><option value="">Todas las zonas (${zs.length})</option>${zs.map(z => `<option value="${esc(z)}" ${fZona === z ? 'selected' : ''}>${esc(z)}</option>`).join('')}</select>` : ''}
                 <input class="input grow" id="st-fq" placeholder="Buscar tienda, ciudad o cadena…" value="${esc(fQ)}">
+                <label class="chip"><input type="checkbox" id="st-fpend" ${fPend ? 'checked' : ''}><span>📅 Sin target/HC de ${esc(mesLargo(todayStr().slice(0, 7)).split(' ')[0])} (${scopedStoresAll().filter(s => chainOn(s) && targetPending(s)).length})</span></label>
             </div>
             <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>Tienda</th><th>Zona</th><th>Ciudad</th><th>Estado</th><th>Target</th><th>HC</th><th>Acciones</th></tr></thead><tbody>
             ${list.map(s => `<tr><td class="l">${storeLogo(s, 'xs')} <b>${esc(s.tienda)}</b><br><small class="mute">${esc(s.cadena || '')}${s.shopId ? ' · ' + esc(s.shopId) : ''}</small></td><td>${esc(s.zona || '')}</td><td>${esc(s.ciudad || '')}</td>
-                <td>${s.isConfigured ? '<i class="pill ok">Configurada</i>' : '<i class="pill warn">Pendiente</i>'}${(s.manualFields || []).length ? ` <i class="pill man" title="Ajustado a mano${s.manualBy ? ' por ' + esc(s.manualBy) : ''}">✋ manual</i>` : ''}${chainOn(s) ? '' : ' <i class="pill off" title="Su cadena no está en las cadenas de trabajo">fuera de trabajo</i>'}</td><td>${storeMetaMes(s) || '—'}</td><td>${int(s.hc && s.hc.INFINIX) || '—'}</td>
+                <td>${s.isConfigured ? '<i class="pill ok">Configurada</i>' : '<i class="pill warn">Pendiente</i>'}${targetPending(s) ? ` <i class="pill warn" title="Aún no se carga el target y HC de este mes">📅 target ${storeTargetMonth(s) ? 'de ' + esc(mesLargo(storeTargetMonth(s)).split(' ')[0]) : 'sin cargar'}</i>` : ''}${(s.manualFields || []).length ? ` <i class="pill man" title="Ajustado a mano${s.manualBy ? ' por ' + esc(s.manualBy) : ''}">✋ manual</i>` : ''}${chainOn(s) ? '' : ' <i class="pill off" title="Su cadena no está en las cadenas de trabajo">fuera de trabajo</i>'}</td><td>${storeMetaMes(s) || '—'}</td><td>${int(s.hc && s.hc.INFINIX) || '—'}</td>
                 <td class="acts"><button class="icon-btn" title="Editar nombre, cadena, ciudad y zona" data-a="store-edit" data-id="${esc(s.id)}">✏️</button><button class="icon-btn" title="Asesores, metas, HC, targets, inventario, foco y contraseña" data-a="store-cfg" data-id="${esc(s.id)}">⚙️</button>
                 <button class="icon-btn" title="Contraseña de la tienda" data-a="store-pass" data-id="${esc(s.id)}">🔑</button><button class="icon-btn" title="Eliminar" data-a="store-del" data-id="${esc(s.id)}">🗑️</button></td></tr>`).join('') || '<tr><td colspan="7">Sin tiendas con ese filtro.</td></tr>'}
             </tbody></table></div>
@@ -98,8 +101,9 @@ registerModule('admin', (() => {
             <div class="tbl-scroll"><table class="tbl compact adv-tbl"><thead><tr><th>Asesor</th><th>Venta mes</th><th>Meta mes</th><th>Estado</th><th>Tienda</th></tr></thead><tbody>${blocks || '<tr><td colspan="5">Sin tiendas en esta zona.</td></tr>'}</tbody></table></div></section>`;
     }
     const saveStore = async (st, upd, fields) => {
+        if (!canWrite()) return false;
         upd.updatedAt = Date.now(); if (fields && fields.length) Object.assign(upd, markManual(st, fields));
-        Object.assign(st, upd); await Data.set(COL.stores, st.id, upd, true);
+        Object.assign(st, upd); await Data.set(COL.stores, st.id, upd, true); return true;
     };
     const advByName = (st, n) => storeAdvisors(st).find(a => a.nombre === n);
     async function advMeta(inp) {
@@ -107,7 +111,7 @@ registerModule('admin', (() => {
         const next = { ...(st.metasAsesor || {}) }, k = metaKey(st, a);
         if (k) delete next[k];
         if (inp.value.trim() !== '') next[k || a.nombre] = int(inp.value);
-        await saveStore(st, { metasAsesor: Object.keys(next).length ? next : null }, ['metasAsesor']);
+        if (!await saveStore(st, { metasAsesor: Object.keys(next).length ? next : null }, ['metasAsesor'])) return;
         toast(`Meta de ${a.nombre}: ${inp.value.trim() === '' ? 'reparto del target de la tienda' : int(inp.value) + ' uds'}`, 'ok');
     }
     async function advMove(sel) {
@@ -116,7 +120,7 @@ registerModule('admin', (() => {
         if (!await confirmBox(`${a.nombre} pasa de ${from.tienda} a ${to.tienda}. Sus unidades ya vendidas se quedan en ${from.tienda}. ¿Mover?`, 'Mover')) { sel.value = ''; return; }
         const k = metaKey(from, a), meta = k ? int(from.metasAsesor[k]) : 0;
         const fm = { ...(from.metasAsesor || {}) }; if (k) delete fm[k];
-        await saveStore(from, { asesores: (from.asesores || []).filter(n => !a.alias.some(x => sameAdvisor({ nombre: x }, { nombre: n }))), metasAsesor: Object.keys(fm).length ? fm : null }, ['asesores', 'metasAsesor']);
+        if (!await saveStore(from, { asesores: (from.asesores || []).filter(n => !a.alias.some(x => sameAdvisor({ nombre: x }, { nombre: n }))), metasAsesor: Object.keys(fm).length ? fm : null }, ['asesores', 'metasAsesor'])) { sel.value = ''; return; }
         const tm = { ...(to.metasAsesor || {}) }; if (meta) tm[a.nombre] = meta;
         await saveStore(to, { asesores: [...new Set([...(to.asesores || []), a.nombre])], metasAsesor: Object.keys(tm).length ? tm : null, bajas: (to.bajas || []).filter(b => !sameAdvisor(b, a)) }, ['asesores', 'metasAsesor']);
         toast(`${a.nombre} ahora está en ${to.tienda}`, 'ok'); paint();
@@ -293,9 +297,11 @@ registerModule('admin', (() => {
     }
 
     // ------------------------------------------------------------- Acciones
+    const READ_ONLY = ['cfg-chains', 'store-cfg'];        // abrir ventanas no escribe; guardar sí pasa por canWrite()
     async function onClick(e) {
         const b = e.target.closest('[data-a]'); if (!b) return;
         const a = b.dataset.a, id = b.dataset.id;
+        if (!READ_ONLY.includes(a) && !canWrite()) return;
         if (a === 'cfg-radar') {
             const refs = $$('#rd-foco input:checked').map(i => i.value);
             if (!refs.length) return toast('Marca al menos una referencia foco.', 'warn');

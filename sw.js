@@ -1,7 +1,7 @@
 // Central de Operaciones (Infinix) · Service Worker
 // App shell: red primero (para que las actualizaciones lleguen) con respaldo en caché.
 // Imágenes y librerías CDN: caché primero. Firestore nunca se intercepta.
-const CACHE_NAME = 'infinix-opscore-v15';
+const CACHE_NAME = 'infinix-opscore-v16';
 const SHELL = [
   './', './index.html', './manifest.json', './opscore.css', './icon-192.png', './icon-512.png', './favicon-32.png', './apple-touch-icon.png',
   './opscore-assets.js', './opscore-config.js', './opscore-core.js', './opscore-m1.js', './opscore-m2.js',
@@ -48,4 +48,13 @@ self.addEventListener('fetch', event => {
       return res;
     }).catch(() => caches.match(req).then(hit => hit || caches.match('./index.html')))
   );
+});
+
+// Al tocar la notificación del recordatorio se abre (o enfoca) la app
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  event.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+    const open = list.find(c => c.url.includes(self.registration.scope));
+    return open ? open.focus() : clients.openWindow((event.notification.data && event.notification.data.url) || './');
+  }));
 });

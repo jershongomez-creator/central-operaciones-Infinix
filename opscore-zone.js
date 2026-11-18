@@ -821,6 +821,7 @@ registerModule('zona', (() => {
         $('#zc-adv-q', m).oninput = e => { const q = slug(e.target.value); $$('.adv-store', m).forEach(d => { d.hidden = !!q && !d.dataset.q.includes(q); }); };
         $('#zc-cancel', m).onclick = () => closeModal(m);
         $('#zc-save', m).onclick = async () => {
+            if (!canWrite()) return;
             const ops = [];
             zs.forEach(s => {
                 const g = k => $(`[data-cfg="${k}"][data-id="${s.id}"]`, m).value;
@@ -844,6 +845,7 @@ registerModule('zona', (() => {
                         if ((s.asesores || []).length) upd.asesores = s.asesores.filter(n => !next.some(b => sameAdvisor(b, { nombre: n, cedula: (s.cedulas || {})[n] })));
                     }
                 }
+                if (upd.metaMes !== undefined || upd.hc) upd.targetMes = todayStr().slice(0, 7);
                 if (Object.keys(upd).length) { upd.updatedAt = Date.now(); const mk = Object.keys(upd).filter(k => MANUAL_KEYS.includes(k)); if (mk.length) Object.assign(upd, markManual(s, mk)); Object.assign(s, upd); ops.push({ op: 'set', col: COL.stores, id: s.id, data: upd, merge: true }); }
             });
             if (ops.length) await Data.batch(ops);
