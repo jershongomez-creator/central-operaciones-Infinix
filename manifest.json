@@ -1,6 +1,6 @@
 {
   "name": "Infinix · Central de Operaciones",
-  "short_name": "Central Ops",
+  "short_name": "Central Infinix",
   "description": "Panel operativo y de ejecución retail de Infinix",
   "start_url": "./index.html",
   "scope": "./",
@@ -8,9 +8,9 @@
   "orientation": "portrait",
   "lang": "es",
   "background_color": "#FFFFFF",
-  "theme_color": "#FFFFFF",
+  "theme_color": "#0B0F14",
   "icons": [
-    { "src": "logo-512.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
-    { "src": "logo-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
   ]
 }
