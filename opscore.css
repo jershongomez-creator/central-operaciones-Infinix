@@ -761,3 +761,9 @@ details.card.acc > summary::after { content: '▾'; color: #64748B; } details.ca
 .rp-nov td { text-align: left; }
 .ds-warn { background: #FAF5FF; border: 1px solid #E9D5FF; border-radius: 10px; padding: 6px 10px; font-size: 13px; margin: 6px 0; }
 .ds-today .h3 small { font-weight: 500; font-size: 13px; }
+
+/* Acceso: recordar y ver contraseña */
+.pw-wrap { position: relative; } .pw-wrap .input { padding-right: 44px; }
+.pw-eye { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); border: 0; background: none; font-size: 18px; cursor: pointer; padding: 4px 6px; opacity: .7; }
+.remember { display: flex; align-items: center; gap: 8px; margin: 10px 0 2px; font-size: 13.5px; color: var(--mute); cursor: pointer; }
+.remember input { width: 18px; height: 18px; accent-color: var(--green-d); }

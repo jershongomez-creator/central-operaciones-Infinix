@@ -213,7 +213,7 @@ const TargetFile = (() => {
         return P;
     }
     // Aplica al alcance del usuario. Mes nuevo = reemplaza; mismo mes = respeta lo ajustado a mano.
-    async function apply(P, month, fileName) {
+    async function apply(P, month, fileName, force) {
         const by = {}, me = State.session;
         P.rows.filter(r => r.st && inScope(r.st.zona)).forEach(r => {
             const g = by[r.st.id] = by[r.st.id] || { st: r.st, target: 0, metas: {}, hc: 0, hcSet: false, kpi: null, capa: 0, n: 0 };
@@ -229,8 +229,10 @@ const TargetFile = (() => {
             if (g.hcSet) upd.hc = { ...(st.hc || {}), INFINIX: Math.round(g.hc * 10) / 10 };
             if (g.kpi) upd.kpi = g.kpi;
             if (g.capa) upd.capa = g.capa;
-            if (sameMonth) {
+            if (sameMonth && !force) {
                 (st.manualFields || []).forEach(f => { if (f in upd) { delete upd[f]; kept++; } if (f === 'metas') delete upd.metaMes; });
+            } else if (sameMonth) {                     // mismo mes, reemplazando lo manual: target, HC y ROI igual a la tabla (la meta por asesor se conserva)
+                upd.manualFields = (st.manualFields || []).filter(f => !['metas', 'metaMes', 'hc', 'kpi'].includes(f));
             } else {
                 upd.manualFields = (st.manualFields || []).filter(f => !['metas', 'metaMes', 'hc', 'kpi', 'metasAsesor'].includes(f));
                 upd.metasAsesor = null;                 // mes nuevo: la meta de cada asesor sale del reparto hasta que se ajuste a mano
@@ -308,11 +310,7 @@ registerModule('datos', (() => {
         v.innerHTML = `
         <section class="card">
             <h2 class="h2">Cargar datos</h2>
-            <p class="mute">Aquí se alimenta la app cada mes, cada semana o cada día. Lo que se cargue lo ven al instante todos los usuarios de la zona. Lo ajustado a mano (✋) se respeta dentro del mismo mes.</p>
-        </section>
-        <section class="card up-card">
-            <div class="up-h"><span class="up-ico">📊</span><div><h3 class="h3">Data plana DCR · ventas</h3><p class="mute">Shop Sales Query (Excel o CSV). Se carga desde el Análisis de zona, donde se cruza con los targets.</p></div></div>
-            <div class="row end"><button class="btn btn-dark" id="up-dcr">📂 Ir a cargar data plana</button></div>
+            <p class="mute">Aquí se carga lo que alimenta la app mes a mes y semana a semana: target y malla de horarios. Lo que se cargue lo ven al instante todos los usuarios de la zona. La venta (data plana DCR) se carga en el <b>Análisis de zona</b>.</p>
         </section>
         <section class="card up-card">
             <div class="up-h"><span class="up-ico">🎯</span><div><h3 class="h3">Target del mes · una vez al mes</h3><p class="mute">El Excel de target (ZONA, CADENA, TIENDA, HC, ROI, TARGET y una columna por referencia). Actualiza target por referencia, HC y umbrales ROI de cada PDV de tu alcance.</p><p class="hint" id="up-tgt-last"></p></div></div>
@@ -326,7 +324,6 @@ registerModule('datos', (() => {
             <div id="up-mal-out"></div>
         </section>
         <section class="card" id="up-hoy"></section>`;
-        $('#up-dcr', v).onclick = () => { navigate('zona'); setTimeout(() => { const f = $('#z-file'); if (f) f.click(); }, 400); };
         $('#up-tgt', v).onchange = e => onTarget(e.target.files[0]);
         $('#up-mal', v).onchange = e => onMalla(e.target.files[0]);
         paintHoy();
@@ -352,13 +349,14 @@ registerModule('datos', (() => {
             <details class="up-det"><summary>Ver tienda por tienda</summary><div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>Archivo</th><th>PDV en la app</th><th>HC</th><th>Target</th></tr></thead><tbody>
             ${mine.map(r => `<tr><td class="l">${esc(r.tienda)} <small class="mute">· ${esc(r.cadena)}</small></td><td class="l">${r.st ? esc(r.st.tienda) + (r.disabled ? ` <small class="mute">(recibe a ${esc(r.disabled.tienda)})</small>` : '') + (storeTargetMonth(r.st) === month && (r.st.manualFields || []).length ? ' <i class="pill man">✋ se respeta</i>' : '') : r.disabled ? `<i class="pill off">inhabilitada · se descuenta</i>` : '<i class="pill warn">sin cruzar</i>'}</td><td>${r.hc ?? '—'}</td><td>${Math.round(r.target)}</td></tr>`).join('')}</tbody></table></div></details>
             ${unm.length ? `<p class="hint">Sin cruzar: ${unm.slice(0, 12).map(r => esc(r.tienda + ' (' + r.zona + ')')).join(', ')}${unm.length > 12 ? '…' : ''}. Si son de tu zona, revisa que la tienda exista en Gestión.</p>` : ''}
+            ${(() => { const nMan = new Set(mine.filter(r => r.st && storeTargetMonth(r.st) === month && (r.st.manualFields || []).length).map(r => r.st.id)).size; return nMan ? `<label class="remember"><input type="checkbox" id="up-tgt-force"><span>Reemplazar también lo ajustado a mano (${nMan} PDV con ✋): todo queda igual a la tabla</span></label>` : ''; })()}
             <div class="row end" style="margin-top:10px"><button class="btn btn-primary" id="up-tgt-ok">✅ Aplicar target de ${esc(mesLargo(month))}</button></div>`;
         $('#up-tgt-ok').onclick = async e => {
             if (!canWrite()) return;
             const month = $('#up-tgt-m').value;
             if (!await confirmBox(`Se actualizan target, HC y ROI de ${new Set(mine.filter(r => r.st).map(r => r.st.id)).size} PDV para ${mesLargo(month)}. ${Object.entries(byZ).map(([z, x]) => `${z}: ${Math.round(x.file)}`).join(' · ')}. ¿Aplicar?`, 'Aplicar')) return;
             busy(e.currentTarget, true);
-            try { const r = await TargetFile.apply(tgt, month, tgtFile); toast(`Target de ${mesLargo(month)} aplicado a ${r.tiendas} PDV${r.kept ? ` · ${r.kept} ajustes manuales respetados` : ''}`, 'ok', 6000); tgt = null; render(view); renderHeader(); }
+            try { const r = await TargetFile.apply(tgt, month, tgtFile, !!($('#up-tgt-force') && $('#up-tgt-force').checked)); toast(`Target de ${mesLargo(month)} aplicado a ${r.tiendas} PDV${r.kept ? ` · ${r.kept} ajustes manuales respetados` : ''}`, 'ok', 6000); tgt = null; render(view); renderHeader(); }
             finally { busy(e.currentTarget, false); }
         };
         $('#up-tgt-m').onchange = paintTarget;

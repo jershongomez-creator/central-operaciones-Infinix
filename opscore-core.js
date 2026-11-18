@@ -680,6 +680,31 @@ function applyCollections(part) {
     if (mod && mod.onData && !$('#modal-root').children.length) mod.onData(part);
 }
 
+// ---------- Recordar usuario y contraseña (solo en este equipo) ----------------
+// Se guarda en el navegador del teléfono o del PC, nunca en la nube. "Salir" cierra la sesión pero conserva lo recordado;
+// desmarcar la casilla al entrar lo borra.
+const Remember = {
+    key: t => 'opscore_rem_' + t,
+    enc: v => { try { return btoa(unescape(encodeURIComponent(v))); } catch (e) { return ''; } },
+    dec: v => { try { return decodeURIComponent(escape(atob(v))); } catch (e) { return ''; } },
+    save(type, on, d) {
+        try {
+            if (!on) { localStorage.removeItem(this.key(type)); return; }
+            localStorage.setItem(this.key(type), JSON.stringify({ ...d, pass: this.enc(d.pass || ''), at: Date.now() }));
+            localStorage.setItem('opscore_rem_last', type);
+        } catch (e) { /* sin almacenamiento */ }
+    },
+    get(type) { try { const r = JSON.parse(localStorage.getItem(this.key(type))); return r ? { ...r, pass: this.dec(r.pass) } : null; } catch (e) { return null; } },
+    fill() {
+        const unlock = i => { if (i) { i.removeAttribute('readonly'); } };
+        const s = this.get('store'), f = this.get('staff');
+        if (s && $('#ls-search')) { const st = storeById(s.id); if (st) { const q = $('#ls-search'); unlock(q); q.value = st.usuario; q.dataset.id = st.id; const p = $('#ls-pass'); unlock(p); p.value = s.pass; $('#ls-rem').checked = true; } }
+        if (f && $('#lf-dcr')) { const d = $('#lf-dcr'); unlock(d); d.value = f.user; const p = $('#lf-pass'); unlock(p); p.value = f.pass; $('#lf-rem').checked = true; }
+        let last = null; try { last = localStorage.getItem('opscore_rem_last'); } catch (e) { }
+        if (last === 'staff' && f) { const b = $('.seg-btn[data-mode="staff"]'); if (b) b.click(); }
+    }
+};
+
 // ---------- Login dual -------------------------------------------------------
 function renderLogin() {
     const el = $('#login-screen');
@@ -700,7 +725,8 @@ function renderLogin() {
                 <div id="ls-list" class="ac-list" hidden></div>
             </div>
             <label class="lbl">Contraseña de tienda</label>
-            <input id="ls-pass" name="pdv-clave" class="input" type="password" placeholder="Contraseña de la tienda" autocomplete="new-password" readonly data-noauto>
+            <div class="pw-wrap"><input id="ls-pass" name="pdv-clave" class="input" type="password" placeholder="Contraseña de la tienda" autocomplete="new-password" readonly data-noauto><button type="button" class="pw-eye" data-eye="ls-pass" title="Ver contraseña">👁</button></div>
+            <label class="remember"><input type="checkbox" id="ls-rem"><span>Recordar tienda y contraseña en este equipo</span></label>
             <p id="ls-err" class="err" hidden></p>
             <button class="btn btn-primary btn-block" type="submit">Ingresar al PDV</button>
         </form>
@@ -710,7 +736,8 @@ function renderLogin() {
                 <label class="lbl">Código DCR</label>
                 <input id="lf-dcr" name="staff-codigo" class="input" placeholder="Ej. DCR-1023" autocomplete="off" autocapitalize="characters" readonly data-noauto>
                 <label class="lbl">Contraseña</label>
-                <input id="lf-pass" name="staff-clave" class="input" type="password" placeholder="Tu contraseña" autocomplete="new-password" readonly data-noauto>
+                <div class="pw-wrap"><input id="lf-pass" name="staff-clave" class="input" type="password" placeholder="Tu contraseña" autocomplete="new-password" readonly data-noauto><button type="button" class="pw-eye" data-eye="lf-pass" title="Ver contraseña">👁</button></div>
+                <label class="remember"><input type="checkbox" id="lf-rem"><span>Recordar código y contraseña en este equipo</span></label>
             </div>
             <div id="lf-reg" hidden>
                 <p class="hint" id="lf-reg-hint">Si eres nuevo, la contraseña actual es la clave inicial de tu cargo. Si ya tienes usuario, aquí cambias tu contraseña.</p>
@@ -740,7 +767,8 @@ function renderLogin() {
 
     // Sin autollenado del navegador: los campos abren vacíos para cada asesor o líder (se habilitan al tocarlos)
     $$('[data-noauto]', el).forEach(i => { const on = () => i.removeAttribute('readonly'); i.addEventListener('focus', on); i.addEventListener('pointerdown', on); i.value = ''; });
-    setTimeout(() => $$('[data-noauto]', el).forEach(i => { if (i.hasAttribute('readonly')) i.value = ''; }), 600);
+    setTimeout(() => { $$('[data-noauto]', el).forEach(i => { if (i.hasAttribute('readonly')) i.value = ''; }); Remember.fill(); }, 650);
+    $$('[data-eye]', el).forEach(b => b.onclick = () => { const i = $('#' + b.dataset.eye); i.removeAttribute('readonly'); i.type = i.type === 'password' ? 'text' : 'password'; b.textContent = i.type === 'password' ? '👁' : '🙈'; });
 
     // Entrada directa al demo: carga los datos de prueba si aún no existen y abre la sesión
     $$('[data-demo]', el).forEach(b => b.onclick = async () => {
@@ -793,6 +821,7 @@ function renderLogin() {
         if (!st) st = State.stores.find(s => slug(s.usuario) === slug(search.value));
         if (!st) { err.textContent = 'Selecciona tu punto de venta de la lista.'; err.hidden = false; return; }
         if (pwdHash($('#ls-pass').value) !== (st.passHash || State.auth.store)) { err.textContent = 'Contraseña de tienda incorrecta.'; err.hidden = false; return; }
+        Remember.save('store', $('#ls-rem').checked, { id: st.id, user: st.usuario, pass: $('#ls-pass').value });
         setSession({ type: 'store', rol: 'asesor', storeId: st.id });
         enterApp();
     });
@@ -826,6 +855,7 @@ function renderLogin() {
                 return fail('Código DCR no registrado. Si eres nuevo, toca "Registrarme" y usa la clave inicial de tu cargo.');
             }
             if (u.passHash !== h) return fail('Contraseña incorrecta.');
+            Remember.save('staff', $('#lf-rem').checked, { user: code, pass: $('#lf-pass').value });
             setSession({ type: 'staff', rol: u.rol, userId: u.id, nombre: u.nombre, zona: u.zona, regional: u.regional || '', dcr: u.dcr || '' });
             return enterApp();
         }
@@ -858,6 +888,7 @@ function renderLogin() {
         const user = { ...(existing || {}), id, rol, nombre, dcr: code, zona, regional, passHash: pwdHash(nueva), updatedAt: Date.now(), createdAt: (existing && existing.createdAt) || Date.now() };
         const r = await Data.set(COL.staff, id, user, false);
         upsertState('staff', user);
+        Remember.save('staff', $('#lf-rem').checked, { user: code, pass: nueva });
         setSession({ type: 'staff', rol, userId: id, nombre, zona, regional, dcr: code });
         toast(existing ? 'Contraseña actualizada' : (r.synced ? 'Usuario creado' : 'Usuario creado en este equipo; se sincronizará al tener conexión'), 'ok');
         enterApp();
