@@ -300,6 +300,7 @@ const Data = (() => {
                 // Un cambio guardado hace tiempo en este equipo no pisa uno más nuevo que otra persona ya subió
                 const fresh = [];
                 for (const o of part) {
+                    if (o.op === 'set' && o.data && (o.data.demo === true || o.data.demoConfig === true || o.col === 'opscore_config' && o.id === 'demo')) continue;   // datos de prueba: nunca a la nube
                     if (o.op === 'set' && o.data && o.data.updatedAt) {
                         try { const sn = await withTimeout(db.collection(o.col).doc(o.id).get()); const cur = sn.exists ? sn.data() : null; if (cur && (cur.updatedAt || 0) > o.data.updatedAt) continue; } catch (e) { throw e; }
                     }
@@ -434,7 +435,7 @@ const sameAdvisor = (a, b) => {
 // "Mariana Hoyos" y "Mariana Hoyos Sepulveda" (data) son la misma persona al unir la lista de la tienda con la data
 const nameSubset = (a, b) => { const A = advNameKey(a).split('_').filter(Boolean), B = advNameKey(b).split('_').filter(Boolean), [s, l] = A.length <= B.length ? [A, B] : [B, A]; return s.length >= 2 && s.every(x => l.includes(x)); };
 const isBaja = (st, nombre, cedula) => ((st && st.bajas) || []).some(b => sameAdvisor(b, { nombre, cedula }));
-const isPseudoAdvisor = n => !n || n === 'Sin asesor' || /^Formador/i.test(n);
+const isPseudoAdvisor = n => !n || n === 'Sin asesor' || /^Formador/i.test(n) || /^Asesor\s*\d+$/i.test(String(n).trim());     // 'Asesor 1…' = nombres de prueba
 // Todos los asesores conocidos de una tienda (configurados + semilla + data de zona + retirados) con su venta y estado
 function storeAdvisors(st) {
     const out = [];
@@ -447,9 +448,10 @@ function storeAdvisors(st) {
         else { if (!a.cedula && cedula) a.cedula = advDigits(cedula); if (!a.alias.includes(nombre)) a.alias.push(nombre); }
         return a;
     };
-    const cfg = (st.asesores || []);
-    cfg.forEach(n => push(n, (st.cedulas || {})[n]));
-    if (!cfg.length) (st.asesoresSeed || []).forEach(n => push(n));
+    // Asignados al PDV: los de la tienda (o, si nunca se configuró, los que trae la data base). Solo ellos cuentan como asesores
+    // de la tienda; quien aparece en la data sin estar asignado vende para la tienda pero no entra a rankings ni comparativos.
+    const cfg = (st.asesores && st.asesores.length) ? st.asesores : (st.asesoresSeed || []);
+    cfg.forEach(n => { const a = push(n, (st.cedulas || {})[n]); if (a) a.asignado = true; });
     const Z = typeof ZoneData !== 'undefined' ? ZoneData.forStore(st.id) : null;
     const addV = (a, x) => { a.total += x.total || 0; a.ventas = { ...(a.ventas || {}) }; Object.entries(x.ventas || {}).forEach(([k, v]) => { a.ventas[k] = (a.ventas[k] || 0) + (v || 0); }); a.sem = { ...(a.sem || {}) }; Object.entries(x.sem || {}).forEach(([k, v]) => { a.sem[k] = (a.sem[k] || 0) + (v || 0); }); a.semRef = JSON.parse(JSON.stringify(a.semRef || {})); Object.entries(x.semRef || {}).forEach(([w, r]) => { const o = a.semRef[w] = a.semRef[w] || {}; Object.entries(r).forEach(([k, v]) => { o[k] = (o[k] || 0) + v; }); }); };
     if (Z && Z.asesores) Object.values(Z.asesores).forEach(x => { const a = push(x.nombre, x.cedula); if (a) addV(a, x); });
@@ -470,7 +472,7 @@ function storeAdvisors(st) {
     });
     return out;
 }
-const activeAdvisors = st => storeAdvisors(st).filter(a => a.activo && !a.home);
+const activeAdvisors = st => storeAdvisors(st).filter(a => a.activo && !a.home && a.asignado);
 const scopedZones = () => (isAllZones() ? State.zones.map(z => z.nombre) : myZones()).sort();
 // Meta del mes: el total fijado para la tienda o, si no hay, la suma de las metas por referencia.
 // Se escribe una sola vez y se mantiene hasta que alguien la cambie.
@@ -532,7 +534,7 @@ async function boot() {
     applyCollections({ stores: st.docs, zones: zn.docs, staff: sf.docs });
     // La data base del mes se aplica una sola vez, y solo si Firebase respondió de verdad: con red lenta o sin conexión
     // no se sabe si ya se aplicó, y aplicarla de nuevo pisaría lo que el equipo cambió en la app
-    if (st.fromServer || !Data.hasCloud()) await applySeedUpgrade(cfgSeed, st.docs);
+    if (st.fromServer || !Data.hasCloud()) { await applySeedUpgrade(cfgSeed, st.docs); await cleanupDemo(); }
     // Hasta tener la versión de la nube no se editan tiendas ni asesores (se reintenta sola)
     State.cloudReady = !Data.hasCloud() || st.fromServer;
     if (!State.cloudReady) waitCloud();
@@ -563,7 +565,7 @@ async function waitCloud() {
         if (State.cloudReady) break;
         const r = await Data.fetch(COL.stores);
         if (r.fromServer) {
-            cloudOk(); applyCollections({ stores: r.docs }); const z = await Data.fetch(COL.zones); if (z.fromServer) applyCollections({ zones: z.docs });
+            cloudOk(); applyCollections({ stores: r.docs }); await cleanupDemo(); const z = await Data.fetch(COL.zones); if (z.fromServer) applyCollections({ zones: z.docs });
             if (State.session && typeof ZoneData !== 'undefined') { const zs = State.session.type === 'store' ? [(currentStore() || {}).zona] : scopedZones(); await ZoneData.loadMany(zs.filter(Boolean), todayStr().slice(0, 7)).catch(() => { }); }
             if (State.session && State.tab && !$('#modal-root').children.length) navigate(State.tab);
         }
@@ -602,6 +604,45 @@ function seedFields(st, s) {
     if (st.targetMes && st.targetMes > upd.targetMes) delete upd.targetMes;
     return upd;
 }
+// Limpieza única: datos de demostración que quedaron en la nube ("Asesor 1, Asesor 2…", targets e inventario de prueba,
+// cierres, planes, visitas y data de zona marcados como demo). Las tiendas afectadas vuelven a la data base del mes;
+// lo ajustado a mano después (✋ manual) se respeta, solo se le quitan los nombres de prueba.
+const CLEANUP_VERSION = 'asesores-demo-1';
+const fakeAdv = n => /^Asesor\s*\d+$/i.test(String(n || '').trim());
+async function cleanupDemo() {
+    try {
+        const done = await Data.get(COL.config, 'cleanup');
+        if (done && done.version === CLEANUP_VERSION) return;
+        const ops = [];
+        for (const col of [COL.closures, COL.plans, COL.visits, COL.staff, COL.zoneData, COL.zoneReports]) {
+            (await Data.list(col, [['demo', '==', true]])).forEach(d => ops.push({ op: 'del', col, id: d.id }));
+        }
+        const strip = o => o ? Object.fromEntries(Object.entries(o).filter(([k]) => !fakeAdv(k))) : o;
+        let fixed = 0;
+        State.stores.concat(State.storesDeleted || []).forEach(st => {
+            const dirty = st.demoConfig || (st.asesores || []).some(fakeAdv) || Object.keys(st.metasAsesor || {}).some(fakeAdv) || Object.keys(st.targetsAsesor || {}).some(fakeAdv);
+            if (!dirty) return;
+            const seed = seedOf(st.id);
+            const upd = seed && st.demoConfig ? seedFields({ ...st, demoConfig: true }, seed) : {};
+            const base = { ...st, ...upd };
+            Object.assign(upd, {
+                asesores: (base.asesores || []).filter(n => !fakeAdv(n)),
+                metasAsesor: strip(base.metasAsesor) || null, targetsAsesor: st.demoConfig ? null : (strip(st.targetsAsesor) || null),
+                cedulas: strip(st.cedulas) || {}, bajas: (st.bajas || []).filter(b => !fakeAdv(b.nombre)),
+                demoConfig: false, updatedAt: Date.now()
+            });
+            if (!upd.asesores.length && seed && !isManual(st, 'asesores')) upd.asesores = (seed.asesoresSeed || []).slice();
+            Object.assign(st, upd); ops.push({ op: 'set', col: COL.stores, id: st.id, data: upd, merge: true }); fixed++;
+        });
+        State.demo = { loaded: false, cleared: true, at: Date.now() };
+        ops.push({ op: 'set', col: COL.config, id: 'demo', data: State.demo, merge: false });
+        ops.push({ op: 'set', col: COL.config, id: 'cleanup', data: { version: CLEANUP_VERSION, at: Date.now(), tiendas: fixed, registros: ops.length }, merge: false });
+        await Data.batch(ops);
+        if (State.zoneSnaps) Object.keys(State.zoneSnaps).forEach(z => { if (State.zoneSnaps[z] && State.zoneSnaps[z].demo) delete State.zoneSnaps[z]; });
+        if (fixed && State.session && State.tab) navigate(State.tab);
+    } catch (e) { console.warn('limpieza demo', e); }
+}
+
 // Devuelve una tienda a los datos automáticos (data base del mes) y quita las marcas de ajuste manual
 function restoreAuto(st) {
     const s = seedOf(st.id), upd = { manualFields: [], manualAt: null, manualBy: null, updatedAt: Date.now() };
@@ -655,11 +696,11 @@ function renderLogin() {
         <form id="login-store" class="login-form" autocomplete="off">
             <label class="lbl">Punto de venta</label>
             <div class="ac">
-                <input id="ls-search" class="input" placeholder="Escribe el nombre de tu tienda…" autocomplete="off">
+                <input id="ls-search" name="pdv-buscar" class="input" placeholder="Escribe el nombre de tu tienda…" autocomplete="off" readonly data-noauto>
                 <div id="ls-list" class="ac-list" hidden></div>
             </div>
             <label class="lbl">Contraseña de tienda</label>
-            <input id="ls-pass" class="input" type="password" placeholder="••••••••" autocomplete="current-password">
+            <input id="ls-pass" name="pdv-clave" class="input" type="password" placeholder="Contraseña de la tienda" autocomplete="new-password" readonly data-noauto>
             <p id="ls-err" class="err" hidden></p>
             <button class="btn btn-primary btn-block" type="submit">Ingresar al PDV</button>
         </form>
@@ -667,9 +708,9 @@ function renderLogin() {
         <form id="login-staff" class="login-form" autocomplete="off" hidden>
             <div id="lf-login-fields">
                 <label class="lbl">Código DCR</label>
-                <input id="lf-dcr" class="input" placeholder="Ej. DCR-1023" autocomplete="username" autocapitalize="characters">
+                <input id="lf-dcr" name="staff-codigo" class="input" placeholder="Ej. DCR-1023" autocomplete="off" autocapitalize="characters" readonly data-noauto>
                 <label class="lbl">Contraseña</label>
-                <input id="lf-pass" class="input" type="password" placeholder="••••••••" autocomplete="current-password">
+                <input id="lf-pass" name="staff-clave" class="input" type="password" placeholder="Tu contraseña" autocomplete="new-password" readonly data-noauto>
             </div>
             <div id="lf-reg" hidden>
                 <p class="hint" id="lf-reg-hint">Si eres nuevo, la contraseña actual es la clave inicial de tu cargo. Si ya tienes usuario, aquí cambias tu contraseña.</p>
@@ -696,6 +737,10 @@ function renderLogin() {
 
         <p class="login-foot">Infinix · Central de Operaciones v${OPS_VERSION}</p>
     </div>`;
+
+    // Sin autollenado del navegador: los campos abren vacíos para cada asesor o líder (se habilitan al tocarlos)
+    $$('[data-noauto]', el).forEach(i => { const on = () => i.removeAttribute('readonly'); i.addEventListener('focus', on); i.addEventListener('pointerdown', on); i.value = ''; });
+    setTimeout(() => $$('[data-noauto]', el).forEach(i => { if (i.hasAttribute('readonly')) i.value = ''; }), 600);
 
     // Entrada directa al demo: carga los datos de prueba si aún no existen y abre la sesión
     $$('[data-demo]', el).forEach(b => b.onclick = async () => {

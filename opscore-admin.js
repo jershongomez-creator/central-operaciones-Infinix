@@ -79,7 +79,7 @@ registerModule('admin', (() => {
         const q = slug(aQ);
         let n = 0;
         const blocks = stores.map(st => {
-            const L = storeAdvisors(st).filter(a => !q || slug(st.tienda + ' ' + a.alias.join(' ')).includes(q));
+            const L = storeAdvisors(st).filter(a => !q || slug(st.tienda + ' ' + a.alias.join(' ')).includes(q)).sort((x, y) => (y.asignado ? 1 : 0) - (x.asignado ? 1 : 0) || (y.activo ? 1 : 0) - (x.activo ? 1 : 0));
             if (q && !L.length) return '';
             n += L.length;
             return `<tr class="grp"><td colspan="5" class="l">${storeLogo(st, 'xs')} <b>${esc(st.tienda)}</b> <small class="mute">· ${esc(st.ciudad || '')} · target ${storeMetaMes(st) || '—'} · HC ${int(st.hc && st.hc.INFINIX) || '—'}</small>${isManual(st, 'metasAsesor') || isManual(st, 'asesores') ? ' <i class="pill man">✋ manual</i>' : ''}</td></tr>`
@@ -87,7 +87,7 @@ registerModule('admin', (() => {
                     <td class="l"><b>${esc(a.nombre)}</b>${a.home ? `<br><small class="mute">apoyo · su meta está en ${esc(a.homeTienda)}</small>` : ''}</td>
                     <td>${a.total || 0}</td>
                     <td><input class="input num" type="number" min="0" inputmode="numeric" data-am="${esc(a.nombre)}" data-sid="${esc(st.id)}" value="${k ? int(st.metasAsesor[k]) : ''}" placeholder="reparto" ${a.activo ? '' : 'disabled'}></td>
-                    <td>${a.activo ? '<i class="pill ok">Activo</i>' : '<i class="pill off">Retirado</i>'} <button class="btn btn-ghost sm" data-a="adv-toggle" data-sid="${esc(st.id)}" data-n="${esc(a.nombre)}">${a.activo ? 'Retirar' : 'Reactivar'}</button></td>
+                    <td>${!a.asignado && a.activo ? `<i class="pill plan" title="Aparece en la data de esta tienda pero no está asignado al PDV: sus unidades suman a la tienda">No asignado</i> <button class="btn btn-ghost sm" data-a="adv-assign" data-sid="${esc(st.id)}" data-n="${esc(a.nombre)}">Asignar</button>` : a.activo ? '<i class="pill ok">Activo</i>' : '<i class="pill off">Retirado</i>'} ${a.asignado || !a.activo ? `<button class="btn btn-ghost sm" data-a="adv-toggle" data-sid="${esc(st.id)}" data-n="${esc(a.nombre)}">${a.activo ? 'Retirar' : 'Reactivar'}</button>` : ''}</td>
                     <td><select class="input" data-amove="${esc(a.nombre)}" data-sid="${esc(st.id)}" ${a.activo ? '' : 'disabled'}><option value="">Mover a…</option>${scopedStoresAll().filter(x => x.id !== st.id && x.zona === st.zona).map(x => `<option value="${esc(x.id)}">${esc(x.tienda)}</option>`).join('')}</select></td></tr>`; }).join('')
                     || '<tr><td colspan="5" class="l mute">Sin asesores registrados.</td></tr>');
         }).join('');
@@ -106,6 +106,7 @@ registerModule('admin', (() => {
         Object.assign(st, upd); await Data.set(COL.stores, st.id, upd, true); return true;
     };
     const advByName = (st, n) => storeAdvisors(st).find(a => a.nombre === n);
+    const assigned = st => (st.asesores && st.asesores.length) ? st.asesores : (st.asesoresSeed || []);   // lista vigente del PDV
     async function advMeta(inp) {
         const st = storeById(inp.dataset.sid), a = st && advByName(st, inp.dataset.am); if (!a) return;
         const next = { ...(st.metasAsesor || {}) }, k = metaKey(st, a);
@@ -120,9 +121,9 @@ registerModule('admin', (() => {
         if (!await confirmBox(`${a.nombre} pasa de ${from.tienda} a ${to.tienda}. Sus unidades ya vendidas se quedan en ${from.tienda}. ¿Mover?`, 'Mover')) { sel.value = ''; return; }
         const k = metaKey(from, a), meta = k ? int(from.metasAsesor[k]) : 0;
         const fm = { ...(from.metasAsesor || {}) }; if (k) delete fm[k];
-        if (!await saveStore(from, { asesores: (from.asesores || []).filter(n => !a.alias.some(x => sameAdvisor({ nombre: x }, { nombre: n }))), metasAsesor: Object.keys(fm).length ? fm : null }, ['asesores', 'metasAsesor'])) { sel.value = ''; return; }
+        if (!await saveStore(from, { asesores: assigned(from).filter(n => !a.alias.some(x => sameAdvisor({ nombre: x }, { nombre: n }))), metasAsesor: Object.keys(fm).length ? fm : null }, ['asesores', 'metasAsesor'])) { sel.value = ''; return; }
         const tm = { ...(to.metasAsesor || {}) }; if (meta) tm[a.nombre] = meta;
-        await saveStore(to, { asesores: [...new Set([...(to.asesores || []), a.nombre])], metasAsesor: Object.keys(tm).length ? tm : null, bajas: (to.bajas || []).filter(b => !sameAdvisor(b, a)) }, ['asesores', 'metasAsesor']);
+        await saveStore(to, { asesores: [...new Set([...assigned(to), a.nombre])], metasAsesor: Object.keys(tm).length ? tm : null, bajas: (to.bajas || []).filter(b => !sameAdvisor(b, a)) }, ['asesores', 'metasAsesor']);
         toast(`${a.nombre} ahora está en ${to.tienda}`, 'ok'); paint();
     }
     function advAddForm() {
@@ -139,7 +140,7 @@ registerModule('admin', (() => {
             if (!st || nombre.length < 5) { const e = $('#aa-err', m); e.textContent = 'Elige la tienda y escribe nombre y apellido.'; e.hidden = false; return; }
             const tm = { ...(st.metasAsesor || {}) }; if (meta !== '') tm[nombre] = int(meta);
             const hc = { ...(st.hc || {}) }, nAct = activeAdvisors(st).length + 1; if (int(hc.INFINIX) < nAct) hc.INFINIX = nAct;
-            await saveStore(st, { asesores: [...new Set([...(st.asesores || []), nombre])], metasAsesor: Object.keys(tm).length ? tm : null, bajas: (st.bajas || []).filter(b => !sameAdvisor(b, { nombre })), hc, isConfigured: true }, ['asesores', 'metasAsesor', 'hc']);
+            await saveStore(st, { asesores: [...new Set([...assigned(st), nombre])], metasAsesor: Object.keys(tm).length ? tm : null, bajas: (st.bajas || []).filter(b => !sameAdvisor(b, { nombre })), hc, isConfigured: true }, ['asesores', 'metasAsesor', 'hc']);
             closeModal(m); toast(`${nombre} agregado a ${st.tienda}`, 'ok'); paint();
         };
     }
@@ -290,7 +291,6 @@ registerModule('admin', (() => {
             <p class="mute">${State.demo && State.demo.loaded ? `Cargados el ${State.demo.at ? dstr(new Date(State.demo.at)) : ''}: todas las tiendas del país configuradas con sus asesores reales, targets e inventario; data de zona del mes; cierres diarios, planes y visitas de prueba en ${DEMO_CLOSURE_ZONES.join(', ')} (usuarios "Demo", contraseña <b>${DEMO_PASSWORD}</b>).` : 'No hay datos de demostración cargados.'}
             Restaurar de cero borra todo lo de prueba y deja las tiendas sin configurar; lo que hayas registrado de verdad se conserva.</p>
             <div class="row end wrap" style="margin-top:12px">
-                <button class="btn btn-ghost" data-a="demo-load">📦 Cargar datos de demostración</button>
                 <button class="btn btn-danger" data-a="demo-clear">♻️ Restaurar de cero</button>
             </div>
         </section>` : ''}`;
@@ -316,14 +316,20 @@ registerModule('admin', (() => {
         if (a === 'store-cfg') return openStoreSettings(id, { onSaved: paint });
         if (a === 'store-pass') return passForm(storeById(id));
         if (a === 'adv-add') return advAddForm();
+        if (a === 'adv-assign') {
+            const st = storeById(b.dataset.sid), adv = st && advByName(st, b.dataset.n); if (!adv) return;
+            const base = (st.asesores && st.asesores.length) ? st.asesores : (st.asesoresSeed || []);
+            if (!await saveStore(st, { asesores: [...new Set([...base, adv.nombre])] }, ['asesores'])) return;
+            toast(`${adv.nombre} asignado a ${st.tienda}`, 'ok'); return paint();
+        }
         if (a === 'adv-toggle') {
             const st = storeById(b.dataset.sid), adv = st && advByName(st, b.dataset.n); if (!adv) return;
             if (adv.activo) {
                 const bajas = (st.bajas || []).concat({ nombre: adv.nombre, cedula: adv.cedula || '', nombres: adv.alias, at: Date.now(), by: me().nombre });
-                await saveStore(st, { bajas, asesores: (st.asesores || []).filter(n => !adv.alias.some(x => sameAdvisor({ nombre: x }, { nombre: n }))) }, ['asesores']);
+                await saveStore(st, { bajas, asesores: assigned(st).filter(n => !adv.alias.some(x => sameAdvisor({ nombre: x }, { nombre: n }))) }, ['asesores']);
                 toast(`${adv.nombre} retirado: sus unidades siguen en ${st.tienda}`, 'ok');
             } else {
-                await saveStore(st, { bajas: (st.bajas || []).filter(x => !sameAdvisor(x, adv) && !adv.alias.some(n => sameAdvisor(x, { nombre: n }))), asesores: [...new Set([...(st.asesores || []), adv.nombre])] }, ['asesores']);
+                await saveStore(st, { bajas: (st.bajas || []).filter(x => !sameAdvisor(x, adv) && !adv.alias.some(n => sameAdvisor(x, { nombre: n }))), asesores: [...new Set([...assigned(st), adv.nombre])] }, ['asesores']);
                 toast(`${adv.nombre} activo de nuevo`, 'ok');
             }
             return paint();
