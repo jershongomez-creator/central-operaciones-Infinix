@@ -3,7 +3,7 @@
 // Todo lo editable por negocio vive en este archivo.
 // ============================================================================
 
-const OPS_VERSION = '1.7.0';
+const OPS_VERSION = '1.8.0';
 const APP_NAME = 'Central de Operaciones';
 
 // --- Firebase: proyecto propio de OpsCore -------------------------------------
@@ -58,9 +58,9 @@ const LOGO_INFINIX = LOGOS.infinix;        // ver opscore-assets.js
 const ROLES = {
     asesor:      { label: 'Tienda (PDV)',  modules: ['m1', 'central', 'calc', 'm5'] },
     supervisor:  { label: 'Supervisor',    modules: ['zona', 'm2', 'm3', 'm4', 'm5', 'admin'] },      // sin evaluaciones
-    formador:    { label: 'Formador',      modules: ['zona', 'evals', 'm2', 'm3', 'm4', 'm5'] },
+    formador:    { label: 'Formador',      modules: ['zona', 'evals', 'm2', 'm3', 'm4', 'm5', 'admin'] },
     coordinador: { label: 'Coordinador',   modules: ['zona', 'm4', 'evals', 'm5', 'admin'] },          // no hace plan ni visita: analiza y consulta reportes
-    gerente:     { label: 'Gerente',       modules: ['m4', 'zona', 'm5'] },
+    gerente:     { label: 'Gerente',       modules: ['m4', 'zona', 'm5', 'admin'] },
     admin:       { label: 'Administrador', modules: ['zona', 'm2', 'm3', 'm4', 'evals', 'm5', 'admin'] }
 };
 const STAFF_ROLES = ['supervisor', 'formador', 'coordinador', 'gerente', 'admin'];

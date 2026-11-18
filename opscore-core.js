@@ -538,6 +538,11 @@ async function boot() {
 const officialStores = arr => (arr || []).filter(s => normLogoKey(s.logoKey) !== 'otro');
 // Actualización de la data base del mes (targets, HC, KPI de comisión, asesores, inventario): se aplica una sola vez por versión
 // de semilla. Quita la data de demostración y respeta lo que es propio de cada tienda (asesores retirados, foco, contraseña).
+// Ajustes manuales: lo que el staff corrige a mano queda marcado y ninguna carga automática lo pisa
+const MANUAL_KEYS = ['asesores', 'hc', 'metas', 'metaMes', 'metasComp', 'metasAcc', 'metasAsesor', 'kpi'];
+const markManual = (st, fields) => ({ manualFields: [...new Set([...((st && st.manualFields) || []), ...fields.filter(f => MANUAL_KEYS.includes(f))])], manualAt: Date.now(), manualBy: (State.session && State.session.nombre) || '' });
+const isManual = (st, f) => !!(st && (st.manualFields || []).includes(f));
+const seedOf = id => (typeof INITIAL_STORES_SEED !== 'undefined' ? INITIAL_STORES_SEED : []).find(s => s.id === id) || null;
 function seedFields(st, s) {
     const upd = {
         cadena: s.cadena, logoKey: s.logoKey, zona: s.zona, regional: s.regional, tienda: st.tienda || s.tienda,
@@ -549,6 +554,17 @@ function seedFields(st, s) {
     if (s.inventario) { upd.inventario = s.inventario; upd.invAt = '2026-11-17'; }
     if (s.asesoresSeed && s.asesoresSeed.length) upd.asesores = s.asesoresSeed.slice();
     if (s.ciudad && !st.ciudad) upd.ciudad = s.ciudad;
+    (st.manualFields || []).forEach(f => { delete upd[f]; if (f === 'metas') delete upd.metaMes; });      // lo manual manda
+    return upd;
+}
+// Devuelve una tienda a los datos automáticos (data base del mes) y quita las marcas de ajuste manual
+function restoreAuto(st) {
+    const s = seedOf(st.id), upd = { manualFields: [], manualAt: null, manualBy: null, updatedAt: Date.now() };
+    if (s) {
+        const base = seedFields({ ...st, manualFields: [] }, s);
+        (st.manualFields || []).forEach(f => { if (f in base) upd[f] = base[f]; if (f === 'metas') upd.metaMes = base.metaMes; });
+        if ((st.manualFields || []).includes('asesores')) upd.asesores = (s.asesoresSeed || []).slice();
+    }
     return upd;
 }
 async function applySeedUpgrade(cfgSeed, docs) {
@@ -836,9 +852,16 @@ function openStoreSettings(storeId, opts = {}) {
     const foco = st.foco || {};
     const metasComp = st.metasComp || {}, invAcc = st.invAcc || {}, metasAcc = st.metasAcc || {};
     const numIn = (id, v) => `<input class="input num" type="number" inputmode="numeric" min="0" id="${id}" value="${int(v)}">`;
+    // El staff (supervisor, formador, coordinador, gerente) edita todo a mano: asesores, meta por asesor, targets y clave
+    const staffEdit = !!(State.session && State.session.type === 'staff');
+    const metaAs = st.metasAsesor || {};
+    const metaKeyOf = n => Object.keys(metaAs).find(k => sameAdvisor({ nombre: k }, { nombre: n }) || nameSubset(k, n));
+    const advRow = (n, i) => `<div class="adv-edit" data-row><input class="input" data-asn placeholder="Nombre del asesor ${i + 1}" value="${esc(n || '')}">${staffEdit ? `<input class="input num" type="number" inputmode="numeric" min="0" data-asm placeholder="—" title="Meta del mes del asesor (unidades)" value="${n && metaKeyOf(n) ? int(metaAs[metaKeyOf(n)]) : ''}">` : ''}<button type="button" class="icon-btn" data-asx title="Quitar asesor">✕</button></div>`;
+    const manualTxt = (st.manualFields || []).length ? `<div class="manual-note">✋ Ajustado a mano${st.manualBy ? ' por ' + esc(st.manualBy) : ''}${st.manualAt ? ' el ' + dstr(new Date(st.manualAt)) : ''}: ${(st.manualFields || []).map(f => ({ asesores: 'asesores', hc: 'HC', metas: 'target por referencia', metaMes: 'target del mes', metasComp: 'target competencia', metasAcc: 'target accesorios', metasAsesor: 'meta por asesor', kpi: 'ROI' })[f] || f).join(', ')}. Las cargas automáticas no cambian estos datos.${staffEdit ? ' <button type="button" class="btn btn-ghost sm" id="sc-auto">↺ Volver a datos automáticos</button>' : ''}</div>` : '';
     const m = openModal(`
         <h3 class="modal-title">${opts.onboarding ? 'Configuración inicial de la tienda' : 'Ajustes de tienda'}</h3>
         <p class="mute">${esc(st.tienda)} · ${esc(st.ciudad || '')}. ${opts.onboarding ? 'Se hace una sola vez; después el reporte abre listo para llenar.' : ''}</p>
+        ${manualTxt}
 
         <h4 class="sec">1 · Cadena comercial</h4>
         <div class="row">
@@ -849,7 +872,9 @@ function openStoreSettings(storeId, opts = {}) {
 
         <h4 class="sec">2 · Asesores asignados al PDV</h4>
         ${!(st.asesores && st.asesores.length) && (st.asesoresSeed || []).length ? '<p class="hint">Precargados desde la data DCR del PDV; corrige lo que haga falta.</p>' : ''}
-        <div class="grid2">${[0, 1, 2, 3].map(i => `<input class="input" id="sc-as${i}" placeholder="Asesor ${i + 1}" value="${esc(as[i] || '')}">`).join('')}</div>
+        ${staffEdit ? '<div class="adv-edit head"><span>Nombre</span><span>Meta mes (uds)</span><span></span></div>' : ''}
+        <div id="sc-advs">${(as.length ? as : ['']).map(advRow).join('')}</div>
+        <div class="row between wrap" style="margin-top:6px"><button type="button" class="btn btn-ghost sm" id="sc-add">➕ Agregar asesor</button>${staffEdit ? '<small class="mute">Quitar a un asesor lo marca como retirado: sus unidades siguen en la venta de la tienda. Sin meta, se reparte el target de la tienda.</small>' : ''}</div>
         ${opts.onboarding ? '' : `<div class="row end" style="margin-top:8px"><button type="button" class="btn btn-ghost sm" id="sc-photos">📸 Fotos del equipo (medio cuerpo, con uniforme)</button></div>`}
 
         <h4 class="sec">2b · Foco de la semana <small class="mute">(lo ajusta el supervisor o formador; cambia semana a semana)</small></h4>
@@ -878,7 +903,7 @@ function openStoreSettings(storeId, opts = {}) {
         <p class="hint">El plan comisional es general y lo fija el Administrador en Gestión › Configuración. En la Calculadora cada asesor ve su target (el de la tienda repartido entre los asesores) y lo que lleva ganado.</p>
 
         <h4 class="sec">7 · Contraseña de la tienda (opcional)</h4>
-        <input class="input" type="password" id="sc-pass" placeholder="Dejar vacío para conservar la actual" autocomplete="new-password">
+        <div class="row wrap" style="gap:8px"><input class="input grow" type="${staffEdit ? 'text' : 'password'}" id="sc-pass" placeholder="Nueva contraseña · dejar vacío para conservar la actual" autocomplete="new-password">${staffEdit ? '<button type="button" class="btn btn-ghost sm" id="sc-pass-reset">🔑 Volver a la clave inicial</button>' : ''}</div>
 
         <p id="sc-err" class="err" hidden></p>
         <div class="row end" style="margin-top:16px">
@@ -895,8 +920,20 @@ function openStoreSettings(storeId, opts = {}) {
     if ($('#sc-out', m)) $('#sc-out', m).onclick = logout;
     if ($('#sc-cancel', m)) $('#sc-cancel', m).onclick = () => closeModal(m);
     if ($('#sc-photos', m)) $('#sc-photos', m).onclick = () => { if (typeof openAdvisorPhotos === 'function') openAdvisorPhotos(st.id); };
+    $('#sc-add', m).onclick = () => { const box = $('#sc-advs', m); box.insertAdjacentHTML('beforeend', advRow('', box.children.length)); $('[data-row]:last-child [data-asn]', box).focus(); };
+    $('#sc-advs', m).onclick = e => { const x = e.target.closest('[data-asx]'); if (!x) return; const box = $('#sc-advs', m); if (box.children.length > 1) x.closest('[data-row]').remove(); else $('[data-asn]', box).value = ''; };
+    if ($('#sc-pass-reset', m)) $('#sc-pass-reset', m).onclick = async () => {
+        if (!await confirmBox('La tienda volverá a entrar con la clave inicial de PDV. ¿Restablecer?', 'Restablecer')) return;
+        await Data.set(COL.stores, st.id, { passHash: null }, true); st.passHash = null; toast('Contraseña restablecida a la clave inicial', 'ok');
+    };
+    if ($('#sc-auto', m)) $('#sc-auto', m).onclick = async () => {
+        if (!await confirmBox('Se quitan los ajustes manuales y la tienda vuelve a los datos de la carga automática (target, HC, asesores y metas). ¿Continuar?', 'Volver a automático')) return;
+        const upd = restoreAuto(st); await Data.set(COL.stores, st.id, upd, true); Object.assign(st, upd);
+        closeModal(m); toast('Tienda de nuevo con datos automáticos', 'ok'); openStoreSettings(st.id, opts);
+    };
     $('#sc-save', m).onclick = async () => {
-        const asesores = [0, 1, 2, 3].map(i => $('#sc-as' + i, m).value.trim()).filter(Boolean);
+        const rows = $$('#sc-advs [data-row]', m).map(r => ({ n: $('[data-asn]', r).value.trim().replace(/\s+/g, ' '), meta: staffEdit ? $('[data-asm]', r).value.trim() : '' })).filter(x => x.n);
+        const asesores = [...new Set(rows.map(x => x.n))];
         const err = $('#sc-err', m);
         if (!asesores.length) { err.textContent = 'Registra al menos un asesor.'; err.hidden = false; return; }
         const logoKey = $('#sc-chain', m).value, pass = $('#sc-pass', m).value;
@@ -920,6 +957,20 @@ function openStoreSettings(storeId, opts = {}) {
         const sumMetas = sum(Object.values(upd.metas));
         if (sumMetas > 0) upd.metaMes = sumMetas;               // las metas por referencia definen el total del mes
         if (pass) upd.passHash = pwdHash(pass);
+        if (staffEdit) {
+            // Meta por asesor: se conserva el nombre con el que vino del seguimiento; sin valor = reparto del target de la tienda
+            const nextMeta = { ...metaAs };
+            as.forEach(n => { if (!asesores.some(a => sameAdvisor({ nombre: a }, { nombre: n }))) { const k = metaKeyOf(n); if (k) delete nextMeta[k]; } });
+            rows.forEach(x => { const k = metaKeyOf(x.n); if (k) delete nextMeta[k]; if (x.meta !== '') nextMeta[k || x.n] = int(x.meta); });
+            upd.metasAsesor = Object.keys(nextMeta).length ? nextMeta : null;
+            // Quitar = retirado (sale de rankings y calculadora; sus unidades siguen en la tienda). Volver a agregarlo lo reactiva.
+            const bajas = (st.bajas || []).filter(b => !asesores.some(a => sameAdvisor(b, { nombre: a }) || nameSubset(b.nombre, a)));
+            as.filter(n => !asesores.some(a => sameAdvisor({ nombre: a }, { nombre: n }))).forEach(n => { if (!bajas.some(b => sameAdvisor(b, { nombre: n }))) bajas.push({ nombre: n, cedula: (st.cedulas || {})[n] || '', at: Date.now(), by: State.session.nombre }); });
+            upd.bajas = bajas;
+        }
+        const norm = v => { if (v && typeof v === 'object' && !Array.isArray(v)) { const e = Object.entries(v).filter(([, x]) => x !== 0 && x !== '' && x != null).sort(); return e.length ? JSON.stringify(e) : 'null'; } return JSON.stringify(Array.isArray(v) ? (v.length ? v : null) : (v || null)); };
+        const changed = MANUAL_KEYS.filter(k => k in upd && norm(upd[k]) !== norm(st[k]));
+        if (changed.length && !opts.onboarding) Object.assign(upd, markManual(st, changed));
         const r = await Data.set(COL.stores, st.id, upd, true);
         Object.assign(st, upd);
         closeModal(m);
@@ -1002,8 +1053,14 @@ const actionBarHTML = () => `
     </div>`;
 
 const ReportActions = {
-    // cfg: { validate():string|null, build(stage):Promise<HTMLElement>, filename():string, title, persist?():Promise<{synced}> }
+    // cfg: { validate():string|null, build(stage):Promise<HTMLElement>, filename():string, title, persist?():Promise<{synced}>, afterStore?() }
     bind(root, cfg) {
+        // Todo reporte que guarda datos tiene además "Solo guardar": registra en la nube sin generar imagen
+        if (cfg.persist && !cfg.noStore) $$('.actions', root).forEach(bar => {
+            if ($('[data-act="store"]', bar)) return;
+            const b = document.createElement('button'); b.className = 'btn btn-ok'; b.dataset.act = 'store'; b.type = 'button';
+            b.textContent = '✅ Solo guardar'; b.title = 'Guarda la información en el sistema sin generar imagen'; bar.prepend(b);
+        });
         $$('[data-act]', root).forEach(btn => btn.onclick = () => this.run(btn.dataset.act, cfg, btn));
     },
     async make(cfg) {
@@ -1015,6 +1072,11 @@ const ReportActions = {
         const err = cfg.validate ? cfg.validate() : null;
         if (err) { toast(err, 'warn'); return; }
         busy(btn, true);
+        if (act === 'store') {
+            try { await this.persist(cfg); if (cfg.afterStore) cfg.afterStore(); }
+            finally { busy(btn, false); }
+            return;
+        }
         try {
             const out = await this.make(cfg);
             if (act === 'preview') this.preview(out, cfg);

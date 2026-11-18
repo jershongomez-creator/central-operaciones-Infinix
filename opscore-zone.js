@@ -331,7 +331,7 @@ registerModule('zona', (() => {
     const scopeLabel = () => isAllZones() ? 'Nacional' : (['coordinador', 'gerente'].includes(me().rol) && myRegional() ? `Regional ${myRegional()}` : `Zona ${zonas[0] || ''}`);
     const viewZonas = () => view ? [view] : zonas;
     const viewStores = () => scopedStores().filter(s => viewZonas().includes(s.zona) && chainViewOn(s));
-    const canEditAdv = () => ['supervisor', 'formador', 'coordinador', 'admin'].includes(me().rol);
+    const canEditAdv = () => ['supervisor', 'formador', 'coordinador', 'gerente', 'admin'].includes(me().rol);
     const chainBtnLabel = () => { const all = chainList(scopedStores().filter(s => viewZonas().includes(s.zona))), on = all.filter(c => !State.chainView.includes(c.key)).length; return `🏷️ Cadenas (${on} de ${all.length})`; };
     const viewLabel = () => view ? `Zona ${view}` : scopeLabel();
     const viewSnap = () => { const sub = Object.fromEntries(viewZonas().map(z => [z, snaps[z]])); return view ? (snaps[view] || { zona: view, stores: {} }) : ZoneData.merge(sub, viewLabel()); };
@@ -844,7 +844,7 @@ registerModule('zona', (() => {
                         if ((s.asesores || []).length) upd.asesores = s.asesores.filter(n => !next.some(b => sameAdvisor(b, { nombre: n, cedula: (s.cedulas || {})[n] })));
                     }
                 }
-                if (Object.keys(upd).length) { upd.updatedAt = Date.now(); Object.assign(s, upd); ops.push({ op: 'set', col: COL.stores, id: s.id, data: upd, merge: true }); }
+                if (Object.keys(upd).length) { upd.updatedAt = Date.now(); const mk = Object.keys(upd).filter(k => MANUAL_KEYS.includes(k)); if (mk.length) Object.assign(upd, markManual(s, mk)); Object.assign(s, upd); ops.push({ op: 'set', col: COL.stores, id: s.id, data: upd, merge: true }); }
             });
             if (ops.length) await Data.batch(ops);
             closeModal(m); toast(ops.length ? `${ops.length} PDV actualizados` : 'Sin cambios', 'ok');

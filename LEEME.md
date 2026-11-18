@@ -1,4 +1,4 @@
-# Infinix · Central de Operaciones v1.7
+# Infinix · Central de Operaciones v1.8
 
 Aplicación web (PWA) de ejecución retail de Infinix para tiendas, supervisores, formadores, coordinadores y gerencia. Funciona en computador y en celular, en el navegador o instalada como app.
 
@@ -44,13 +44,15 @@ El Administrador las cambia en Gestión › Configuración.
 | Cargo | Módulos | Alcance |
 |---|---|---|
 | Tienda (PDV) | Cierre diario, Calculadora, Simulador | Su tienda |
-| Supervisor | Análisis de zona (**solo venta**: sin evaluaciones ni fichas), Plan de trabajo, Visita PDV, Central de reportes, Simulador, Gestión (solo tiendas) | Su zona |
-| Formador | Análisis de zona (completo: venta + evaluaciones + tarjetas de asesor), Evaluaciones, Plan de trabajo, Visita PDV, Central de reportes, Simulador | Su zona |
+| Supervisor | Análisis de zona (**solo venta**: sin evaluaciones ni fichas), Plan de trabajo, Visita PDV, Central de reportes, Simulador, Gestión | Su zona |
+| Formador | Análisis de zona (completo: venta + evaluaciones + tarjetas de asesor), Evaluaciones, Plan de trabajo, Visita PDV, Central de reportes, Simulador, Gestión | Su zona |
 | Coordinador | Análisis de zona (estatus completo de asesores con foco), Central de reportes (incluye avance de supervisores y formadores), Evaluaciones, Simulador, Gestión. **No hace plan de trabajo ni visita.** | Su regional (todas sus zonas) |
-| Gerente | Central de reportes, Análisis de zona, Simulador | Nacional o su regional |
-| Administrador | Todo, incluida Gestión › Configuración | Nacional |
+| Gerente | Central de reportes, Análisis de zona, Simulador, Gestión | Nacional o su regional |
+| Administrador | Todo | Nacional |
 
-En Gestión, el supervisor edita las tiendas de su zona: asesores, HC, targets, inventario y contraseña del PDV (cuando la tienda no llenó algo o no tiene asesor). El coordinador además administra zonas y equipo. Solo el Administrador ve Configuración (claves, tasas del simulador, plan comisional, datos de demostración) y el botón para eliminar todos los usuarios de demostración.
+**Gestión (todos los cargos menos la tienda), dentro de su alcance:** crear, editar y eliminar tiendas; asesores (agregar, quitar/retirar, reactivar, mover de tienda, meta del mes de cada uno); HC, target por referencia, competencia y accesorios; inventario y foco; contraseña de cada tienda (asignar una nueva o volver a la clave inicial). Coordinador y Gerente además zonas, equipo y Configuración (claves iniciales, cadenas, radar, tasas, plan comisional). Solo el Administrador cambia la clave del Administrador y maneja los datos de demostración.
+
+La tienda solo configura lo básico de su PDV (asesores, targets e inventario en ⚙️ Ajustes).
 
 ## 3. Data del mes (v1.6) y actualización
 
@@ -172,6 +174,14 @@ Resultado: quién presentó, quién falta, quién repitió y con qué notas, pro
 - **Fotos del asesor** en el plan de trabajo, el cierre de actividades y la visita (junto a la cadena y la tienda).
 - **Todo se llena solo:** la visita trae la venta del mes de la DCR cuando no hay cierres y marca las evaluaciones ya cargadas (quién presentó y nota promedio); el plan trae la venta de la semana de la DCR.
 
+## 5f. Novedades v1.8
+
+- **"✅ Solo guardar" en el cierre diario** (y en el plan de trabajo): guarda el cierre en el sistema sin generar imagen ni abrir WhatsApp. La imagen se genera solo cuando se va a enviar.
+- **Llenar el mes completo:** el cierre trae flechas ◀ ▶ para pasar de día y una franja con los días del mes; los días en verde ya tienen cierre guardado. Al tocar un día se cargan sus datos (si existe) para corregirlos. En un día sin cierre, el inventario arranca del último cierre anterior.
+- **Todo automático, todo editable a mano:** lo que llega con la data (asesores, metas por asesor, HC, targets) se puede corregir en Gestión › Tiendas (⚙️) o en Gestión › Asesores. Lo corregido a mano queda marcado **✋ manual** y ninguna carga automática lo pisa. En ⚙️ Ajustes de la tienda, «↺ Volver a datos automáticos» quita la marca y devuelve la tienda a la data base.
+- **Gestión › Asesores:** lista por zona con venta del mes, meta (vacío = reparto del target de la tienda), retirar / reactivar, mover a otra tienda y agregar asesor. Se guarda al cambiar cada dato.
+- **Lectura de la data plana verificada** con la DCR real del 1 al 18 de noviembre: 9.348 celulares y 305 accesorios (la tablet XPAD 30E cuenta como accesorio, como en el plan comisional) en 234 tiendas, iguales unidad por unidad a un conteo independiente; IR y cadenas no oficiales quedan fuera.
+
 ## 6. Calculadora (tienda)
 
 El asesor elige su nombre. Su target por referencia sale del target de la tienda dividido entre los asesores y lo puede ajustar a mano; sus unidades llegan de la data de zona (o se escriben). Muestra apertura (KPI), lo ganado y el siguiente bono según el **plan comisional general**, que el Administrador configura en Gestión › Configuración › Plan comisional (valor por referencia y accesorio, apertura y bonos).
@@ -208,7 +218,7 @@ Mientras no estén publicadas, la app avisa y guarda todo en el equipo; luego lo
 4. En 1–2 minutos queda en `https://TU-USUARIO.github.io/central-operaciones/`.
 5. En el celular, abre ese enlace y elige "Agregar a pantalla de inicio" para instalarla como app.
 
-Para actualizar después, sube los archivos nuevos encima; el `sw.js` cambia de versión y los teléfonos toman la nueva al reabrir.
+Para actualizar después, sube los archivos nuevos encima (no hace falta borrar los anteriores: los que tienen el mismo nombre se reemplazan). El `sw.js` cambia de versión y los teléfonos toman la nueva al reabrir. Los datos no se tocan: viven en Firebase, no en GitHub.
 
 GitHub Pages gratuito publica repositorios **públicos**: el código queda visible (no las ventas ni los registros, que viven en Firebase). La semilla incluye nombres de tiendas y asesores, pero no cédulas.
 

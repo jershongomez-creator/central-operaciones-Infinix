@@ -21,8 +21,9 @@ registerModule('m1', (() => {
         <section class="card">
             <div class="row between wrap">
                 <div class="row">${storeLogo(st)}<div><h2 class="h2">Reporte de cierre diario</h2><p class="mute">${esc(st.tienda)} · ${esc(st.ciudad || '')} · Zona ${esc(st.zona || '')}</p></div></div>
-                <label class="field-inline"><span class="lbl">Fecha del cierre</span><input type="date" id="m1-fecha" class="input" value="${fecha}" max="${todayStr()}"></label>
+                <label class="field-inline"><span class="lbl">Fecha del cierre</span><span class="row" style="gap:4px"><button type="button" class="icon-btn" id="m1-prev" title="Día anterior">◀</button><input type="date" id="m1-fecha" class="input" value="${fecha}" max="${todayStr()}"><button type="button" class="icon-btn" id="m1-next" title="Día siguiente">▶</button></span></label>
             </div>
+            <div class="m1-days" id="m1-days"></div>
             <label class="lbl">¿Quién reporta hoy?</label>
             <div class="chips" id="m1-asesores">${(st.asesores || []).map((a, i) => `<label class="chip"><input type="checkbox" value="${esc(a)}" ${i === 0 ? 'checked' : ''}><span>${esc(a)}</span></label>`).join('') || '<span class="mute">Configura los asesores en ⚙️ Ajustes de tienda.</span>'}</div>
         </section>
@@ -65,6 +66,9 @@ registerModule('m1', (() => {
             recalc();
         });
         $('#m1-fecha').onchange = e => { fecha = e.target.value || todayStr(); load(); };
+        const go = d => { const f = addDays(fecha, d); if (f > todayStr()) return; fecha = f; $('#m1-fecha').value = f; load(); };
+        $('#m1-prev').onclick = () => go(-1); $('#m1-next').onclick = () => go(1);
+        $('#m1-days').onclick = e => { const b = e.target.closest('[data-day]'); if (!b) return; fecha = b.dataset.day; $('#m1-fecha').value = fecha; load(); };
 
         ReportActions.bind(view, {
             title: 'Reporte diario de ventas',
@@ -82,22 +86,39 @@ registerModule('m1', (() => {
         if (!$('#m1-fecha')) return;
         const cur = closures.find(c => c.fecha === fecha);
         invTouched = {}; invBase = {};
+        // Día sin cierre: el inventario parte del último cierre anterior (llenar el mes día a día) o del inventario vigente
+        const prev = cur ? null : closures.filter(c => c.fecha < fecha && c.inventario).sort((a, b) => b.fecha.localeCompare(a.fecha))[0];
+        const later = !cur && closures.some(c => c.fecha > fecha);
+        const baseInv = prev ? prev.inventario : st.inventario, baseAcc = prev ? prev.invAcc : st.invAcc;
         INFINIX_MODELS.forEach(m => {
             const v = cur ? int(cur.ventas && cur.ventas[m.key]) : 0;
-            const inv = cur ? int(cur.inventario && cur.inventario[m.key]) : int(st.inventario && st.inventario[m.key]);
+            const inv = cur ? int(cur.inventario && cur.inventario[m.key]) : int(baseInv && baseInv[m.key]);
             invBase[m.key] = cur ? inv + v : inv;            // stock antes de las ventas del día
             $('#m1-v-' + m.key).value = v; $('#m1-i-' + m.key).value = inv;
         });
         invAccTouched = {}; invAccBase = {};
         INFINIX_ACCESSORIES.forEach(a => {
             const v = cur ? int(cur.accesorios && cur.accesorios[a.key]) : 0;
-            const inv = cur && cur.invAcc ? int(cur.invAcc[a.key]) : int(st.invAcc && st.invAcc[a.key]);
+            const inv = cur && cur.invAcc ? int(cur.invAcc[a.key]) : int(baseAcc && baseAcc[a.key]);
             invAccBase[a.key] = cur && cur.invAcc ? inv + v : inv;
             $('#m1-a-' + a.key).value = v; $('#m1-ia-' + a.key).value = inv;
         });
         BRANDS.forEach(b => { if (b !== 'INFINIX') $('#m1-c-' + b).value = cur ? int(cur.competencia && cur.competencia[b]) : 0; });
         if (cur && cur.asesores) $$('#m1-asesores input').forEach(i => { i.checked = cur.asesores.includes(i.value); });
-        recalc();
+        if (!cur && later && !prev) toast('Este día no tiene cierre: revisa el inventario antes de guardar.', 'info', 4000);
+        recalc(); paintDays();
+    }
+
+    // Franja del mes: qué días ya tienen cierre guardado (para llenar el mes completo sin perderse)
+    function paintDays() {
+        const box = $('#m1-days'); if (!box) return;
+        const ym = fecha.slice(0, 7), last = todayStr().slice(0, 7) === ym ? int(todayStr().slice(8)) : new Date(+ym.slice(0, 4), +ym.slice(5), 0).getDate();
+        const done = new Set(closures.filter(c => c.month === ym || (c.fecha || '').slice(0, 7) === ym).map(c => c.fecha));
+        const n = done.size;
+        box.innerHTML = `<span class="lbl">${esc(mesLargo(ym))}: ${n} de ${last} días guardados</span><div class="m1-strip">${Array.from({ length: last }, (_, i) => {
+            const d = `${ym}-${String(i + 1).padStart(2, '0')}`;
+            return `<button type="button" data-day="${d}" class="${done.has(d) ? 'ok' : ''} ${d === fecha ? 'cur' : ''}" title="${done.has(d) ? 'Guardado' : 'Sin cierre'}">${i + 1}</button>`;
+        }).join('')}</div>`;
     }
 
     function recalc() {
@@ -147,6 +168,7 @@ registerModule('m1', (() => {
         const st = currentStore(), doc = collect();
         const saving = [Data.set(COL.closures, doc.id, doc, false)];
         closures = closures.filter(c => c.fecha !== fecha).concat(doc);
+        paintDays();
         if (!st.lastClosure || fecha >= st.lastClosure) {      // el inventario vigente es el del último cierre
             const upd = { inventario: doc.inventario, invAcc: doc.invAcc, lastClosure: fecha };
             Object.assign(st, upd); saving.push(Data.set(COL.stores, st.id, upd, true));

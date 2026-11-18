@@ -1,7 +1,7 @@
 // Central de Operaciones (Infinix) · Service Worker
 // App shell: red primero (para que las actualizaciones lleguen) con respaldo en caché.
 // Imágenes y librerías CDN: caché primero. Firestore nunca se intercepta.
-const CACHE_NAME = 'infinix-opscore-v12';
+const CACHE_NAME = 'infinix-opscore-v13';
 const SHELL = [
   './', './index.html', './manifest.json', './opscore.css', './logo-512.png',
   './opscore-assets.js', './opscore-config.js', './opscore-core.js', './opscore-m1.js', './opscore-m2.js',

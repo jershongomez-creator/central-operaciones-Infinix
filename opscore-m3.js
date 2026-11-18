@@ -222,7 +222,8 @@ registerModule('m3', (() => {
             validate: () => !F.gestion.trim() ? 'Describe la gestión lograda en la visita.' : null,
             filename: () => `Visita_${slug(storeById(storeId).tienda)}_${fecha}.png`,
             build: stage => buildVisitCanvas(stage, buildDoc(), fotos),
-            persist
+            persist,
+            noStore: true                       // la visita ya tiene su propio botón de guardar
         });
     }
 
