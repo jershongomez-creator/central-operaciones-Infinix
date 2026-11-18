@@ -492,7 +492,7 @@ async function boot() {
     Data.seedLocal(COL.zones, INITIAL_ZONES_SEED);
     Data.seedLocal(COL.stores, INITIAL_STORES_SEED);                 // aditiva: agrega las tiendas de la semilla que falten
     Data.seedLocal(COL.staff, staffSeedDocs());
-    State.stores = officialStores(Data.local(COL.stores)); State.zones = Data.local(COL.zones); State.staff = Data.local(COL.staff);
+    State.stores = officialStores(Data.local(COL.stores)); State.zones = liveDocs(Data.local(COL.zones)); State.staff = Data.local(COL.staff);
     try { State.session = JSON.parse(localStorage.getItem('opscore_session')); } catch (e) { State.session = null; }
     renderLogin();
     if (State.session && (State.session.type === 'staff' || storeById(State.session.storeId))) enterApp();
@@ -520,7 +520,9 @@ async function boot() {
     if (cfgRates) Object.keys(cfgRates).forEach(k => { if (State.rates[k] && cfgRates[k] && typeof cfgRates[k] === 'object') State.rates[k] = { ...State.rates[k], ...cfgRates[k] }; });
     State.demo = cfgDemo || null;
     applyCollections({ stores: st.docs, zones: zn.docs, staff: sf.docs });
-    await applySeedUpgrade(cfgSeed, st.docs);
+    // La data base del mes se aplica una sola vez, y solo si Firebase respondió de verdad: con red lenta o sin conexión
+    // no se sabe si ya se aplicó, y aplicarla de nuevo pisaría lo que el equipo cambió en la app
+    if (st.fromServer || !Data.hasCloud()) await applySeedUpgrade(cfgSeed, st.docs);
     Data.watch(COL.stores, docs => applyCollections({ stores: docs }));
     Data.watch(COL.zones, docs => applyCollections({ zones: docs }));
     Data.watch(COL.staff, docs => applyCollections({ staff: docs }));
@@ -535,7 +537,10 @@ async function boot() {
 }
 
 // Regla de oro: en toda la app solo existen las tiendas de las 7 cadenas oficiales
-const officialStores = arr => (arr || []).filter(s => normLogoKey(s.logoKey) !== 'otro');
+// Eliminar = marcar como eliminada (no se borra el documento): así la siembra de la data base no la vuelve a crear
+// al abrir la app, y se puede restaurar desde Gestión. Las eliminadas no aparecen en ninguna parte.
+const liveDocs = arr => (arr || []).filter(d => !d.deleted);
+const officialStores = arr => { State.storesDeleted = (arr || []).filter(s => s.deleted); return liveDocs(arr).filter(s => normLogoKey(s.logoKey) !== 'otro'); };
 // Actualización de la data base del mes (targets, HC, KPI de comisión, asesores, inventario): se aplica una sola vez por versión
 // de semilla. Quita la data de demostración y respeta lo que es propio de cada tienda (asesores retirados, foco, contraseña).
 // Ajustes manuales: lo que el staff corrige a mano queda marcado y ninguna carga automática lo pisa
@@ -569,10 +574,11 @@ function restoreAuto(st) {
 }
 async function applySeedUpgrade(cfgSeed, docs) {
     if (typeof SEED_VERSION === 'undefined' || (cfgSeed && cfgSeed.version === SEED_VERSION)) return;
+    if (Data.hasCloud()) { const again = await Data.get(COL.config, 'seed'); if (!Data.denied() && again && again.version === SEED_VERSION) return; }   // segunda confirmación
     try {
         if (State.demo && State.demo.loaded && typeof Demo !== 'undefined') await Demo.clear();
         const ops = [], seed = new Map(INITIAL_STORES_SEED.map(s => [s.id, s]));
-        State.stores.forEach(st => { const s = seed.get(st.id); if (!s) return; const upd = seedFields(st, s); Object.assign(st, upd); ops.push({ op: 'set', col: COL.stores, id: st.id, data: upd, merge: true }); });
+        State.stores.forEach(st => { const s = seed.get(st.id); if (!s || st.deleted) return; const upd = seedFields(st, s); Object.assign(st, upd); ops.push({ op: 'set', col: COL.stores, id: st.id, data: upd, merge: true }); });
         ops.push({ op: 'set', col: COL.config, id: 'seed', data: { version: SEED_VERSION, at: Date.now() }, merge: false });
         await Data.batch(ops);
         if (State.session && State.tab) navigate(State.tab);
@@ -581,7 +587,7 @@ async function applySeedUpgrade(cfgSeed, docs) {
 
 function applyCollections(part) {
     if (part.stores) State.stores = officialStores(part.stores);
-    if (part.zones) State.zones = part.zones;
+    if (part.zones) State.zones = liveDocs(part.zones);
     if (part.staff) State.staff = part.staff;
     // Sesión de un usuario eliminado por el Coordinador/Admin: se cierra sola
     const s = State.session;

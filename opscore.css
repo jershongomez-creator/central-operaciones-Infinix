@@ -723,3 +723,5 @@ details.card.acc > summary::after { content: '▾'; color: #64748B; } details.ca
 .adv-tbl tr.off td { color: var(--mute); }
 .adv-tbl td .input.num { width: 84px; }
 .adv-tbl td select.input { max-width: 180px; }
+
+.del-list { margin-top: 12px; } .del-list summary { cursor: pointer; color: var(--mute); font-weight: 600; font-size: 13px; }

@@ -59,7 +59,10 @@ registerModule('admin', (() => {
                 <td>${s.isConfigured ? '<i class="pill ok">Configurada</i>' : '<i class="pill warn">Pendiente</i>'}${(s.manualFields || []).length ? ` <i class="pill man" title="Ajustado a mano${s.manualBy ? ' por ' + esc(s.manualBy) : ''}">✋ manual</i>` : ''}${chainOn(s) ? '' : ' <i class="pill off" title="Su cadena no está en las cadenas de trabajo">fuera de trabajo</i>'}</td><td>${storeMetaMes(s) || '—'}</td><td>${int(s.hc && s.hc.INFINIX) || '—'}</td>
                 <td class="acts"><button class="icon-btn" title="Editar nombre, cadena, ciudad y zona" data-a="store-edit" data-id="${esc(s.id)}">✏️</button><button class="icon-btn" title="Asesores, metas, HC, targets, inventario, foco y contraseña" data-a="store-cfg" data-id="${esc(s.id)}">⚙️</button>
                 <button class="icon-btn" title="Contraseña de la tienda" data-a="store-pass" data-id="${esc(s.id)}">🔑</button><button class="icon-btn" title="Eliminar" data-a="store-del" data-id="${esc(s.id)}">🗑️</button></td></tr>`).join('') || '<tr><td colspan="7">Sin tiendas con ese filtro.</td></tr>'}
-            </tbody></table></div></section>`;
+            </tbody></table></div>
+            ${(() => { const D = (State.storesDeleted || []).filter(s => inScope(s.zona)); return D.length ? `<details class="del-list"><summary>🗑️ Tiendas eliminadas (${D.length})</summary>
+                <table class="tbl compact"><tbody>${D.map(s => `<tr><td class="l">${storeLogo(s, 'xs')} <b>${esc(s.tienda)}</b> <small class="mute">· ${esc(s.zona || '')}${s.deletedBy ? ' · eliminada por ' + esc(s.deletedBy) : ''}${s.deletedAt ? ' el ' + dstr(new Date(s.deletedAt)) : ''}</small></td><td class="acts"><button class="btn btn-ghost sm" data-a="store-restore" data-id="${esc(s.id)}">↺ Restaurar</button></td></tr>`).join('')}</tbody></table></details>` : ''; })()}
+            </section>`;
     }
 
     // ------------------------------------------------------------ Asesores
@@ -322,7 +325,17 @@ registerModule('admin', (() => {
         if (a === 'store-del') {
             const st = storeById(id);
             if (!await confirmBox(`Se eliminará "${st.tienda}" del acceso de PDV. Sus cierres históricos se conservan. ¿Continuar?`, 'Eliminar')) return;
-            await Data.del(COL.stores, id); State.stores = State.stores.filter(s => s.id !== id); toast('Tienda eliminada', 'ok'); return paint();
+            const del = { deleted: true, deletedAt: Date.now(), deletedBy: me().nombre, updatedAt: Date.now() };
+            await Data.set(COL.stores, id, del, true); Object.assign(st, del);
+            State.stores = State.stores.filter(s => s.id !== id); State.storesDeleted = (State.storesDeleted || []).filter(s => s.id !== id).concat(st);
+            toast('Tienda eliminada. Si fue un error, la restauras al final de la lista.', 'ok', 5000); return paint();
+        }
+        if (a === 'store-restore') {
+            const st = (State.storesDeleted || []).find(s => s.id === id); if (!st) return;
+            const upd = { deleted: false, deletedAt: null, deletedBy: null, updatedAt: Date.now() };
+            await Data.set(COL.stores, id, upd, true); Object.assign(st, upd);
+            State.storesDeleted = State.storesDeleted.filter(s => s.id !== id); upsertState('stores', st);
+            toast(`${st.tienda} restaurada`, 'ok'); return paint();
         }
         if (a === 'zone-new') {
             const nombre = $('#zn-new').value.trim().toUpperCase().replace(/\s+/g, ' ');
@@ -338,7 +351,7 @@ registerModule('admin', (() => {
             const z = State.zones.find(x => x.id === id);
             if (State.stores.some(s => s.zona === z.nombre) || State.staff.some(u => u.zona === z.nombre)) return toast('La zona tiene tiendas o usuarios: reasígnalos antes de eliminarla.', 'warn', 5000);
             if (!await confirmBox(`¿Eliminar la zona ${z.nombre}?`, 'Eliminar')) return;
-            await Data.del(COL.zones, id); State.zones = State.zones.filter(x => x.id !== id); toast('Zona eliminada', 'ok'); return paint();
+            await Data.set(COL.zones, id, { deleted: true, deletedAt: Date.now(), deletedBy: me().nombre }, true); State.zones = State.zones.filter(x => x.id !== id); toast('Zona eliminada', 'ok'); return paint();
         }
         if (a === 'users-demo-del') {
             const us = State.staff.filter(u => u.demo);
