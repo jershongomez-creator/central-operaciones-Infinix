@@ -1,0 +1,276 @@
+// ============================================================================
+// MÓDULO 1 · REPORTE DE CIERRE DIARIO E INVENTARIO (perfil Tienda / Asesor)
+// La tienda, la cadena y el logo vienen de la sesión: el asesor solo marca
+// quién reporta, digita ventas e inventario y comparte el lienzo.
+// ============================================================================
+
+registerModule('m1', (() => {
+    let fecha = todayStr(), closures = [], invBase = {}, invTouched = {}, invAccBase = {}, invAccTouched = {};
+
+    const stepper = (id, v, ro) => `<div class="stp"><button type="button" data-d="-1" ${ro ? 'disabled' : ''}>−</button>
+        <input class="input num" type="number" inputmode="numeric" min="0" id="${id}" value="${int(v)}" ${ro ? 'readonly' : ''}>
+        <button type="button" data-d="1" ${ro ? 'disabled' : ''}>+</button></div>`;
+
+    function render(view) {
+        const st = currentStore();
+        if (!st) { view.innerHTML = '<div class="card">Sesión de tienda no válida.</div>'; return; }
+        fecha = todayStr();
+        const hc = st.hc || {}, metas = st.metas || {}, metasAcc = st.metasAcc || {}, metasComp = st.metasComp || {};
+        const tgt = v => int(v) ? `<b class="tgt">${int(v)}</b>` : '<span class="mute">—</span>';
+        view.innerHTML = `
+        <section class="card">
+            <div class="row between wrap">
+                <div class="row">${storeLogo(st)}<div><h2 class="h2">Reporte de cierre diario</h2><p class="mute">${esc(st.tienda)} · ${esc(st.ciudad || '')} · Zona ${esc(st.zona || '')}</p></div></div>
+                <label class="field-inline"><span class="lbl">Fecha del cierre</span><input type="date" id="m1-fecha" class="input" value="${fecha}" max="${todayStr()}"></label>
+            </div>
+            <label class="lbl">¿Quién reporta hoy?</label>
+            <div class="chips" id="m1-asesores">${(st.asesores || []).map((a, i) => `<label class="chip"><input type="checkbox" value="${esc(a)}" ${i === 0 ? 'checked' : ''}><span>${esc(a)}</span></label>`).join('') || '<span class="mute">Configura los asesores en ⚙️ Ajustes de tienda.</span>'}</div>
+        </section>
+
+        <section class="kpi-row" id="m1-kpis"></section>
+
+        <details class="card acc" open>
+            <summary><span>📱 Infinix · ventas del día e inventario</span><span class="badge" id="m1-tot-inf">0 uds</span></summary>
+            <table class="tbl compact"><thead><tr><th>Referencia</th><th>Target</th><th>Inventario</th><th>Venta hoy</th></tr></thead><tbody>
+                ${INFINIX_MODELS.map(m => `<tr><td><b>${esc(m.name)}</b></td><td class="c">${tgt(metas[m.key])}</td><td><input class="input num" type="number" inputmode="numeric" min="0" id="m1-i-${m.key}" value="0"></td><td>${stepper('m1-v-' + m.key, 0)}</td></tr>`).join('')}
+            </tbody></table>
+            <p class="hint">Target y HC se fijan en ⚙️ Ajustes de tienda. El inventario se descuenta solo con cada venta y queda listo para mañana; corrígelo si recibiste mercancía.</p>
+        </details>
+
+        <details class="card acc" open>
+            <summary><span>🎧 Accesorios Infinix (venta independiente)</span><span class="badge" id="m1-tot-acc">0 uds</span></summary>
+            <table class="tbl compact"><thead><tr><th>Accesorio</th><th>Target</th><th>Inventario</th><th>Venta hoy</th></tr></thead><tbody>
+                ${INFINIX_ACCESSORIES.map(a => `<tr><td><b>${esc(a.name)}</b></td><td class="c">${tgt(metasAcc[a.key])}</td><td><input class="input num" type="number" inputmode="numeric" min="0" id="m1-ia-${a.key}" value="0"></td><td>${stepper('m1-a-' + a.key, 0)}</td></tr>`).join('')}
+            </tbody></table>
+            <p class="hint">No cuentan para el share ni para el ROI de celulares.</p>
+        </details>
+
+        <details class="card acc" open>
+            <summary><span>🏬 Ventas del día de la competencia</span><span class="badge" id="m1-tot-st">0 uds tienda</span></summary>
+            <table class="tbl compact"><thead><tr><th>Marca</th><th>HC</th><th>Target</th><th>Venta hoy</th></tr></thead><tbody>
+                ${BRANDS.map(b => `<tr class="${b === 'INFINIX' ? 'row-own' : ''}"><td><span class="dot" style="background:${BRAND_COLORS[b]}"></span><b>${b}</b></td><td class="c">${int(hc[b]) || '—'}</td><td class="c">${tgt(b === 'INFINIX' ? storeMetaMes(st) : metasComp[b])}</td><td>${stepper('m1-c-' + b, 0, b === 'INFINIX')}</td></tr>`).join('')}
+            </tbody></table>
+        </details>
+        ${actionBarHTML()}`;
+
+        // Eventos
+        view.addEventListener('click', e => {
+            const b = e.target.closest('.stp button'); if (!b) return;
+            const inp = $('input', b.parentElement); inp.value = Math.max(0, int(inp.value) + int(b.dataset.d));
+            inp.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        view.addEventListener('input', e => {
+            if (e.target.id && e.target.id.startsWith('m1-i-')) invTouched[e.target.id.slice(5)] = true;
+            if (e.target.id && e.target.id.startsWith('m1-ia-')) invAccTouched[e.target.id.slice(6)] = true;
+            recalc();
+        });
+        $('#m1-fecha').onchange = e => { fecha = e.target.value || todayStr(); load(); };
+
+        ReportActions.bind(view, {
+            title: 'Reporte diario de ventas',
+            validate: () => $$('#m1-asesores input:checked').length ? null : 'Marca al menos un asesor que reporta.',
+            filename: () => `Cierre_${slug(currentStore().tienda)}_${fecha}.png`,
+            build: stage => buildClosureCanvas(stage, currentStore(), computeStore(currentStore(), merged(), fecha), collect()),
+            persist
+        });
+        load();
+    }
+
+    async function load() {                 // trae los cierres del mes/semana y precarga el día si ya existe
+        const st = currentStore(); if (!st) return;
+        closures = await fetchStoreClosures(st.id, fecha);
+        if (!$('#m1-fecha')) return;
+        const cur = closures.find(c => c.fecha === fecha);
+        invTouched = {}; invBase = {};
+        INFINIX_MODELS.forEach(m => {
+            const v = cur ? int(cur.ventas && cur.ventas[m.key]) : 0;
+            const inv = cur ? int(cur.inventario && cur.inventario[m.key]) : int(st.inventario && st.inventario[m.key]);
+            invBase[m.key] = cur ? inv + v : inv;            // stock antes de las ventas del día
+            $('#m1-v-' + m.key).value = v; $('#m1-i-' + m.key).value = inv;
+        });
+        invAccTouched = {}; invAccBase = {};
+        INFINIX_ACCESSORIES.forEach(a => {
+            const v = cur ? int(cur.accesorios && cur.accesorios[a.key]) : 0;
+            const inv = cur && cur.invAcc ? int(cur.invAcc[a.key]) : int(st.invAcc && st.invAcc[a.key]);
+            invAccBase[a.key] = cur && cur.invAcc ? inv + v : inv;
+            $('#m1-a-' + a.key).value = v; $('#m1-ia-' + a.key).value = inv;
+        });
+        BRANDS.forEach(b => { if (b !== 'INFINIX') $('#m1-c-' + b).value = cur ? int(cur.competencia && cur.competencia[b]) : 0; });
+        if (cur && cur.asesores) $$('#m1-asesores input').forEach(i => { i.checked = cur.asesores.includes(i.value); });
+        recalc();
+    }
+
+    function recalc() {
+        if (!$('#m1-kpis')) return;
+        let tot = 0;
+        INFINIX_MODELS.forEach(m => {
+            const v = int($('#m1-v-' + m.key).value); tot += v;
+            if (!invTouched[m.key]) $('#m1-i-' + m.key).value = Math.max(0, int(invBase[m.key]) - v);
+        });
+        $('#m1-c-INFINIX').value = tot;
+        INFINIX_ACCESSORIES.forEach(a => { if (!invAccTouched[a.key]) $('#m1-ia-' + a.key).value = Math.max(0, int(invAccBase[a.key]) - int($('#m1-a-' + a.key).value)); });
+        const acc = sum(INFINIX_ACCESSORIES.map(a => int($('#m1-a-' + a.key).value)));
+        const tienda = sum(BRANDS.map(b => int($('#m1-c-' + b).value)));
+        $('#m1-tot-inf').textContent = `${tot} uds`; $('#m1-tot-acc').textContent = `${acc} uds`; $('#m1-tot-st').textContent = `${tienda} uds tienda`;
+        const c = computeStore(currentStore(), merged(), fecha);
+        const sem = semaforo(c.cumplProj == null ? 1 : c.cumplProj);
+        $('#m1-kpis').innerHTML = `
+            <div class="kpi hl"><span>ROI Infinix</span><b>${c.roi == null ? '—' : fmt1(c.roi)}</b><small>Proy. ${c.roiProj == null ? '—' : fmt1(c.roiProj)} <i class="pill ${sem.cls}">${sem.label}</i></small></div>
+            <div class="kpi"><span>Venta mes</span><b>${c.infMes}</b><small>Meta ${c.metaMes || '—'} · ${c.cumpl == null ? 'sin meta' : Math.round(c.cumpl * 100) + '%'}</small></div>
+            <div class="kpi"><span>Share mes</span><b>${c.shareMes}%</b><small>${c.pos ? 'Puesto #' + c.pos : 'Sin ventas'} en tienda</small></div>
+            <div class="kpi"><span>Semana W${c.wk}</span><b>${c.infSem}</b><small>Proy. ${c.projSem} uds</small></div>`;
+    }
+
+    function collect() {
+        const st = currentStore();
+        const ventas = Object.fromEntries(INFINIX_MODELS.map(m => [m.key, int($('#m1-v-' + m.key).value)]));
+        const competencia = Object.fromEntries(BRANDS.filter(b => b !== 'INFINIX').map(b => [b, int($('#m1-c-' + b).value)]));
+        const totalInfinix = sum(Object.values(ventas));
+        return {
+            id: `${st.id}_${fecha}`, storeId: st.id, storeMonth: `${st.id}_${fecha.slice(0, 7)}`,
+            tienda: st.tienda, cadena: st.cadena || '', zona: st.zona || '', ciudad: st.ciudad || '', logoKey: st.logoKey || 'otro',
+            fecha, week: 'W' + isoWeek(fecha), month: fecha.slice(0, 7),
+            asesores: $$('#m1-asesores input:checked').map(i => i.value),
+            ventas, competencia,
+            inventario: Object.fromEntries(INFINIX_MODELS.map(m => [m.key, int($('#m1-i-' + m.key).value)])),
+            accesorios: Object.fromEntries(INFINIX_ACCESSORIES.map(a => [a.key, int($('#m1-a-' + a.key).value)])),
+            invAcc: Object.fromEntries(INFINIX_ACCESSORIES.map(a => [a.key, int($('#m1-ia-' + a.key).value)])),
+            metas: st.metas || {}, metasComp: st.metasComp || {}, metasAcc: st.metasAcc || {},
+            hc: st.hc || {}, metaMes: storeMetaMes(st),
+            totalInfinix, totalTienda: totalInfinix + sum(Object.values(competencia)),
+            updatedAt: Date.now()
+        };
+    }
+    const merged = () => closures.filter(c => c.fecha !== fecha).concat($('#m1-fecha') ? collect() : []);
+
+    async function persist() {
+        const st = currentStore(), doc = collect();
+        const saving = [Data.set(COL.closures, doc.id, doc, false)];
+        closures = closures.filter(c => c.fecha !== fecha).concat(doc);
+        if (!st.lastClosure || fecha >= st.lastClosure) {      // el inventario vigente es el del último cierre
+            const upd = { inventario: doc.inventario, invAcc: doc.invAcc, lastClosure: fecha };
+            Object.assign(st, upd); saving.push(Data.set(COL.stores, st.id, upd, true));
+        }
+        return (await Promise.all(saving))[0];
+    }
+
+    return { render };
+})());
+
+// ----------------------------------------------------------------------------
+// LIENZO · REPORTE DIARIO DE VENTAS (1400 px, fondo blanco corporativo)
+// ----------------------------------------------------------------------------
+function buildClosureCanvas(stage, store, c, closure) {
+    const dash = '—';
+    const dayHead = c.days.map((d, i) => `<th class="c-day">${DIAS_CORTO[i]} ${d.slice(8)}</th>`).join('');
+    const wkHead = c.weeks.map(w => `<th class="c-wk ${w === c.wk ? 'cur' : ''}">W${w}</th>`).join('');
+    const cells = (arr, cls) => arr.map(v => `<td class="${cls}">${v}</td>`).join('');
+    const totalRow = (label, rows, extra) => `<tr class="tot"><td class="l">${label}</td>${extra(rows)}</tr>`;
+    const colSum = (rows, get) => sum(rows.map(get));
+    const varCell = (v, semana) => v == null ? `<td class="c-var n">${semana > 0 ? 'nuevo' : dash}</td>` : `<td class="c-var ${v > 0.005 ? 'up' : v < -0.005 ? 'dn' : 'eq'}">${v > 0.005 ? '▲ +' : v < -0.005 ? '▼ ' : '= '}${Math.round(v * 100)}%</td>`;
+    const varOf = (semana, prev) => prev > 0 ? (semana - prev) / prev : (semana > 0 ? null : 0);
+    const varHead = `<th class="c-var">VAR. W${c.wk} vs W${c.prevWk}</th>`;
+
+    // --- Tabla 1: Infinix por modelo
+    const t1 = c.models.map(m => `<tr><td class="l">${esc(m.name)}</td><td>${m.meta || dash}</td><td>${m.inv}</td>${cells(m.w, 'c-wk')}${cells(m.d, 'c-day')}
+        <td class="c-tot">${m.semana}</td>${varCell(m.varSem, m.semana)}<td class="c-tot">${m.mes}</td><td class="c-tot">${m.share}%</td><td class="c-tot ${m.cumpl == null ? '' : m.cumpl >= 100 ? 'g' : m.cumpl >= 70 ? 'a' : 'r'}">${m.cumpl == null ? dash : m.cumpl + '%'}</td></tr>`).join('')
+        + totalRow('TOTAL INFINIX', c.models, rows => `<td>${c.metaMes || dash}</td><td>${c.invTotal}</td>
+            ${c.weeks.map((_, i) => `<td class="c-wk">${colSum(rows, r => r.w[i])}</td>`).join('')}${c.days.map((_, i) => `<td class="c-day">${colSum(rows, r => r.d[i])}</td>`).join('')}
+            <td class="c-tot">${c.infSem}</td>${varCell(c.varSemAFecha == null ? varOf(c.infSem, c.prevSemAFecha) : c.varSemAFecha, c.infSem)}<td class="c-tot">${c.infMes}</td><td class="c-tot">${c.infMes ? '100%' : '0%'}</td><td class="c-tot">${c.cumpl == null ? dash : Math.round(c.cumpl * 100) + '%'}</td>`);
+
+    // --- Tabla 2: venta general de la tienda
+    const t2 = c.brands.map(b => `<tr class="${b.brand === 'INFINIX' ? 'own' : ''}"><td class="l"><i class="dot" style="background:${BRAND_COLORS[b.brand]}"></i>${b.brand}</td><td>${b.meta || dash}</td><td>${b.hc || dash}</td>${cells(b.w, 'c-wk')}${cells(b.d, 'c-day')}
+        <td class="c-tot">${b.semana}</td>${varCell(b.varSem, b.semana)}<td class="c-tot">${b.mes}</td><td class="c-tot ${b.cumpl == null ? '' : b.cumpl >= 100 ? 'g' : b.cumpl >= 70 ? 'a' : 'r'}">${b.cumpl == null ? dash : b.cumpl + '%'}</td><td class="c-tot">${b.share}%</td><td class="c-tot">${b.pos ? '#' + b.pos : dash}</td><td class="c-tot roi">${b.roi == null ? dash : fmt1(b.roi)}</td></tr>`).join('')
+        + totalRow('TOTAL TIENDA', c.brands, rows => `<td>${colSum(rows, r => r.meta) || dash}</td><td>${colSum(rows, r => r.hc) || dash}</td>
+            ${c.weeks.map((_, i) => `<td class="c-wk">${colSum(rows, r => r.w[i])}</td>`).join('')}${c.days.map((_, i) => `<td class="c-day">${colSum(rows, r => r.d[i])}</td>`).join('')}
+            <td class="c-tot">${c.storeSem}</td>${varCell(varOf(c.storeSem, colSum(rows, r => r.prevAFecha)), c.storeSem)}<td class="c-tot">${c.storeMes}</td><td class="c-tot">${colSum(rows.filter(r => r.meta > 0), r => r.meta) ? pctNum(colSum(rows.filter(r => r.meta > 0), r => r.mes), colSum(rows.filter(r => r.meta > 0), r => r.meta)) + '%' : dash}</td><td class="c-tot">${c.storeMes ? '100%' : '0%'}</td><td class="c-tot">${dash}</td><td class="c-tot roi">${colSum(rows, r => r.hc) ? fmt1(c.storeMes / colSum(rows, r => r.hc)) : dash}</td>`);
+
+    // --- Tabla 3: accesorios
+    const t3 = c.accs.map(a => `<tr><td class="l">${esc(a.name)}</td><td>${a.meta || dash}</td><td>${a.inv}</td>${cells(a.w, 'c-wk')}${cells(a.d, 'c-day')}<td class="c-tot">${a.semana}</td>${varCell(a.varSem, a.semana)}<td class="c-tot">${a.mes}</td><td class="c-tot ${a.cumpl == null ? '' : a.cumpl >= 100 ? 'g' : a.cumpl >= 70 ? 'a' : 'r'}">${a.cumpl == null ? dash : a.cumpl + '%'}</td></tr>`).join('');
+
+    // --- Dashboard
+    const sem = semaforo(c.cumplProj == null ? 1 : c.cumplProj);
+    const top = c.brands.filter(b => b.brand !== 'INFINIX' && b.mes > 0).sort((a, b) => b.mes - a.mes);
+    const top4 = top.slice(0, 4), otros = sum(top.slice(4).map(b => b.mes));
+    const shareSeg = [{ label: 'INFINIX', v: c.infMes, color: BRAND_COLORS.INFINIX }, ...top4.map(b => ({ label: b.brand, v: b.mes, color: BRAND_COLORS[b.brand] }))];
+    if (otros) shareSeg.push({ label: 'OTROS', v: otros, color: BRAND_COLORS.OTROS });
+    const bar = (v, max, color, lbl, top) => `<div class="pbar"><b>${top}</b><div class="pbar-track"><div style="height:${max > 0 ? clamp(Math.round(v / max * 100), 3, 100) : 3}%;background:${color}"></div></div><span>${lbl}</span></div>`;
+    const wMax = Math.max(c.prevSem, c.projSem, 1), mMax = Math.max(c.metaMes, c.projMes, 1);
+    const varTxt = c.varSem == null ? 'Sin semana anterior' : `${c.varSem >= 0 ? '▲ +' : '▼ '}${Math.round(c.varSem * 100)}% vs W${isoWeek(addDays(c.days[0], -1))}`;
+
+    const el = document.createElement('div');
+    el.className = 'rp rp-m1';
+    el.innerHTML = `
+    <div class="rp-bar"></div>
+    <header class="rp-head">
+        <img class="rp-logo" src="${LOGO_INFINIX}" alt="Infinix">
+        <div class="rp-head-mid">
+            <div class="rp-kicker">REPORTE DIARIO DE VENTAS</div>
+            <div class="rp-title">${esc(store.tienda.toUpperCase())}</div>
+            <div class="rp-sub">Zona ${esc(store.zona || dash)} · ${esc(store.ciudad || '')} · Asesor(es): <b>${esc((closure.asesores || []).join(', ') || dash)}</b></div>
+            <div class="rp-sub">Cierre: ${esc(fechaLarga(c.fecha))} · Semana W${c.wk} · ${esc(mesLargo(c.ym))}</div>
+        </div>
+        <div class="rp-chain">${storeLogo(store)}</div>
+    </header>
+
+    <section class="rp-dash">
+        <div class="dcard hero">
+            <div class="dcard-t">🔥 ROI INFINIX · UNIDADES POR PROMOTOR</div>
+            <div class="row" style="gap:22px">
+                ${ringCardHTML('rc-roi', 190, c.roi == null ? dash : fmt1(c.roi), 'ROI actual')}
+                <div class="dlist">
+                    <div><span>ROI proyectado al cierre</span><b style="color:${sem.color}">${c.roiProj == null ? dash : fmt1(c.roiProj)}</b></div>
+                    <div><span>ROI meta del mes</span><b>${c.roiMeta == null ? dash : fmt1(c.roiMeta)}</b></div>
+                    <div><span>HC Infinix</span><b>${c.hcInf || dash}</b></div>
+                    <i class="pill big ${sem.cls}">● ${sem.label}</i>
+                </div>
+            </div>
+            <div class="dnote">ROI = ventas del mes ÷ promotores (HC)</div>
+        </div>
+        <div class="dcard">
+            <div class="dcard-t">MARKET SHARE EN TIENDA</div>
+            <div class="row" style="gap:14px">
+                ${ringCardHTML('rc-share', 140, c.shareMes + '%', 'Infinix')}
+                <div class="legend">${shareSeg.map(s => `<div><i class="dot" style="background:${s.color}"></i><span>${s.label}</span><b>${pctNum(s.v, c.storeMes)}%</b></div>`).join('') || '<div><span>Sin ventas registradas</span></div>'}</div>
+            </div>
+            <div class="rank"><b>${c.pos ? `#${c.pos}` : dash}</b><span>posición de Infinix en el ranking del PDV</span></div>
+        </div>
+        <div class="dcard">
+            <div class="dcard-t">CUMPLIMIENTO META MENSUAL</div>
+            <div class="center">${ringCardHTML('rc-meta', 150, c.cumpl == null ? dash : Math.round(c.cumpl * 100) + '%', 'de la meta')}</div>
+            <div class="dfoot"><b>${c.infMes}</b> de <b>${c.metaMes || dash}</b> uds${c.metaMes ? ` · faltan ${Math.max(0, c.metaMes - c.infMes)}` : ''}</div>
+        </div>
+        <div class="dcard">
+            <div class="dcard-t">PROYECCIÓN SEMANAL Y MENSUAL</div>
+            <div class="pbars">
+                <div class="pgroup">${bar(c.prevSem, wMax, '#94A3B8', 'Sem. ant.', c.prevSem)}${bar(c.projSem, wMax, c.varSem != null && c.varSem < 0 ? THEME.red : THEME.green, `Proy. W${c.wk}`, c.projSem)}</div>
+                <div class="pgroup">${bar(c.metaMes, mMax, '#94A3B8', 'Meta mes', c.metaMes || dash)}${bar(c.projMes, mMax, sem.color, 'Cierre proy.', c.projMes)}</div>
+            </div>
+            <div class="dfoot">${varTxt} · Proy. mes ${c.cumplProj == null ? dash : Math.round(c.cumplProj * 100) + '% de la meta'}</div>
+        </div>
+    </section>
+
+    <div class="rp-sec">VENTAS E INVENTARIO INFINIX POR MODELO · ${esc(mesLargo(c.ym).toUpperCase())}</div>
+    <table class="rp-tbl"><thead><tr><th class="l">MODELO</th><th>TARGET</th><th>INV.</th>${wkHead}${dayHead}<th class="c-tot">SEMANA</th>${varHead}<th class="c-tot">MES</th><th class="c-tot">SHARE</th><th class="c-tot">CUMPL.</th></tr></thead><tbody>${t1}</tbody></table>
+
+    <div class="rp-sec">VENTA GENERAL DE LA TIENDA · SEMANA W${c.wk} · ${c.days[0]} A ${c.days[6]}</div>
+    <table class="rp-tbl"><thead><tr><th class="l">MARCA</th><th>TARGET</th><th>HC</th>${wkHead}${dayHead}<th class="c-tot">SEMANA</th>${varHead}<th class="c-tot">MES</th><th class="c-tot">CUMPL.</th><th class="c-tot">SHARE</th><th class="c-tot">POS.</th><th class="c-tot">ROI</th></tr></thead><tbody>${t2}</tbody></table>
+
+    <div class="rp-sec light">ACCESORIOS INFINIX · VENTA INDEPENDIENTE</div>
+    <table class="rp-tbl"><thead><tr><th class="l">ACCESORIO</th><th>TARGET</th><th>INV.</th>${wkHead}${dayHead}<th class="c-tot">SEMANA</th>${varHead}<th class="c-tot">MES</th><th class="c-tot">CUMPL.</th></tr></thead><tbody>${t3}</tbody></table>
+
+    <footer class="rp-foot">
+        <span>ROI = unidades ÷ promotores · SHARE = participación acumulada del mes · POS. = puesto en la tienda (los empates comparten puesto) · VAR. = semana actual frente a los mismos días de la semana anterior · Accesorios excluidos de share y ROI · Proyecciones con ${c.dayOfMonth} de ${c.dim} días del mes.</span>
+        <b>Infinix · Central de Operaciones</b>
+    </footer>
+    <div class="rp-bar"></div>`;
+    stage.appendChild(el);
+
+    // Gráficas (Chart.js)
+    const roiTop = Math.max(c.roiMeta || 0, c.roiProj || 0, c.roi || 0);
+    Charts.ring($('#rc-roi', el), [c.roi || 0, Math.max(0, (c.roiProj || 0) - (c.roi || 0)), Math.max(0, roiTop - Math.max(c.roi || 0, c.roiProj || 0))], [sem.color, sem.color + '55', THEME.line], { cutout: '76%' });
+    Charts.ring($('#rc-share', el), shareSeg.map(s => s.v), shareSeg.map(s => s.color), { cutout: '68%', gap: true });
+    const cm = c.cumpl == null ? 0 : Math.min(1, c.cumpl);
+    Charts.ring($('#rc-meta', el), [cm, 1 - cm], [semaforo(c.cumpl == null ? 0 : c.cumpl / Math.max(0.01, c.dayOfMonth / c.dim)).color, THEME.line], { cutout: '76%' });
+    return el;
+}

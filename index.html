@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Central de Operaciones · Infinix</title>
+    <meta name="description" content="Central de Operaciones · panel operativo y de ejecución retail de Infinix">
+    <meta name="theme-color" content="#FFFFFF">
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" href="logo-512.png">
+    <link rel="apple-touch-icon" href="logo-512.png">
+    <link rel="stylesheet" href="opscore.css">
+
+    <!-- Librerías: html2canvas, Chart.js, ExcelJS y Firebase 8.10.1 (app + firestore) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+</head>
+<body>
+    <!-- Login dual: Tienda (PDV) | Staff -->
+    <div id="login-screen"></div>
+
+    <!-- Aplicación: las pestañas se pintan según el rol autenticado (RBAC) -->
+    <div id="app" hidden>
+        <header class="topbar">
+            <div class="topbar-in">
+                <div class="brand"><img id="brand-logo" alt="Infinix"><div>Central de <span>Operaciones</span></div></div>
+                <span id="conn" class="conn" title="Estado de conexión"></span>
+                <div id="user-chip" class="user-chip"></div>
+                <button id="btn-logout" class="btn btn-ghost" title="Cerrar sesión">Salir</button>
+            </div>
+            <nav id="tabs" aria-label="Módulos"></nav>
+            <div id="local-banner" class="local-banner" hidden>Modo local: sin conexión a Firebase. Los datos se guardan solo en este navegador.</div>
+        </header>
+        <main id="view"></main>
+    </div>
+
+    <div id="modal-root"></div>
+    <div id="toast" aria-live="polite"></div>
+    <div id="stage" aria-hidden="true"></div>
+
+    <script src="opscore-assets.js"></script>
+    <script src="opscore-config.js"></script>
+    <script src="opscore-seed.js"></script>
+    <script src="opscore-snap.js"></script>
+    <script src="opscore-core.js"></script>
+    <script src="opscore-m1.js"></script>
+    <script src="opscore-m2.js"></script>
+    <script src="opscore-m3.js"></script>
+    <script src="opscore-m4.js"></script>
+    <script src="opscore-m5.js"></script>
+    <script src="opscore-zone.js"></script>
+    <script src="opscore-calc.js"></script>
+    <script src="opscore-central.js"></script>
+    <script src="opscore-evals.js"></script>
+    <script src="opscore-admin.js"></script>
+    <script src="opscore-demo.js"></script>
+</body>
+</html>
