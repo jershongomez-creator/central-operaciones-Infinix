@@ -30,7 +30,9 @@ registerModule('m2', (() => {
         const day = r.auto && r.corte ? parseD(r.corte).getDate() : Math.max(1, parseD(fecha).getDate() - 1);
         r.roi = +(int(r.ventaMes) / hc).toFixed(1);
         r.roiProj = +((int(r.ventaMes) / day * dim) / hc).toFixed(1);
+        r.metaDia = metaDiaPdv(r, fecha);              // lo que debe vender hoy el PDV para ir al 100%
     }
+    const sup = () => isSupPlan(me().rol);
 
     function render(view) {
         fecha = todayStr(); fase = new Date().getHours() >= 15 ? 'cierre' : 'plan';
@@ -50,9 +52,10 @@ registerModule('m2', (() => {
                 <button class="btn btn-dark" id="m2-add">➕ Agregar tienda</button>
             </div>
         </section>
+        <div id="m2-zone"></div>
         <div id="m2-rows"></div>
-        <datalist id="dl-acc">${PLAN_ACCIONES.map(a => `<option value="${esc(a)}">`).join('')}</datalist>
-        <datalist id="dl-imp">${PLAN_IMPACTOS.map(a => `<option value="${esc(a)}">`).join('')}</datalist>
+        <datalist id="dl-acc">${(sup() ? PLAN_ACCIONES_SUP : PLAN_ACCIONES_FORM.concat(PLAN_ACCIONES.filter(a => !PLAN_ACCIONES_FORM.includes(a)))).map(a => `<option value="${esc(a)}">`).join('')}</datalist>
+        <datalist id="dl-imp">${(sup() ? PLAN_IMPACTOS_SUP : PLAN_IMPACTOS).map(a => `<option value="${esc(a)}">`).join('')}</datalist>
         <datalist id="dl-foco">${PLAN_FOCOS.map(a => `<option value="${esc(a)}">`).join('')}</datalist>
         ${actionBarHTML()}`;
 
@@ -78,7 +81,7 @@ registerModule('m2', (() => {
             title: 'Plan de trabajo · Central de Operaciones',
             validate: () => !rows.length ? 'Agrega al menos una tienda a visitar.' : rows.some(r => !r.acciones.some(a => a.trim())) ? 'Cada tienda necesita al menos una acción.' : null,
             filename: () => `${fase === 'plan' ? 'Plan' : 'CierreActividades'}_${slug(me().nombre)}_${fecha}.png`,
-            build: stage => buildPlanCanvas(stage, buildDoc(), fase),
+            build: stage => { const d = buildDoc(); return sup() ? (fase === 'plan' ? buildPlanSupCanvas(stage, d) : buildCierreSupCanvas(stage, d)) : (fase === 'plan' ? buildPlanCanvas(stage, d, fase) : buildCierreFormCanvas(stage, d)); },
             persist
         });
         load();
@@ -123,7 +126,7 @@ registerModule('m2', (() => {
             let r = rows.find(x => x.storeId === v.storeId);
             if (!r && rows.length < MAX && storeById(v.storeId)) { r = await addStoreById(v.storeId); if (r) r.fromVisit = true; }
             if (!r) continue;
-            r.visita = { at: v.savedAt || v.updatedAt || 0, ejecutado: v.ejecutado || [], gestion: (v.form && v.form.gestion) || '', compromisos: (v.form && v.form.compromisos) || '', ventaDia: int(v.ventaDia != null ? v.ventaDia : v.form && v.form.ventaDia), fotos: (v.fotosMini || []).slice(0, 3), evalPromedio: v.evalPromedio, evalRealizadas: v.evalRealizadas || 0 };
+            r.visita = { at: v.savedAt || v.updatedAt || 0, ejecutado: v.ejecutado || [], gestion: (v.form && v.form.gestion) || '', compromisos: (v.form && v.form.compromisos) || '', alertas: (v.form && v.form.alertas) || '', ventaDia: int(v.ventaDia != null ? v.ventaDia : v.form && v.form.ventaDia), fotos: (v.fotosMini || []).slice(0, 3), evalPromedio: v.evalPromedio, evalRealizadas: v.evalRealizadas || 0, cumplMes: v.cumplMes, ventaMes: v.form && v.form.ventaMes };
             if (!int(r.undVisita) && r.visita.ventaDia) r.undVisita = r.visita.ventaDia;
             if (r.fromVisit && !r.acciones.some(a => a && a.trim())) r.acciones = [0, 1, 2].map(j => r.visita.ejecutado[j] || '');
             if (r.fromVisit && r.acciones.some(Boolean) && !r.estados.some(Boolean)) r.estados = r.acciones.map(a => a ? 'ok' : '');
@@ -142,6 +145,7 @@ registerModule('m2', (() => {
         $('#m2-status').textContent = !planDoc ? 'Aún no hay plan registrado para esta fecha.'
             : `Plan enviado ${planDoc.planSentAt ? 'a las ' + t(planDoc.planSentAt) : '—'} · Cierre ${planDoc.cierreSentAt ? 'enviado a las ' + t(planDoc.cierreSentAt) : 'pendiente'}`;
         fillStoreSelect(); paintRows();
+        const zb = $('#m2-zone'); if (zb) zb.innerHTML = sup() ? zoneGoalHTML(zoneGoal([me().zona].filter(Boolean).length ? [me().zona] : [...new Set(rows.map(r => r.zona))], fecha)) : '';
     }
 
     // Al agregar la tienda se arrastra todo lo que ya existe: cierres diarios, metas e inventario
@@ -176,6 +180,7 @@ registerModule('m2', (() => {
         if (st.foco && st.foco.nota && !row.foco.trim()) row.foco = st.foco.nota;
         if (typeof Evals !== 'undefined') { const ev = Evals.pendingFor(id); if (ev) row.evals = { week: ev.week, pendientes: ev.pendientes, hechas: ev.hechas.length, prom: ev.prom }; }
         applyFoco(row); derive(row);
+        if (sup() && !int(row.compromisoUnd)) row.compromisoUnd = row.metaDia;      // supervisor: el compromiso arranca en la meta del día del PDV
         if ($('#m2-rows')) paintRows();
         return row;
     }
@@ -234,6 +239,7 @@ registerModule('m2', (() => {
             <div class="achip"><small>Inventario</small><b>${int(r.invTotal)}</b></div>
             <div class="achip hl"><small>ROI actual</small><b>${fmt1(r.roi)}</b></div>
             <div class="achip hl"><small>ROI proy.</small><b>${fmt1(r.roiProj)}</b></div>
+            <div class="achip ok"><small>Meta del día</small><b>${int(r.metaDia)}</b></div>
             <div class="achip"><small>Inv. foco</small><b>${int(r.focoInv)}</b></div>
             ${r.evals ? `<div class="achip ${r.evals.pendientes.length ? 'warn' : 'ok'}" title="${esc(r.evals.pendientes.join(', '))}"><small>Eval. ${esc(r.evals.week)}</small><b>${r.evals.pendientes.length ? r.evals.pendientes.length + ' pend.' : '✓'}</b></div>` : ''}`;
     }
@@ -310,6 +316,7 @@ registerModule('m2', (() => {
         return {
             id: docId(), userId: s.userId, nombre: s.nombre, rol: s.rol, zona: s.zona || '', fecha, week: 'W' + isoWeek(fecha), month: ym(),
             stores, storeIds: rows.map(r => r.storeId),
+            zoneGoal: sup() ? zoneGoal([s.zona].filter(Boolean).length ? [s.zona] : [...new Set(rows.map(r => r.zona))], fecha) : null,
             planSentAt: planDoc && planDoc.planSentAt ? planDoc.planSentAt : (fase === 'plan' ? Date.now() : null),
             cierreSentAt: cierre ? Date.now() : (planDoc && planDoc.cierreSentAt) || null,
             updatedAt: Date.now()
@@ -402,7 +409,7 @@ function buildPlanCanvas(stage, doc, fase) {
         ['Venta acumulada', sum(R.map(r => int(r.ventaMes))) + ' und'], ['Compromiso del día', sum(R.map(r => int(r.compromisoUnd))) + ' und']
     ];
     const el = document.createElement('div');
-    el.className = 'rp rp-m2';
+    el.className = 'rp rp-m2 pl-soft';
     el.innerHTML = `
     <div class="rp-bar"></div>
     <header class="rp-head">

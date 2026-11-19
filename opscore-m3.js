@@ -92,20 +92,30 @@ registerModule('m3', (() => {
         storeId = id; F = fresh(); fotos = [null, null, null]; minis = [null, null, null];
         const st = storeById(id);
         if (st) {
-            const ym = fecha.slice(0, 7), dim = daysInMonth(ym);
+            const ym = fecha.slice(0, 7), dim = daysInMonth(ym), dd = fecha.slice(8);
+            // La venta Infinix sale de la data DCR (la misma del Análisis de zona); los cierres del asesor
+            // completan competencia, share e inventario. Antes, con un solo cierre en el mes se ignoraba la DCR.
+            let Z = null; try { await ZoneData.load(st.zona, ym); Z = ZoneData.forStore(st.id); } catch (e) { }
+            const zOk = !!(Z && Z.month === ym);
             const cl = await fetchStoreClosures(id, fecha);
             const last = cl.filter(c => c.storeId === id && c.fecha <= fecha && c.fecha.slice(0, 7) === ym).map(c => c.fecha).sort().pop();
-            if (last) {
-                const c = computeStore(st, cl, last);
-                Object.assign(F, { auto: true, corte: last, metaMes: c.metaMes, ventaMes: c.infMes, accMes: c.accMes, hc: c.hcInf || 1, share: c.shareMes, ventaDia: last === fecha ? c.infHoy : 0, pano: panoramaOf(c) });
-            } else {
-                // Sin cierres: la venta del mes sale de la data DCR de la zona (Análisis de zona)
-                const m = st.manual && st.manual.month === ym ? st.manual : null;
-                try { await ZoneData.load(st.zona, ym); } catch (e) { }
-                const Z = ZoneData.forStore(st.id);
-                Object.assign(F, { metaMes: storeMetaMes(st), ventaMes: Z && Z.month === ym ? int(Z.total) : (m ? int(m.ventaMes) : 0), hc: +(st.hc && st.hc.INFINIX) || 1, corte: Z ? Z.corte || '' : '' });
-                if (Z && Z.month === ym) F.fromDCR = true;
-            }
+            const c = last ? computeStore(st, cl, last) : null;
+            const m = st.manual && st.manual.month === ym ? st.manual : null;
+            const dayDCR = d => int(Z && Z.dias && Z.dias[d.slice(8)]);
+            const refDay = (d, k) => int(Z && Z.diasRef && (Z.diasRef[d.slice(8)] || {})[k]);
+            const wk = weekDays(fecha).filter(d => d.slice(0, 7) === ym && d <= fecha), wkPrev = weekDays(addDays(weekDays(fecha)[0], -1)).filter(d => d.slice(0, 7) === ym).slice(0, wk.length);
+            const ventaMes = zOk ? int(Z.total) : c ? c.infMes : (m ? int(m.ventaMes) : 0);
+            Object.assign(F, {
+                auto: true, fromDCR: zOk, corte: zOk ? (Z.corte || last || '') : (last || ''),
+                metaMes: c ? c.metaMes : storeMetaMes(st), ventaMes, accMes: c ? c.accMes : (zOk ? sum(Object.values(Z.accesorios || {})) : 0),
+                hc: (c && c.hcInf) || +(st.hc && st.hc.INFINIX) || 1, share: c ? c.shareMes : '',
+                ventaDia: Math.max(zOk ? dayDCR(fecha) : 0, c && last === fecha ? c.infHoy : 0)
+            });
+            const base = c ? panoramaOf(c) : { brands: [], pos: null, storeMes: 0, cierres: 0 };
+            if (zOk) {
+                const models = INFINIX_MODELS.map(x => { const meta = int(st.metas && st.metas[x.key]), mes = int(Z.ventas && Z.ventas[x.key]); return { name: x.name, meta, inv: int(st.inventario && st.inventario[x.key]), mes, semana: sum(wk.map(d => refDay(d, x.key))), cumpl: meta ? Math.round(mes / meta * 100) : null }; }).filter(x => x.meta || x.mes || x.inv);
+                F.pano = { ...base, models, infMes: ventaMes, infSem: sum(wk.map(dayDCR)), prevSem: c ? c.prevSem : sum(wkPrev.map(dayDCR)), metaMes: F.metaMes, invTotal: storeInvTotal(st), dayOfMonth: int((Z.corte || fecha).slice(8)) || int(dd), dim, fuente: c ? 'DCR + cierres' : 'DCR' };
+            } else if (c) F.pano = base;
             F.metaDia = F.metaMes > 0 ? Math.ceil(F.metaMes / dim) : 0;
             F.promotores = activeAdvisors(st).map(a => a.nombre);
             // Evaluaciones: si ya están cargadas, se marcan solas (presentó / nota promedio de los promotores de la tienda)
@@ -185,7 +195,7 @@ registerModule('m3', (() => {
 
         body.innerHTML = `
         <section class="card">
-            <div class="row">${storeLogo(st)}<div><b>${esc(st.tienda)}</b><p class="mute">${esc(st.ciudad || '')} · ${F.auto ? `Indicadores arrastrados del cierre del ${esc(F.corte)}` : F.fromDCR ? `Venta del mes tomada de la data DCR (corte ${esc(F.corte)})` : 'La tienda aún no tiene cierres este mes'}</p></div></div>
+            <div class="row">${storeLogo(st)}<div><b>${esc(st.tienda)}</b><p class="mute">${esc(st.ciudad || '')} · ${F.auto ? (F.fromDCR ? `Venta de la data DCR al ${esc(F.corte)}${F.pano && F.pano.fuente === 'DCR + cierres' ? ' · competencia de los cierres' : ''}` : `Indicadores arrastrados del cierre del ${esc(F.corte)}`) : F.fromDCR ? `Venta del mes tomada de la data DCR (corte ${esc(F.corte)})` : 'La tienda aún no tiene cierres este mes'}</p></div></div>
             <label class="lbl">Promotor(es) en tienda</label>
             <div class="chips">${[...new Set(activeAdvisors(st).map(a => a.nombre).concat(st.asesores || []))].map(a => `<label class="chip"><input type="checkbox" data-f="prom" value="${esc(a)}" ${F.promotores.includes(a) ? 'checked' : ''}><span>${typeof advisorAvatar === 'function' ? advisorAvatar(st.id, a, 26) + ' ' : ''}${esc(a)}</span></label>`).join('')}</div>
             <input class="input" style="margin-top:8px" data-f="promExtra" value="${esc(F.promExtra)}" placeholder="Otro promotor (opcional)">
@@ -238,8 +248,8 @@ registerModule('m3', (() => {
                 const s = Math.max(W / img.width, H / img.height), w = img.width * s, h = img.height * s;
                 c.getContext('2d').drawImage(img, (W - w) / 2, (H - h) / 2, w, h);
                 fotos[i] = c.toDataURL('image/jpeg', 0.82);
-                const m = document.createElement('canvas'); m.width = 400; m.height = 300; m.getContext('2d').drawImage(c, 0, 0, 400, 300);
-                minis[i] = m.toDataURL('image/jpeg', 0.6);          // miniatura que viaja al cierre de actividades
+                const m = document.createElement('canvas'); m.width = 800; m.height = 600; m.getContext('2d').drawImage(c, 0, 0, 800, 600);
+                minis[i] = m.toDataURL('image/jpeg', 0.72);          // miniatura que viaja al cierre de actividades
                 paint();
             };
             img.onerror = () => toast('No se pudo leer la foto.', 'error');
