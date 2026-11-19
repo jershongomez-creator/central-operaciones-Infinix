@@ -536,7 +536,7 @@ registerModule('zona', (() => {
         radarData = Advisor.scan(viewStores()); if (RV.salesOnly) radarData.list.sort((a, b) => (a.pacing.indice ?? 9) - (b.pacing.indice ?? 9));
         const critA = radarData.list.filter(d => levelOf(d)[0] === 'rojo').slice(0, 4), critS = an.rows.slice().sort((a, b) => b.prio - a.prio).slice(0, 4);
         const pc = Advisor.pc;
-        const tabs = [['resumen', '📋 Resumen'], ['asesores', `👥 Asesores (${radarData.list.length})`], ['tiendas', `🏬 Tiendas (${an.rows.length})`]].concat(canPlan ? [['plan', '☀️ Plan de trabajo']] : []).concat([['reportes', '📤 Reportes']]);
+        const tabs = [['resumen', '📋 Resumen'], ['asesores', `👥 Asesores (${radarData.list.length})`], ['tiendas', `🏬 Tiendas (${an.rows.length})`], ['share', '📊 Share real']].concat(canPlan ? [['plan', '☀️ Plan de trabajo']] : []).concat([['reportes', '📤 Reportes']]);
         if (!tabs.some(x => x[0] === ztab)) ztab = 'resumen';
         out.innerHTML = `
         <section class="kpi-row six">
@@ -592,6 +592,8 @@ registerModule('zona', (() => {
 
         ${canPlan ? `<div class="zpanel" data-zp="plan" ${ztab === 'plan' ? '' : 'hidden'}><section class="card" id="z-planbox"></section></div>` : ''}
 
+        <div class="zpanel" data-zp="share" ${ztab === 'share' ? '' : 'hidden'}><section class="card"><h3 class="h3">📊 Market share real y alertas de reporte</h3><div id="z-share"></div></section></div>
+
         <div class="zpanel" data-zp="reportes" ${ztab === 'reportes' ? '' : 'hidden'}>
             <div class="grid2">
                 <section class="card rep-card" id="z-rep-zona"><h3 class="h3">🗺️ Reporte completo de ${esc(viewLabel())}</h3><p class="mute">Estado de las tiendas, referencias, asesores y recomendaciones en una imagen.</p>
@@ -606,6 +608,7 @@ registerModule('zona', (() => {
         $$('[data-ficha-or-sel]', out).forEach(b => b.onclick = () => { advSel = new Set([b.dataset.fichaOrSel]); paintAdvPanel(); paintAdvBtn(); $('#z-adv').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
         if ($('#z-rep-adv-go')) $('#z-rep-adv-go').onclick = () => openAdvisorFicha($('#z-rep-adv').value);
         paintRadar();
+        if (ztab === 'share' && typeof paintRealShare === 'function') paintRealShare($('#z-share'), an.rows.map(r => r.st), viewLabel());
         paintQuick();
         paintPlanBox();
         paintAdvBtn();
@@ -628,6 +631,7 @@ registerModule('zona', (() => {
 
     function showTab(k) {
         ztab = k;
+        if (k === 'share' && typeof paintRealShare === 'function' && an) paintRealShare($('#z-share'), an.rows.map(r => r.st), viewLabel());
         $$('#z-tabs [data-ztab]').forEach(b => b.classList.toggle('on', b.dataset.ztab === k));
         $$('#z-out .zpanel').forEach(p => { p.hidden = p.dataset.zp !== k; });
         const nav = $('#z-tabs'); if (nav && nav.getBoundingClientRect().top < 0) nav.scrollIntoView({ behavior: 'smooth' });

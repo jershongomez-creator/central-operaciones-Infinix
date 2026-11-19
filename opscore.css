@@ -859,3 +859,9 @@ details.card.acc > summary::after { content: '▾'; color: #64748B; } details.ca
 .rp .rv-imeip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 12px 40px 0; }
 .rp .rv-imeip > div { border: 1px solid #E2E8F0; border-radius: 12px; padding: 10px 12px; } .rp .rv-ih { display: flex; align-items: baseline; gap: 8px; } .rp .rv-ih small { color: #64748B; flex: 1; } .rp .rv-ih em { font-style: normal; font-weight: 800; color: #B91C1C; }
 .rp .rv-imeip table { width: 100%; font-size: 12.5px; border-collapse: collapse; margin-top: 6px; } .rp .rv-imeip td { padding: 3px 4px; border-top: 1px solid #F1F5F9; }
+
+/* Data real por cadena */
+.up-real-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin: 10px 0; }
+.up-real { border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; background: #fff; }
+.up-real.on { border-color: #86EFAC; background: #F0FDF4; } .up-real .btn { align-self: flex-start; }
+tr.alert-row td { background: #FEF2F2; }

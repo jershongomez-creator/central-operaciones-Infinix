@@ -328,6 +328,7 @@ registerModule('datos', (() => {
 
     async function render(v) {
         view = v;
+        if (canTarget() && typeof RealData !== 'undefined') await RealData.load().catch(() => { });
         const months = [-1, 0, 1].map(k => { const d = parseD(todayStr()); d.setDate(1); d.setMonth(d.getMonth() + k); return dstr(d).slice(0, 7); });
         v.innerHTML = `
         <section class="card">
@@ -345,9 +346,11 @@ registerModule('datos', (() => {
             <div class="row end"><label class="btn btn-dark">📂 Elegir Excel de malla<input type="file" id="up-mal" accept=".xlsx" hidden></label></div>
             <div id="up-mal-out"></div>
         </section>` : ''}
+        ${canTarget() && typeof realUploadHTML === 'function' ? realUploadHTML() : ''}
         <section class="card" id="up-hoy"></section>`;
         if ($('#up-tgt', v)) $('#up-tgt', v).onchange = e => onTarget(e.target.files[0]);
         if ($('#up-mal', v)) $('#up-mal', v).onchange = e => onMalla(e.target.files[0]);
+        $$('[data-real]', v).forEach(inp => inp.onchange = e => onRealFile(inp.dataset.real, e.target.files[0], () => render(view)));
         paintHoy();
         try { cargas = await Data.get(COL.config, 'cargas'); } catch (e) { cargas = null; }
         if ($('#up-tgt-last')) $('#up-tgt-last').innerHTML = lastTxt(cargas && cargas.target);

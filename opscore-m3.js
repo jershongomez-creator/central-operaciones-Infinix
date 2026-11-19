@@ -116,6 +116,12 @@ registerModule('m3', (() => {
                 const models = INFINIX_MODELS.map(x => { const meta = int(st.metas && st.metas[x.key]), mes = int(Z.ventas && Z.ventas[x.key]); return { name: x.name, meta, inv: int(st.inventario && st.inventario[x.key]), mes, semana: sum(wk.map(d => refDay(d, x.key))), cumpl: meta ? Math.round(mes / meta * 100) : null }; }).filter(x => x.meta || x.mes || x.inv);
                 F.pano = { ...base, models, infMes: ventaMes, infSem: sum(wk.map(dayDCR)), prevSem: c ? c.prevSem : sum(wkPrev.map(dayDCR)), metaMes: F.metaMes, invTotal: storeInvTotal(st), dayOfMonth: int((Z.corte || fecha).slice(8)) || int(dd), dim, fuente: c ? 'DCR + cierres' : 'DCR' };
             } else if (c) F.pano = base;
+            // Share, participación y puesto: la data real de la cadena manda sobre lo reportado en los cierres
+            if (typeof RealData !== 'undefined') {
+                await RealData.load(ym).catch(() => { });
+                const RD = RealData.forStore(st, ym);
+                if (RD) { const S = RealData.shareOf(RD.marcas); F.share = S.share == null ? F.share : Math.round(S.share * 100); F.pano = { ...(F.pano || { models: [] }), brands: S.rank.slice(0, 5).map(([brand, mes]) => ({ brand, mes, share: S.tot ? Math.round(mes / S.tot * 100) : 0, pos: S.rank.findIndex(x => x[0] === brand) + 1, hc: int((st.hc || {})[brand]), meta: 0 })), pos: S.pos, storeMes: S.tot, fuenteShare: 'real ' + RD.desde + ' a ' + RD.hasta }; }
+            }
             F.metaDia = F.metaMes > 0 ? Math.ceil(F.metaMes / dim) : 0;
             F.promotores = activeAdvisors(st).map(a => a.nombre);
             // Evaluaciones: si ya están cargadas, se marcan solas (presentó / nota promedio de los promotores de la tienda)
