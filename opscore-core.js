@@ -584,6 +584,10 @@ const liveDocs = arr => (arr || []).filter(d => !d.deleted);
 const officialStores = arr => { State.storesDeleted = (arr || []).filter(s => s.deleted); return liveDocs(arr).filter(s => normLogoKey(s.logoKey) !== 'otro'); };
 // Actualización de la data base del mes (targets, HC, KPI de comisión, asesores, inventario): se aplica una sola vez por versión
 // de semilla. Quita la data de demostración y respeta lo que es propio de cada tienda (asesores retirados, foco, contraseña).
+// Quién edita qué: target, HC y parámetros de tienda = coordinador (y gerente/admin); supervisor y formador = asesores
+const esLunes = () => !!window.__fakeMonday || parseD(todayStr()).getDay() === 1;
+const lunesAbierto = st => esLunes() && (st && st.lunesEdit) !== todayStr();
+const canTarget = () => !!(State.session && ['coordinador', 'gerente', 'admin'].includes(State.session.rol));
 // Ajustes manuales: lo que el staff corrige a mano queda marcado y ninguna carga automática lo pisa
 const MANUAL_KEYS = ['asesores', 'hc', 'metas', 'metaMes', 'metasComp', 'metasAcc', 'metasAsesor', 'kpi'];
 const markManual = (st, fields) => ({ manualFields: [...new Set([...((st && st.manualFields) || []), ...fields.filter(f => MANUAL_KEYS.includes(f))])], manualAt: Date.now(), manualBy: (State.session && State.session.nombre) || '' });
@@ -963,39 +967,49 @@ const targetPending = st => storeTargetMonth(st) !== todayStr().slice(0, 7);
 const reminderDay = () => window.__reminderDay || int(todayStr().slice(8));
 const inReminderWindow = () => reminderDay() >= 1 && reminderDay() <= 5;
 function pendingTargetStores() {
-    const s = State.session; if (!s) return [];
-    if (s.type === 'store') { const st = currentStore(); return st && targetPending(st) ? [st] : []; }
-    if (!ROLES[s.rol].modules.includes('admin')) return [];
+    const s = State.session; if (!s || s.type !== 'staff' || !canTarget()) return [];
     return scopedStoresAll().filter(chainOn).filter(targetPending);
 }
+// Recordatorios de la app: cada uno dice si aplica hoy, su texto, su botón y su notificación del teléfono (una vez al día).
+// Las notificaciones salen cuando la app está abierta o se abre ese día (sin servidor de notificaciones).
+const REMINDERS = [
+    {   id: 'target', when: () => inReminderWindow() && pendingTargetStores().length > 0,
+        text: () => { const P = pendingTargetStores(), tot = scopedStoresAll().filter(chainOn).length; return `📅 Del 1 al 5: carga el <b>target y el HC de ${esc(mesLargo(todayStr().slice(0, 7)))}</b>. Faltan <b>${P.length}</b> de ${tot} PDV.`; },
+        btn: 'Ver pendientes', go: () => { State.adminPend = true; navigate('admin'); },
+        note: () => { const P = pendingTargetStores(); return `Faltan ${P.length} PDV por cargar target y HC: ${P.slice(0, 3).map(x => x.tienda).join(', ')}${P.length > 3 ? '…' : ''}`; } },
+    {   id: 'lunes', when: () => { const st = currentStore(); return !!st && lunesAbierto(st); },
+        text: () => '📦 <b>Hoy es lunes:</b> actualiza el <b>inventario y el HC</b> de tu tienda (se habilita una vez por semana).',
+        btn: 'Actualizar ⚙️', go: () => openStoreSettings(currentStore().id),
+        note: () => 'Hoy es lunes: actualiza el inventario y el HC de tu tienda en ⚙️ Ajustes.' },
+    {   id: 'cierre', when: () => { const st = currentStore(); return !!st && new Date().getHours() >= 20 && st.lastClosure !== todayStr(); },
+        text: () => '🌙 <b>Son más de las 8 p.m.:</b> no olvides llenar y guardar tu <b>reporte de cierre de ventas</b> de hoy.',
+        btn: 'Llenar cierre', go: () => navigate('m1'),
+        note: () => 'Recuerda llenar tu reporte de cierre de ventas de hoy.' }
+];
 function paintReminder() {
     const ban = $('#month-banner'); if (!ban) return;
-    const s = State.session, P = inReminderWindow() ? pendingTargetStores() : [];
-    if (!s || !P.length) { ban.hidden = true; return; }
-    const mes = mesLargo(todayStr().slice(0, 7)), tot = s.type === 'store' ? 1 : scopedStoresAll().filter(chainOn).length;
+    const s = State.session, list = s ? REMINDERS.filter(r => { try { return r.when(); } catch (e) { return false; } }) : [];
+    if (!list.length) { ban.hidden = true; ban.innerHTML = ''; return; }
     const canAsk = typeof Notification !== 'undefined' && Notification.permission === 'default';
-    ban.innerHTML = s.type === 'store'
-        ? `<span>📅 Del 1 al 5: confirma el <b>target y el HC de ${esc(mes)}</b> de tu tienda.</span><button class="btn btn-sm" id="mb-go">Revisar ⚙️</button>${canAsk ? '<button class="btn btn-sm ghost" id="mb-notif">🔔 Activar avisos</button>' : ''}`
-        : `<span>📅 Del 1 al 5: carga el <b>target y el HC de ${esc(mes)}</b>. Faltan <b>${P.length}</b> de ${tot} PDV.</span><button class="btn btn-sm" id="mb-go">Ver pendientes</button>${canAsk ? '<button class="btn btn-sm ghost" id="mb-notif">🔔 Activar avisos</button>' : ''}`;
+    ban.innerHTML = list.map(r => `<div class="mb-row"><span>${r.text()}</span><button class="btn btn-sm" data-mb="${r.id}">${esc(r.btn)}</button></div>`).join('') + (canAsk ? '<div class="mb-row"><button class="btn btn-sm ghost" id="mb-notif">🔔 Activar avisos en este teléfono</button></div>' : '');
     ban.hidden = false;
-    $('#mb-go', ban).onclick = () => { if (s.type === 'store') openStoreSettings(currentStore().id); else { State.adminPend = true; navigate('admin'); } };
-    if ($('#mb-notif', ban)) $('#mb-notif', ban).onclick = async () => { try { await Notification.requestPermission(); } catch (e) { } paintReminder(); notifyReminder(true); };
-    notifyReminder(false);
+    $$('[data-mb]', ban).forEach(b => b.onclick = () => { const r = REMINDERS.find(x => x.id === b.dataset.mb); if (r) r.go(); });
+    if ($('#mb-notif', ban)) $('#mb-notif', ban).onclick = async () => { try { await Notification.requestPermission(); } catch (e) { } paintReminder(); };
+    list.forEach(r => notifyReminder(r));
 }
-async function notifyReminder(force) {
-    if (typeof Notification === 'undefined' || Notification.permission !== 'granted' || !inReminderWindow()) return;
-    const key = 'opscore_notif_' + todayStr() + '_' + ((State.session && (State.session.userId || State.session.storeId)) || '');
-    if (!force) { try { if (localStorage.getItem(key)) return; } catch (e) { } }
-    const P = pendingTargetStores(); if (!P.length) return;
-    const mes = mesLargo(todayStr().slice(0, 7));
-    const body = State.session.type === 'store' ? `Confirma el target y el HC de ${mes} de tu tienda en ⚙️ Ajustes.` : `Faltan ${P.length} PDV por cargar target y HC de ${mes}: ${P.slice(0, 3).map(x => x.tienda).join(', ')}${P.length > 3 ? '…' : ''}`;
-    const opts = { body, icon: 'icon-192.png', badge: 'favicon-64.png', tag: 'target-mes', data: { url: './index.html' } };
+async function notifyReminder(r) {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted' || !r || !r.note) return;
+    const key = 'opscore_notif_' + r.id + '_' + todayStr() + '_' + ((State.session && (State.session.userId || State.session.storeId)) || '');
+    try { if (localStorage.getItem(key)) return; } catch (e) { }
+    const opts = { body: r.note(), icon: 'icon-192.png', badge: 'favicon-64.png', tag: 'rec-' + r.id, data: { url: './index.html' } };
     try {
         const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
-        if (reg && reg.showNotification) await reg.showNotification('Central Infinix · Target y HC del mes', opts); else new Notification('Central Infinix · Target y HC del mes', opts);
+        if (reg && reg.showNotification) await reg.showNotification('Central Infinix', opts); else new Notification('Central Infinix', opts);
         localStorage.setItem(key, '1');
     } catch (e) { console.warn('notificación', e); }
 }
+// Con la app abierta se revisa cada minuto (para que a las 8 p.m. salga el aviso del cierre)
+setInterval(() => { if (State.session && !document.hidden) paintReminder(); }, 60000);
 
 function navigate(tab) {
     if (!State.session || !ROLES[State.session.rol].modules.includes(tab)) return;   // RBAC
@@ -1018,7 +1032,10 @@ function openStoreSettings(storeId, opts = {}) {
     const metasComp = st.metasComp || {}, invAcc = st.invAcc || {}, metasAcc = st.metasAcc || {};
     const numIn = (id, v) => `<input class="input num" type="number" inputmode="numeric" min="0" id="${id}" value="${int(v)}">`;
     // El staff (supervisor, formador, coordinador, gerente) edita todo a mano: asesores, meta por asesor, targets y clave
-    const staffEdit = !!(State.session && State.session.type === 'staff');
+    const staffEdit = !!(State.session && State.session.type === 'staff') && canTarget();
+    // Tienda: todo bloqueado salvo la contraseña; los lunes se abre una vez el HC y el inventario
+    const storeUser = !(State.session && State.session.type === 'staff') && !opts.onboarding;
+    const mondayOpen = storeUser && lunesAbierto(st);
     const metaAs = st.metasAsesor || {};
     const metaKeyOf = n => Object.keys(metaAs).find(k => sameAdvisor({ nombre: k }, { nombre: n }) || nameSubset(k, n));
     const advRow = (n, i) => `<div class="adv-edit" data-row><input class="input" data-asn placeholder="Nombre del asesor ${i + 1}" value="${esc(n || '')}">${staffEdit ? `<input class="input num" type="number" inputmode="numeric" min="0" data-asm placeholder="—" title="Meta del mes del asesor (unidades)" value="${n && metaKeyOf(n) ? int(metaAs[metaKeyOf(n)]) : ''}">` : ''}<button type="button" class="icon-btn" data-asx title="Quitar asesor">✕</button></div>`;
@@ -1027,6 +1044,7 @@ function openStoreSettings(storeId, opts = {}) {
         <h3 class="modal-title">${opts.onboarding ? 'Configuración inicial de la tienda' : 'Ajustes de tienda'}</h3>
         <p class="mute">${esc(st.tienda)} · ${esc(st.ciudad || '')}. ${opts.onboarding ? 'Se hace una sola vez; después el reporte abre listo para llenar.' : ''}</p>
         ${manualTxt}
+        ${storeUser ? `<div class="manual-note ${mondayOpen ? 'ok' : ''}">${mondayOpen ? '📅 <b>Hoy es lunes:</b> actualiza el <b>HC</b> y el <b>inventario</b> de tu tienda (puntos 3, 4 y 5) y guarda. Se puede una sola vez por semana.' : `🔒 Target, HC y asesores los ajusta el coordinador. El HC y el inventario se actualizan los lunes${st.lunesEdit ? ` (último: ${esc(fechaLarga(st.lunesEdit))})` : ''}.`}</div>` : ''}
 
         <h4 class="sec">1 · Cadena comercial</h4>
         <div class="row">
@@ -1051,7 +1069,7 @@ function openStoreSettings(storeId, opts = {}) {
         <h4 class="sec">3 · Headcount y target del mes por marca</h4>
         <p class="hint">Se fijan una vez. La meta de Infinix sale de la suma por referencia (punto 4).</p>
         <table class="tbl compact"><thead><tr><th>Marca</th><th>HC (promotores)</th><th>Target mes</th></tr></thead><tbody>
-            ${BRANDS.map(b => `<tr class="${b === 'INFINIX' ? 'row-own' : ''}"><td><span class="dot" style="background:${BRAND_COLORS[b]}"></span><b>${b}</b></td><td>${numIn('sc-hc-' + b, hc[b] ?? (b === 'INFINIX' ? Math.max(1, as.filter(Boolean).length) : 0))}</td><td>${b === 'INFINIX' ? `<input class="input num" id="sc-mc-INFINIX" value="${storeMetaMes(st) || 0}" readonly>` : numIn('sc-mc-' + b, metasComp[b])}</td></tr>`).join('')}
+            ${BRANDS.map(b => `<tr class="${b === 'INFINIX' ? 'row-own' : ''}"><td><span class="dot" style="background:${BRAND_COLORS[b]}"></span><b>${b}</b></td><td><input class="input num" type="number" inputmode="decimal" min="0" step="0.5" id="sc-hc-${b}" value="${+(hc[b] ?? (b === 'INFINIX' ? Math.max(1, as.filter(Boolean).length) : 0)) || 0}"></td><td>${b === 'INFINIX' ? `<input class="input num" id="sc-mc-INFINIX" value="${storeMetaMes(st) || 0}" readonly>` : numIn('sc-mc-' + b, metasComp[b])}</td></tr>`).join('')}
         </tbody></table>
 
         <h4 class="sec">4 · Target del mes e inventario por referencia Infinix</h4>
@@ -1076,6 +1094,11 @@ function openStoreSettings(storeId, opts = {}) {
             <button class="btn btn-primary" id="sc-save">Guardar configuración</button>
         </div>`, { wide: true, locked: !!opts.onboarding });
 
+    if (storeUser) {
+        $$('input, select, textarea, #sc-add, [data-asx]', m).forEach(el => { if (el.id !== 'sc-pass' && !el.closest('.modal-x')) { el.disabled = true; } });
+        if (mondayOpen) $$('[id^="sc-hc-"], [id^="sc-inv-"], [id^="sc-iacc-"]', m).forEach(el => { el.disabled = false; });
+        $$('[data-eye]', m).forEach(el => { el.disabled = false; });
+    }
     const chainPrev = () => {
         const k = $('#sc-chain', m).value; $('#sc-chain-name', m).hidden = k !== 'otro';
         $('#sc-logo', m).innerHTML = chainLogo(k, $('#sc-chain-name', m).value.toUpperCase());
@@ -1098,6 +1121,21 @@ function openStoreSettings(storeId, opts = {}) {
     };
     $('#sc-save', m).onclick = async () => {
         if (!canWrite()) return;
+        if (storeUser) {            // la tienda solo guarda su contraseña y, el lunes, el HC y el inventario
+            const pass = $('#sc-pass', m).value, err = $('#sc-err', m), upd = { updatedAt: Date.now() };
+            if (pass && pass.length < 6) { err.textContent = 'La contraseña debe tener al menos 6 caracteres.'; err.hidden = false; return; }
+            if (pass) upd.passHash = pwdHash(pass);
+            if (mondayOpen) Object.assign(upd, {
+                hc: { ...(st.hc || {}), ...Object.fromEntries(BRANDS.map(b => [b, numf($('#sc-hc-' + b, m).value)])) },
+                inventario: Object.fromEntries(INFINIX_MODELS.map(x => [x.key, int($('#sc-inv-' + x.key, m).value)])),
+                invAcc: Object.fromEntries(INFINIX_ACCESSORIES.map(x => [x.key, int($('#sc-iacc-' + x.key, m).value)])),
+                lunesEdit: todayStr(), lunesBy: 'tienda', invAt: todayStr()
+            });
+            if (Object.keys(upd).length === 1) { closeModal(m); return; }
+            await Data.set(COL.stores, st.id, upd, true); Object.assign(st, upd); closeModal(m);
+            toast(mondayOpen ? 'HC e inventario actualizados. El próximo cambio se habilita el lunes.' : 'Contraseña actualizada', 'ok', 5000);
+            renderHeader(); if (State.tab) navigate(State.tab); return;
+        }
         const rows = $$('#sc-advs [data-row]', m).map(r => ({ n: $('[data-asn]', r).value.trim().replace(/\s+/g, ' '), meta: staffEdit ? $('[data-asm]', r).value.trim() : '' })).filter(x => x.n);
         const asesores = [...new Set(rows.map(x => x.n))];
         const err = $('#sc-err', m);
@@ -1110,7 +1148,7 @@ function openStoreSettings(storeId, opts = {}) {
             logoKey, asesores, isConfigured: true, updatedAt: Date.now(),
             foco: { ref: $('#sc-foco-ref', m).value, nota: $('#sc-foco-nota', m).value.trim(), at: Date.now() },
             cedulas: Object.fromEntries(asesores.map(a => [a, (st.cedulas || {})[a] || ''])),
-            hc: Object.fromEntries(BRANDS.map(b => [b, int($('#sc-hc-' + b, m).value)])),
+            hc: Object.fromEntries(BRANDS.map(b => [b, numf($('#sc-hc-' + b, m).value)])),
             inventario: Object.fromEntries(INFINIX_MODELS.map(x => [x.key, int($('#sc-inv-' + x.key, m).value)])),
             metas: Object.fromEntries(INFINIX_MODELS.map(x => [x.key, int($('#sc-meta-' + x.key, m).value)])),
             metasComp: Object.fromEntries(BRANDS.filter(b => b !== 'INFINIX').map(b => [b, int($('#sc-mc-' + b, m).value)])),
@@ -1160,7 +1198,7 @@ const Charts = {
             type: 'doughnut',
             data: { datasets: [{ data: total > 0 ? values : [1], backgroundColor: total > 0 ? colors : [THEME.line], borderWidth: opts.gap ? 2 : 0, borderColor: '#FFFFFF' }] },
             options: {
-                responsive: false, animation: false, devicePixelRatio: 2, cutout: opts.cutout || '74%', events: [],
+                responsive: false, animation: false, devicePixelRatio: 4, cutout: opts.cutout || '74%', events: [],
                 rotation: opts.rotation || 0, circumference: opts.circumference || 360,
                 plugins: { legend: { display: false }, tooltip: { enabled: false } }
             }
@@ -1176,6 +1214,15 @@ const semaforo = ratio => ratio >= 1 ? { color: THEME.green, label: 'En meta', c
 
 // ---------- Motor de exportación gráfica (html2canvas) ------------------------
 const Exporter = {
+    // Resolución: 4K de ancho (3840 px) y nunca menos de 2x; se limita a lo que el navegador puede dibujar
+    // (iPhone ≈ 16 MP por lienzo; Android y PC mucho más) para que los reportes largos no fallen.
+    scaleFor(w, h) {
+        const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        const maxArea = iOS ? 16.5e6 : 110e6, maxDim = iOS ? 8190 : 16000;
+        let sc = Math.min(4, Math.max(2, 3840 / Math.max(1, w)));
+        sc = Math.min(sc, maxDim / Math.max(w, h), Math.sqrt(maxArea / Math.max(1, w * h)));
+        return Math.max(1, Math.round(sc * 100) / 100);
+    },
     async render(build) {
         const stage = $('#stage');
         stage.innerHTML = ''; Charts.destroyAll('stage');
@@ -1183,7 +1230,7 @@ const Exporter = {
         await Promise.all($$('img', el).map(img => img.complete ? null : new Promise(r => { img.onload = img.onerror = r; })));
         await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
         const canvas = await html2canvas(el, {
-            scale: 2, backgroundColor: '#FFFFFF', useCORS: true, logging: false,
+            scale: this.scaleFor(el.offsetWidth, el.offsetHeight), backgroundColor: '#FFFFFF', useCORS: true, logging: false,
             width: el.offsetWidth, height: el.offsetHeight, windowWidth: el.offsetWidth + 80, scrollX: 0, scrollY: 0
         });
         Charts.destroyAll('stage'); stage.innerHTML = '';
@@ -1211,12 +1258,34 @@ async function downloadBlob(blob, name) {
     return true;
 }
 
-// Los 3 botones obligatorios: Vista previa · Compartir en WhatsApp · Guardar imagen
+// PDF de una página con la imagen en alta resolución (JPEG). WhatsApp lo envía como documento, sin comprimirlo:
+// se puede ampliar sin perder calidad. Se arma a mano para no depender de librerías externas.
+async function canvasToPdf(canvas) {
+    const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.94));
+    const jpg = new Uint8Array(await blob.arrayBuffer());
+    const W = canvas.width, H = canvas.height, k = 1400 / W, pw = Math.round(W * k * 0.75 * 100) / 100, ph = Math.round(H * k * 0.75 * 100) / 100;
+    const enc = new TextEncoder(), parts = [], offs = []; let len = 0;
+    const push = x => { const b = typeof x === 'string' ? enc.encode(x) : x; parts.push(b); len += b.length; };
+    const obj = (n, body) => { offs[n] = len; push(`${n} 0 obj\n`); body(); push('\nendobj\n'); };
+    push('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n');
+    const content = `q ${pw} 0 0 ${ph} 0 0 cm /Im0 Do Q`;
+    obj(1, () => push('<< /Type /Catalog /Pages 2 0 R >>'));
+    obj(2, () => push('<< /Type /Pages /Kids [3 0 R] /Count 1 >>'));
+    obj(3, () => push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pw} ${ph}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>`));
+    obj(4, () => { push(`<< /Type /XObject /Subtype /Image /Width ${W} /Height ${H} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpg.length} >>\nstream\n`); push(jpg); push('\nendstream'); });
+    obj(5, () => push(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`));
+    const xref = len;
+    push(`xref\n0 6\n0000000000 65535 f \n${[1, 2, 3, 4, 5].map(n => String(offs[n]).padStart(10, '0') + ' 00000 n \n').join('')}trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
+    return new Blob(parts, { type: 'application/pdf' });
+}
+
+// Los 3 botones obligatorios: Vista previa · Compartir en WhatsApp · Guardar imagen (+ PDF en alta calidad)
 const actionBarHTML = () => `
     <div class="actions">
         <button class="btn btn-ghost" data-act="preview">👁️ Vista previa</button>
         <button class="btn btn-wa" data-act="share">📲 Compartir en WhatsApp</button>
         <button class="btn btn-primary" data-act="save">💾 Guardar imagen</button>
+        <button class="btn btn-ghost" data-act="pdf" title="Para reportes largos: WhatsApp lo envía como documento y no pierde calidad">📄 PDF</button>
     </div>`;
 
 const ReportActions = {
@@ -1230,8 +1299,9 @@ const ReportActions = {
         });
         $$('[data-act]', root).forEach(btn => btn.onclick = () => this.run(btn.dataset.act, cfg, btn));
     },
-    async make(cfg) {
+    async make(cfg, pdf) {
         const canvas = await Exporter.render(cfg.build);
+        if (pdf) return { blob: await canvasToPdf(canvas) };
         const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
         return { blob, url: URL.createObjectURL(blob) };
     },
@@ -1245,6 +1315,7 @@ const ReportActions = {
             return;
         }
         try {
+            if (act === 'pdf') { const out = await this.make(cfg, true); await this.sharePdf(out, cfg); return; }
             const out = await this.make(cfg);
             if (act === 'preview') this.preview(out, cfg);
             else if (act === 'share') await this.share(out, cfg);
@@ -1269,6 +1340,16 @@ const ReportActions = {
         } else if (await downloadBlob(out.blob, cfg.filename())) {
             toast('Este navegador no comparte archivos directamente: la imagen se descargó para enviarla por WhatsApp Web.', 'info', 5200);
         }
+        await saving;
+    },
+    async sharePdf(out, cfg) {
+        const name = cfg.filename().replace(/\.png$/i, '') + '.pdf';
+        const file = new File([out.blob], name, { type: 'application/pdf' });
+        const saving = this.persist(cfg);
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            try { await navigator.share({ files: [file], title: cfg.title || 'Central de Operaciones' }); }
+            catch (e) { if (e.name !== 'AbortError') await downloadBlob(out.blob, name); }
+        } else await downloadBlob(out.blob, name);
         await saving;
     },
     async save(out, cfg) {

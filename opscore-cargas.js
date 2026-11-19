@@ -91,6 +91,8 @@ const Match = (() => {
 })();
 
 // ---------- Estado del asesor en un día: novedad manual > malla ----------
+// Quién carga qué: target y data real = coordinador (gerente, admin); malla = supervisor, coordinador, gerente, admin
+const canMalla = () => !!(State.session && ['supervisor', 'coordinador', 'gerente', 'admin'].includes(State.session.rol));
 const DayStatus = (() => {
     const CODES = {
         comp: { label: 'Compensando', ico: '🟣', off: true }, desc: { label: 'Descanso', ico: '⚪', off: true },
@@ -312,23 +314,24 @@ registerModule('datos', (() => {
             <h2 class="h2">Cargar datos</h2>
             <p class="mute">Aquí se carga lo que alimenta la app mes a mes y semana a semana: target y malla de horarios. Lo que se cargue lo ven al instante todos los usuarios de la zona. La venta (data plana DCR) se carga en el <b>Análisis de zona</b>.</p>
         </section>
-        <section class="card up-card">
+        ${canTarget() ? `        <section class="card up-card">
             <div class="up-h"><span class="up-ico">🎯</span><div><h3 class="h3">Target del mes · una vez al mes</h3><p class="mute">El Excel de target (ZONA, CADENA, TIENDA, HC, ROI, TARGET y una columna por referencia). Actualiza target por referencia, HC y umbrales ROI de cada PDV de tu alcance.</p><p class="hint" id="up-tgt-last"></p></div></div>
             <div class="row wrap end" style="gap:8px"><label class="lbl" style="margin:0">Mes del target</label><select class="input" id="up-tgt-m">${months.map(x => `<option value="${x}" ${x === nextMonth() ? 'selected' : ''}>${esc(mesLargo(x))}</option>`).join('')}</select>
                 <label class="btn btn-dark">📂 Elegir Excel de target<input type="file" id="up-tgt" accept=".xlsx" hidden></label></div>
             <div id="up-tgt-out"></div>
-        </section>
-        <section class="card up-card">
+        </section>` : ''}
+        ${canMalla() ? `        <section class="card up-card">
             <div class="up-h"><span class="up-ico">🗓️</span><div><h3 class="h3">Malla de horarios · cada semana</h3><p class="mute">El Excel de la malla (todas las hojas de zona). La app toma los días de este mes: turnos, <b>compensatorios</b>, descansos, incapacidades, vacaciones y apoyos en otra tienda.</p><p class="hint" id="up-mal-last"></p></div></div>
             <div class="row end"><label class="btn btn-dark">📂 Elegir Excel de malla<input type="file" id="up-mal" accept=".xlsx" hidden></label></div>
             <div id="up-mal-out"></div>
-        </section>
+        </section>` : ''}
         <section class="card" id="up-hoy"></section>`;
-        $('#up-tgt', v).onchange = e => onTarget(e.target.files[0]);
-        $('#up-mal', v).onchange = e => onMalla(e.target.files[0]);
+        if ($('#up-tgt', v)) $('#up-tgt', v).onchange = e => onTarget(e.target.files[0]);
+        if ($('#up-mal', v)) $('#up-mal', v).onchange = e => onMalla(e.target.files[0]);
         paintHoy();
         try { cargas = await Data.get(COL.config, 'cargas'); } catch (e) { cargas = null; }
-        if ($('#up-tgt-last')) { $('#up-tgt-last').innerHTML = lastTxt(cargas && cargas.target); $('#up-mal-last').innerHTML = lastTxt(cargas && cargas.malla); }
+        if ($('#up-tgt-last')) $('#up-tgt-last').innerHTML = lastTxt(cargas && cargas.target);
+        if ($('#up-mal-last')) $('#up-mal-last').innerHTML = lastTxt(cargas && cargas.malla);
     }
 
     // ---- Target

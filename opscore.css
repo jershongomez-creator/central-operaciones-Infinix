@@ -767,3 +767,11 @@ details.card.acc > summary::after { content: '▾'; color: #64748B; } details.ca
 .pw-eye { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); border: 0; background: none; font-size: 18px; cursor: pointer; padding: 4px 6px; opacity: .7; }
 .remember { display: flex; align-items: center; gap: 8px; margin: 10px 0 2px; font-size: 13.5px; color: var(--mute); cursor: pointer; }
 .remember input { width: 18px; height: 18px; accent-color: var(--green-d); }
+
+.manual-note.ok { background: var(--green-l); border-color: #86EFAC; }
+.month-banner { flex-direction: column; gap: 6px; }
+.month-banner .mb-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 12px; }
+
+/* Barra de acciones: se acomoda sola (vista previa, WhatsApp, imagen, PDF y solo guardar) */
+.actions, .actions:has([data-act="store"]) { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+@media (max-width: 560px) { .actions, .actions:has([data-act="store"]) { grid-template-columns: 1fr 1fr; } .actions .btn-wa { grid-column: span 2; order: -1; } .actions .btn-ok { grid-column: span 2; order: -2; } }

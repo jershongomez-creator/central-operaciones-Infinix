@@ -266,10 +266,14 @@ registerModule('evals', (() => {
         if (!file) return;
         $('#ev-status').textContent = `Leyendo ${file.name}…`;
         try {
-            const W = await Evals.processFile(file, R);
+            // La evaluación es general: se cruza con los asesores de todo el país y queda guardada en cada zona,
+            // así todos los líderes (de cualquier zona) la ven de una vez, sin importar quién la subió
+            const allZ = State.zones.map(z => z.nombre);
+            await Evals.load(allZ, month).catch(() => { });
+            const W = await Evals.processFile(file, Evals.roster(allZ));
             W.uploadedAt = Date.now(); W.uploadedBy = me().nombre;
             weeks[w] = W; paintSlots(); compute();
-            await Evals.save(viewZonas(), month, { [w]: W }, { uploadedBy: me().nombre, uploadedById: me().userId });   // queda guardada de una vez
+            await Evals.save(allZ, month, { [w]: W }, { uploadedBy: me().nombre, uploadedById: me().userId });   // queda guardada de una vez
             W.saved = true; paintSlots();
             const unm = Object.keys(W.unmatched).length;
             toast(`${w}: ${W.matchedN} de ${W.total} filas cruzadas con asesores${unm ? ` · ${unm} sin cruzar` : ''}`, unm ? 'warn' : 'ok', 5000);

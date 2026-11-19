@@ -9,14 +9,15 @@ registerModule('admin', (() => {
     let tab = 'tiendas';
     const me = () => State.session;
     const isAdmin = () => me().rol === 'admin';
-    const isLead = () => ['admin', 'coordinador', 'gerente'].includes(me().rol);       // zonas y configuración general
-    const TABS = () => isLead() ? ['tiendas', 'asesores', 'zonas', 'equipo', 'config'] : ['tiendas', 'asesores', 'equipo'];
+    // Supervisor y formador: solo Asesores (retirar, reactivar, mover, asignar, agregar, novedades).
+    // Coordinador (y gerente): tiendas, asesores, zonas y equipo. Configuración: solo el Administrador.
+    const TABS = () => isAdmin() ? ['tiendas', 'asesores', 'zonas', 'equipo', 'config'] : canTarget() ? ['tiendas', 'asesores', 'zonas', 'equipo'] : ['asesores'];
     const TAB_LABEL = { tiendas: '🏬 Tiendas', asesores: '🧑‍💼 Asesores', zonas: '🗺️ Zonas', equipo: '👥 Equipo', config: '🔐 Configuración' };
 
     function render(view) {
         view.innerHTML = `
         <section class="card">
-            <h2 class="h2">Gestión de tiendas, asesores y usuarios</h2>
+            <h2 class="h2">${canTarget() ? 'Gestión de tiendas, asesores y usuarios' : 'Gestión de asesores'}</h2>
             <p class="mute">Todo lo que llega automático con la data también se puede ajustar a mano. Lo ajustado a mano queda marcado con <i class="pill man">✋ manual</i> y las cargas automáticas no lo cambian. Los cambios se ven en toda la app en tiempo real. Alcance: <b>${isAllZones() ? 'nacional' : (myRegional() && ['coordinador', 'gerente'].includes(me().rol) ? 'regional ' + esc(myRegional()) : 'zona ' + esc(me().zona))}</b>.</p>
             <div class="seg" style="margin-top:12px">${TABS().map(t => `<button class="seg-btn" data-t="${t}">${TAB_LABEL[t]}</button>`).join('')}</div>
         </section>
@@ -39,7 +40,7 @@ registerModule('admin', (() => {
     function paint() {
         $$('[data-t]').forEach(b => b.classList.toggle('active', b.dataset.t === tab));
         const body = $('#adm-body'); if (!body) return;
-        if (!TABS().includes(tab)) tab = 'tiendas';
+        if (!TABS().includes(tab)) tab = TABS()[0];
         body.innerHTML = ({ tiendas: tiendasHTML, asesores: asesoresHTML, zonas: zonasHTML, equipo: equipoHTML, config: configHTML })[tab]();
     }
 
@@ -86,7 +87,7 @@ registerModule('admin', (() => {
                 + (L.map(a => { const k = metaKey(st, a); return `<tr class="${a.activo ? '' : 'off'}" data-sid="${esc(st.id)}">
                     <td class="l"><b>${esc(a.nombre)}</b> ${typeof DayStatus !== 'undefined' ? DayStatus.chip(DayStatus.ofAdvisor(st, a.nombre)) + `<button class="nv-dot" title="Registrar novedad" data-nvd="${esc(st.id)}|${esc(a.nombre)}">⚑</button>` : ''}${a.home ? `<br><small class="mute">apoyo · su meta está en ${esc(a.homeTienda)}</small>` : ''}</td>
                     <td>${a.total || 0}</td>
-                    <td><input class="input num" type="number" min="0" inputmode="numeric" data-am="${esc(a.nombre)}" data-sid="${esc(st.id)}" value="${k ? int(st.metasAsesor[k]) : ''}" placeholder="reparto" ${a.activo ? '' : 'disabled'}></td>
+                    <td><input class="input num" type="number" min="0" inputmode="numeric" data-am="${esc(a.nombre)}" data-sid="${esc(st.id)}" value="${k ? int(st.metasAsesor[k]) : ''}" placeholder="reparto" ${a.activo && canTarget() ? '' : 'disabled'}></td>
                     <td>${!a.asignado && a.activo ? `<i class="pill plan" title="Aparece en la data de esta tienda pero no está asignado al PDV: sus unidades suman a la tienda">No asignado</i> <button class="btn btn-ghost sm" data-a="adv-assign" data-sid="${esc(st.id)}" data-n="${esc(a.nombre)}">Asignar</button>` : a.activo ? '<i class="pill ok">Activo</i>' : '<i class="pill off">Retirado</i>'} ${a.asignado || !a.activo ? `<button class="btn btn-ghost sm" data-a="adv-toggle" data-sid="${esc(st.id)}" data-n="${esc(a.nombre)}">${a.activo ? 'Retirar' : 'Reactivar'}</button>` : ''}</td>
                     <td><select class="input" data-amove="${esc(a.nombre)}" data-sid="${esc(st.id)}" ${a.activo ? '' : 'disabled'}><option value="">Mover a…</option>${scopedStoresAll().filter(x => x.id !== st.id && x.zona === st.zona).map(x => `<option value="${esc(x.id)}">${esc(x.tienda)}</option>`).join('')}</select></td></tr>`; }).join('')
                     || '<tr><td colspan="5" class="l mute">Sin asesores registrados.</td></tr>');
@@ -131,15 +132,15 @@ registerModule('admin', (() => {
         const m = openModal(`<h3 class="modal-title">Agregar asesor</h3>
             <label class="lbl">Tienda</label><select class="input" id="aa-st">${stores.map(s => `<option value="${esc(s.id)}">${esc(s.tienda)}</option>`).join('')}</select>
             <div class="grid2"><div><label class="lbl">Nombre completo</label><input class="input" id="aa-n" placeholder="Ej. Laura Gómez Pérez"></div>
-            <div><label class="lbl">Meta del mes (uds, opcional)</label><input class="input num" type="number" min="0" id="aa-m" placeholder="reparto"></div></div>
+            ${canTarget() ? '<div><label class="lbl">Meta del mes (uds, opcional)</label><input class="input num" type="number" min="0" id="aa-m" placeholder="reparto"></div>' : '<div><p class="hint" style="margin-top:28px">La meta del asesor la asigna el coordinador.</p></div>'}</div>
             <p id="aa-err" class="err" hidden></p>
             <div class="row end" style="margin-top:16px"><button class="btn btn-ghost" data-x>Cancelar</button><button class="btn btn-primary" data-ok>Agregar</button></div>`);
         $('[data-x]', m).onclick = () => closeModal(m);
         $('[data-ok]', m).onclick = async () => {
-            const st = storeById($('#aa-st', m).value), nombre = $('#aa-n', m).value.trim().replace(/\s+/g, ' '), meta = $('#aa-m', m).value.trim();
+            const st = storeById($('#aa-st', m).value), nombre = $('#aa-n', m).value.trim().replace(/\s+/g, ' '), meta = $('#aa-m', m) ? $('#aa-m', m).value.trim() : '';
             if (!st || nombre.length < 5) { const e = $('#aa-err', m); e.textContent = 'Elige la tienda y escribe nombre y apellido.'; e.hidden = false; return; }
             const tm = { ...(st.metasAsesor || {}) }; if (meta !== '') tm[nombre] = int(meta);
-            const hc = { ...(st.hc || {}) }, nAct = activeAdvisors(st).length + 1; if (int(hc.INFINIX) < nAct) hc.INFINIX = nAct;
+            const hc = { ...(st.hc || {}) }, nAct = activeAdvisors(st).length + 1; if (canTarget() && (+hc.INFINIX || 0) < nAct) hc.INFINIX = nAct;
             await saveStore(st, { asesores: [...new Set([...assigned(st), nombre])], metasAsesor: Object.keys(tm).length ? tm : null, bajas: (st.bajas || []).filter(b => !sameAdvisor(b, { nombre })), hc, isConfigured: true }, ['asesores', 'metasAsesor', 'hc']);
             closeModal(m); toast(`${nombre} agregado a ${st.tienda}`, 'ok'); paint();
         };

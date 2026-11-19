@@ -154,7 +154,7 @@ const Advisor = (() => {
         const mejoras = [];
         if (meta > 0 && brechaUds > 0) mejoras.push({ i: '🚀', t: `Para llegar a tu meta de ${meta} te faltan <b>${unidades(brechaUds)}</b>: vende <b>${ritmoReq} por día</b> en los ${left} días que quedan${venta < Math.round(meta * esperado) ? ` (a hoy deberías llevar ${Math.round(meta * esperado)})` : ''}.` });
         if (comHoy.next && comHoy.next.premio) mejoras.push({ i: '💰', t: `Te faltan <b>${unidades(comHoy.falta)}</b> para el ${comHoy.next.label}: son <b>${porDia(comHoy.next.meta)} por día</b>.` });
-        else if (comHoy.next) mejoras.push({ i: '🔓', t: `Te faltan <b>${unidades(comHoy.falta)}</b> para abrir la llave (ROI 1: ${KP.base} uds). Al abrirla cobras <b>${money(comHoy.speedsBloq)}</b> en speeds de lo que ya vendiste.` });
+        else if (comHoy.next) mejoras.push({ i: '🔓', t: `Te faltan <b>${unidades(comHoy.falta)}</b> para abrir la llave (ROI 1: ${KP.base} uds). Desde ahí cobras el speed de cada modelo que vendas.` });
         (rezagos.length ? rezagos : rezagosOtros).slice(0, 2).forEach(m => mejoras.push({ i: '🎯', t: `Tienes <b>${unidades(m.inv)} de ${m.name}</b> en tienda y ${m.vendidas ? 'solo vendiste ' + m.vendidas : 'aún no vendes ninguno'}. ${MODEL_TIPS[m.key] || ''}` }));
         if (ev && ev.temasDebiles && ev.temasDebiles.length && ev.bajo) mejoras.push({ i: '📚', t: `Repasa <b>${ev.temasDebiles.slice(0, 2).map(x => `${x.tema} (${x.nota})`).join(' y ')}</b>: la nota mínima es ${notaMin}.` });
         const noHechas = evSemanas.filter(x => x.estado === 'no').map(x => x.w);
@@ -333,15 +333,15 @@ registerModule('calc', (() => {
         INFINIX_ACCESSORIES.forEach(a => { const g = $('#cc-ag-' + a.key); if (g) g.innerHTML = `<b>${money(int(accU[a.key]) * (planValoresAcc()[a.key] || 0))}</b>`; });
         const K = r.I, P2 = r.P, left = Math.max(0, daysInMonth(todayStr().slice(0, 7)) - new Date().getDate() + 1);
         const perDay = n => left > 0 ? fmt1(Math.max(0, n - t) / left) : Math.max(0, n - t);
-        const step = (lbl, meta, premio, ok) => `<div class="ac-step ${ok ? 'ok' : ''}"><i>${ok ? '✅' : '🔒'}</i><div><b>${lbl}</b><small>${meta} uds${premio ? ' · ' + money(premio) : ''}</small></div><em>${ok ? 'Logrado' : `Faltan <b>${meta - t}</b><br><small>${perDay(meta)}/día</small>`}</em></div>`;
+        const step = (lbl, meta, premio, ok) => `<div class="ac-step ${ok ? 'ok' : ''}"><i>${ok ? '✅' : '🔒'}</i><div><b>${lbl}</b><small>${meta} uds${premio ? ' · ' + money(premio) : ''}</small></div><em>${ok ? 'Logrado' : `Faltan <b>${meta - t}</b>`}</em></div>`;
         $('#cc-kpis').innerHTML = `
             <div class="kpi hl"><span>Unidades del mes</span><b>${t}</b><small>${tt > 0 ? `${Math.round(t / tt * 100)}% de mi target (${tt})` : 'sin target'}</small></div>
-            <div class="kpi ${K.abierto ? '' : 'warn'}"><span>Llave de speeds (ROI 1 · ${P2.base} uds)</span><b>${K.abierto ? 'Abierta ✅' : `Faltan ${K.faltaBase}`}</b><small>${K.abierto ? 'Ya cobras el speed de cada modelo' : `Al abrirla cobras ${money(K.speedsBloq)} de lo vendido`}</small></div>
-            <div class="kpi"><span>Ganas hoy</span><b>${money(K.total)}</b><small>speeds ${money(K.speeds)}${K.kpi ? ` + ROI ${money(K.kpi)}` : ''}${K.acc ? ` + accesorios ${money(K.acc)}` : ''}</small></div>
+            <div class="kpi ${K.abierto ? '' : 'warn'}"><span>Llave de speeds (ROI 1 · ${P2.base} uds)</span><b>${K.abierto ? 'Abierta ✅' : `Faltan ${K.faltaBase}`}</b><small>${K.abierto ? 'Ya cobras el speed de cada modelo' : 'Desde ahí cobras el speed de cada modelo'}</small></div>
+            <div class="kpi"><span>Llevas ganado</span><b>${money(K.total)}</b><small>speeds ${money(K.speeds)}${K.kpi ? ` + ROI ${money(K.kpi)}` : ''}${K.acc ? ` + accesorios ${money(K.acc)}` : ''}</small></div>
             <div class="kpi"><span>Siguiente premio</span><b>${K.next ? K.next.meta + ' uds' : '🏆'}</b><small>${K.next ? `Faltan ${K.falta} · ${esc(K.next.label)}` : 'Alcanzaste el ROI 3'}</small></div>`;
         $('#cc-scheme').innerHTML = `
             <h3 class="h3">Plan de incentivos · noviembre 2026</h3>
-            <div class="ac-steps">${step('ROI 1 · Llave de speeds', P2.base, 0, K.nivel >= 1)}${step('ROI 2', P2.k400, P2.pay400, K.nivel >= 2)}${step('ROI 3', P2.k700, P2.pay700, K.nivel >= 3)}</div>
+            <div class="ac-steps">${step('ROI 1 · Llave de speeds', P2.base, 0, K.nivel >= 1)}${step('ROI 2', P2.k400, P2.pay400, K.nivel >= 2)}${step('ROI 3', P2.k700, P2.pay700, K.nivel >= 3)}${tt > 0 ? step('100% de mi target', tt, 0, t >= tt) : ''}</div>
             ${planTerminosHTML()}`;
     }
 
@@ -374,8 +374,8 @@ function buildCalcCanvas(stage, st, asesor, units, targets, r, src) {
             <div class="dfoot">${tt > 0 ? `<b>${Math.round(t / tt * 100)}%</b> de mi target` : 'Sin target asignado'}</div></div>
         <div class="dcard"><div class="dcard-t">LLAVE · ROI 1 · ${r.ap} UDS</div>
             <div class="center big-num" style="color:${r.abierto ? THEME.green : THEME.amber}">${r.abierto ? 'ABIERTA' : `FALTAN ${r.faltanAp}`}</div>
-            <div class="dfoot">${r.abierto ? 'Cobras el speed de cada modelo' : `Al abrirla cobras ${money(r.siAbre)} en speeds`}</div></div>
-        <div class="dcard"><div class="dcard-t">GANAS HOY</div>
+            <div class="dfoot">${r.abierto ? 'Cobras el speed de cada modelo' : 'Desde ahí cobras el speed de cada modelo'}</div></div>
+        <div class="dcard"><div class="dcard-t">LLEVAS GANADO</div>
             <div class="center big-num" style="color:${THEME.green}">${money(r.ganado)}</div>
             <div class="dfoot">speeds ${money(r.base)}${r.bono ? ' + ROI ' + money(r.bono) : ''}${r.I.acc ? ' + acc. ' + money(r.I.acc) : ''}</div></div>
         <div class="dcard"><div class="dcard-t">SIGUIENTE PREMIO</div>
@@ -439,7 +439,7 @@ function advisorFichaHTML(D) {
     </div>
     <div class="fa-pace">
         <div class="fa-bar"><div class="fa-fill ${cumCls}" style="width:${fill}%"></div>${pa.meta ? `<div class="fa-mark" style="left:${mark}%"><b>esperado ${pc(pa.esperado)}</b></div>` : ''}</div>
-        <div class="fa-pace-t">Ritmo: lleva <b>${pa.ritmoActual}</b> uds/día${pa.meta ? ` y necesita <b>${pa.ritmoReq}</b>` : ''}${pa.meta ? ` · brecha vs. ritmo esperado <b>${pa.brechaEsperada} uds</b>` : ''}${D.comision ? ` · incentivo hoy <b>${money(D.comision.hoy.total)}</b>${D.comision.hoy.next ? ` (le faltan ${D.comision.hoy.falta} uds para ${esc(D.comision.hoy.next.label)})` : ''} · con su proyección <b>${money(D.comision.proy.total)}</b>` : ''}</div>
+        <div class="fa-pace-t">Ritmo: lleva <b>${pa.ritmoActual}</b> uds/día${pa.meta ? ` y necesita <b>${pa.ritmoReq}</b>` : ''}${pa.meta ? ` · brecha vs. ritmo esperado <b>${pa.brechaEsperada} uds</b>` : ''}${D.comision && D.comision.hoy.next ? ` · le faltan <b>${D.comision.hoy.falta}</b> uds para ${esc(D.comision.hoy.next.label)}` : ''}</div>
     </div>
     <div class="fa-sec">📦 MODELO POR MODELO EN SU PDV</div>
     <table class="fa-tbl"><thead><tr><th class="l">Referencia</th><th>Vendidas</th><th>Inventario en PDV</th><th class="l">Estado</th></tr></thead><tbody>
@@ -488,7 +488,8 @@ function advisorCardHTML(D, uid) {
     const W = D.evSemanas || [], hechas = W.filter(x => x.estado === 'ok').length, noH = W.filter(x => x.estado === 'no').length, sinD = W.filter(x => x.estado === 'sin').length;
     const prom = ev && ev.promedio != null ? ev.promedio : null;
     const mes = MESES[parseD(D.corte).getMonth()];
-    const step = (lbl, meta, premio, ok, ritmo, sub) => `<div class="ac-step ${ok ? 'ok' : ''}"><i>${ok ? '✅' : '🔒'}</i><div><b>${lbl}</b><small>${meta} uds${premio ? ' · ' + money(premio) : ''}</small></div><em>${ok ? 'Logrado' : `Faltan <b>${Math.max(0, meta - pa.venta)}</b>${ritmo != null && D.left ? `<br><small>${ritmo}/día</small>` : ''}`}</em></div>`;
+    // Sin dinero en la ficha: solo cuántas unidades faltan para cada llave (lo ganado se ve únicamente en la Calculadora)
+    const step = (lbl, meta, ok) => `<div class="ac-step ${ok ? 'ok' : ''}"><i>${ok ? '✅' : '🔒'}</i><div><b>${lbl}</b><small>${meta} uds</small></div><em>${ok ? 'Logrado' : `Faltan <b>${Math.max(0, meta - pa.venta)}</b>`}</em></div>`;
     const evChip = x => x.estado === 'ok' ? `<div class="ac-w ${x.nota != null && x.nota < (State.radar.notaMin || 80) ? 'low' : 'ok'}"><b>${x.w}</b><span>${x.nota == null ? 'Realizada' : x.nota}</span><small>${x.nota == null ? '' : x.nota >= (State.radar.notaMin || 80) ? 'Aprobada' : 'Por mejorar'}</small></div>`
         : x.estado === 'no' ? `<div class="ac-w no"><b>${x.w}</b><span>✗</span><small>No realizada</small></div>` : `<div class="ac-w"><b>${x.w}</b><span>⏳</span><small>Sin calificar</small></div>`;
     const estado = m => m.estado === 'rotando' ? '<i class="fa-st rotando">Vendiendo</i>' : m.estado === 'rezago' || m.estado === 'impulsar' ? '<i class="fa-st rezago">¡Muévelo!</i>' : m.estado === 'sinstock' ? '<i class="fa-st">Sin stock</i>' : '<i class="fa-st">Poco stock</i>';
@@ -515,16 +516,12 @@ function advisorCardHTML(D, uid) {
     </div>
     <div class="ac-two">
         <div class="ac-box">
-            <div class="ac-t">💰 TU COMISIÓN</div>
+            <div class="ac-t">🎯 TUS LLAVES Y TU META</div>
             <div class="ac-steps">
-                ${step('ROI 1 · Llave de speeds', C.plan.base, 0, C.hoy.nivel >= 1, C.ritmoBase)}
-                ${step('ROI 2', C.plan.k400, C.plan.pay400, C.hoy.nivel >= 2, C.ritmo400)}
-                ${step('ROI 3', C.plan.k700, C.plan.pay700, C.hoy.nivel >= 3, C.ritmo700)}
-            </div>
-            <div class="ac-earn">
-                <div><small>Hoy ganas</small><b>${money(C.hoy.total)}</b><small>${C.hoy.abierto ? `speeds ${money(C.hoy.speeds)}${C.hoy.kpi ? ' + ' + money(C.hoy.kpi) : ''}` : `${money(C.hoy.speedsBloq)} esperan la llave`}</small></div>
-                <div><small>Con tu proyección (${pa.proy})</small><b>${money(C.proy.total)}</b><small>${C.proy.abierto ? `speeds ${money(C.proy.speeds)}${C.proy.kpi ? ' + ' + money(C.proy.kpi) : ''}` : 'sin abrir la llave'}</small></div>
-                <div><small>Si cumples tu meta (${pa.meta || dash})</small><b>${money(C.meta.total)}</b><small>${C.meta.abierto ? `speeds ${money(C.meta.speeds)}${C.meta.kpi ? ' + ' + money(C.meta.kpi) : ''}` : 'sin abrir la llave'}</small></div>
+                ${step('ROI 1 · Llave de speeds', C.plan.base, C.hoy.nivel >= 1)}
+                ${step('ROI 2', C.plan.k400, C.hoy.nivel >= 2)}
+                ${step('ROI 3', C.plan.k700, C.hoy.nivel >= 3)}
+                ${pa.meta ? step('100% de tu meta', pa.meta, pa.venta >= pa.meta) : ''}
             </div>
         </div>
         <div class="ac-box">
@@ -537,8 +534,8 @@ function advisorCardHTML(D, uid) {
         </div>
     </div>
     <div class="fa-sec">📦 TUS REFERENCIAS · LO QUE VENDES Y LO QUE HAY EN TU TIENDA</div>
-    <table class="fa-tbl"><thead><tr><th class="l">Referencia</th><th>Tu meta</th><th>Vendidas</th><th>Cumpl.</th><th>En tienda</th><th>Speed/ud</th><th class="l">Estado</th></tr></thead><tbody>
-        ${rows.map(m => `<tr class="${m.estado}"><td class="l"><b>${esc(m.name)}</b>${m.foco ? ' <i class="fa-foco">★ foco</i>' : ''}</td><td>${m.meta || dash}</td><td><b>${m.vendidas}</b></td><td>${m.meta ? Math.round(m.vendidas / m.meta * 100) + '%' : dash}</td><td><b>${m.inv}</b></td><td>${planValores()[m.key] ? money(planValores()[m.key]) : dash}</td><td class="l">${estado(m)}</td></tr>`).join('') || `<tr><td colspan="7">Aún no hay data de referencias.</td></tr>`}
+    <table class="fa-tbl"><thead><tr><th class="l">Referencia</th><th>Tu meta</th><th>Vendidas</th><th>Cumpl.</th><th>En tienda</th><th class="l">Estado</th></tr></thead><tbody>
+        ${rows.map(m => `<tr class="${m.estado}"><td class="l"><b>${esc(m.name)}</b>${m.foco ? ' <i class="fa-foco">★ foco</i>' : ''}</td><td>${m.meta || dash}</td><td><b>${m.vendidas}</b></td><td>${m.meta ? Math.round(m.vendidas / m.meta * 100) + '%' : dash}</td><td><b>${m.inv}</b></td><td class="l">${estado(m)}</td></tr>`).join('') || `<tr><td colspan="6">Aún no hay data de referencias.</td></tr>`}
     </tbody></table>
     <div class="fa-chips">
         <div class="fa-chip good"><span>⭐ Tu producto estrella</span><b>${I.estrella ? `${esc(I.estrella.name)} · ${I.estrella.vendidas} uds` : 'Aún sin ventas'}</b></div>
@@ -572,7 +569,7 @@ function buildAdvisorCardCanvas(stage, D, autor) {
     const el = document.createElement('div');
     el.className = 'rp fa fa-img ac';
     el.innerHTML = `<div class="rp-bar"></div><div class="fa-pad">${advisorCardHTML(D, 'acr-img')}</div>
-        <footer class="rp-foot"><span>Plan de incentivos noviembre: ROI 1 abre la llave de speeds (incentivo por modelo); ROI 2 ${money(D.comision.plan.pay400)} o ROI 3 ${money(D.comision.plan.pay700)}, no acumulables. Solo unidades cargadas en DCR con IMEI activo. Proyección = lo que llevas ÷ días transcurridos × días del mes.${autor && autor.nombre ? ` · Te acompaña: ${esc(autor.nombre)}` : ''}</span><b>Infinix · Central de Operaciones</b></footer>
+        <footer class="rp-foot"><span>ROI 1 abre la llave de speeds; ROI 2 y ROI 3 son los premios del plan (lo ganado se consulta en la Calculadora). Solo unidades cargadas en DCR con IMEI activo. Proyección de unidades = lo que llevas ÷ días transcurridos × días del mes.${autor && autor.nombre ? ` · Te acompaña: ${esc(autor.nombre)}` : ''}</span><b>Infinix · Central de Operaciones</b></footer>
         <div class="rp-bar"></div>`;
     stage.appendChild(el);
     drawAdvisorRing(el, D, 'acr-img');

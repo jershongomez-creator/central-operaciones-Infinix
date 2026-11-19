@@ -61,7 +61,7 @@ registerModule('m5', (() => {
             </div>
         </section>
         <section class="card sim-res" id="s5-res"></section>
-        ${actionBarHTML()}`;
+        <p class="hint">La simulación es solo para mostrarla en pantalla al cliente: no se comparte ni se descarga.</p>`;
 
         const sync = () => {
             S.entidad = $('#s5-ent').value; S.equipo = $('#s5-eq').value; S.precio = numf($('#s5-precio').value);
@@ -74,12 +74,6 @@ registerModule('m5', (() => {
         $$('[data-am]', view).forEach(b => b.onclick = () => { S.abonoModo = b.dataset.am; $$('[data-am]', view).forEach(x => x.classList.toggle('active', x === b)); sync(); });
         $('#s5-res').addEventListener('click', e => { const b = e.target.closest('[data-p]'); if (b) { S.plazo = int(b.dataset.p); paintRes(); } });
 
-        ReportActions.bind(view, {
-            title: 'Simulación de crédito Infinix',
-            validate: () => S.precio > 0 ? null : 'Ingresa el precio del equipo.',
-            filename: () => `Simulacion_${slug(S.equipo || 'equipo')}_${slug(S.cliente || 'cliente')}.png`,
-            build: stage => buildSimCanvas(stage, S, calc(S), SIM_PLAZOS.map(p => calc(S, p)))
-        });
         sync();
     }
 

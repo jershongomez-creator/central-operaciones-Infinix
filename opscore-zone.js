@@ -237,22 +237,31 @@ const ZoneData = (() => {
 
     // ---- Persistencia: el último snapshot de cada zona/mes --------------
     const snapId = (zona, month) => `${slug(zona)}_${month}`;
-    // Guarda un snapshot por zona (solo las que traen tiendas) y los deja en memoria
+    // La data plana es de cada líder: se guarda con su usuario y no cambia lo que ven los demás.
+    // Cada líder ve la última que él cargó; si no ha cargado, la más reciente de la zona. La tienda ve siempre la más reciente.
+    const ownerKey = () => { const s = State.session; return s && s.type === 'staff' ? slug(s.userId || s.dcr || s.nombre || 'staff') : ''; };
+    const ownId = (zona, month) => snapId(zona, month) + '__u_' + ownerKey();
     async function saveAll(snaps, meta) {
-        const ops = [];
+        const ops = [], s = State.session || {};
         State.zoneSnaps = State.zoneSnaps || {};
         Object.values(snaps).forEach(sn => {
             if (!Object.keys(sn.stores).length) return;
-            const doc = { ...sn, ...meta, id: snapId(sn.zona, sn.month), updatedAt: Date.now() };
+            const doc = { ...sn, ...meta, id: ownerKey() ? ownId(sn.zona, sn.month) : snapId(sn.zona, sn.month), owner: ownerKey(), ownerName: s.nombre || '', uploadedBy: s.nombre || meta.uploadedBy || '', updatedAt: Date.now() };
             State.zoneSnaps[sn.zona] = doc; ops.push({ op: 'set', col: COL.zoneData, id: doc.id, data: doc, merge: false });
         });
         return ops.length ? Data.batch(ops) : { synced: true };
     }
     const save = (snap, meta) => saveAll({ [snap.zona]: snap }, meta);
+    async function pick(zona, month) {
+        const mine = ownerKey() ? await Data.get(COL.zoneData, ownId(zona, month)).catch(() => null) : null;
+        if (mine) return mine;
+        const all = (await Data.list(COL.zoneData, [['zona', '==', zona], ['month', '==', month]]).catch(() => [])).filter(d => !d.demo && d.stores);
+        return all.sort((a, b) => ((b.corte || '') + (b.updatedAt || 0)).localeCompare((a.corte || '') + (a.updatedAt || 0)))[0] || null;
+    }
     // Carga los snapshots guardados de una lista de zonas para el mes
     async function loadMany(zonas, month) {
         month = month || todayStr().slice(0, 7); State.zoneSnaps = State.zoneSnaps || {};
-        const docs = await Promise.all(zonas.map(z => Data.get(COL.zoneData, snapId(z, month)).catch(() => null)));
+        const docs = await Promise.all(zonas.map(z => pick(z, month)));
         // Sin data guardada de la zona: se usa el corte precargado del mes (opscore-snap.js), si es más nuevo que nada
         const seedSnap = z => typeof SNAP_SEED !== 'undefined' && SNAP_SEED[z] && SNAP_SEED[z].month === month ? JSON.parse(JSON.stringify(SNAP_SEED[z])) : null;
         zonas.forEach((z, i) => { if (!docs[i]) docs[i] = seedSnap(z); if (docs[i] && seedSnap(z) && ((docs[i].corte || '') < SNAP_SEED[z].corte || ((docs[i].corte || '') <= SNAP_SEED[z].corte && !Object.values(docs[i].stores || {}).some(s => s.dias)))) docs[i] = seedSnap(z); });
@@ -768,7 +777,7 @@ registerModule('zona', (() => {
                 <div class="cmp-grid">${Ds.map(D => { const pa = D.pacing, ev = D.evaluacion, cls = pa.indice == null ? '' : pa.indice < .85 ? 'r' : pa.indice < 1 ? 'a' : 'g'; return `<div class="cmp">
                     <div class="row" style="gap:8px;flex-wrap:nowrap">${advisorAvatar(D.storeId, D.nombre, 44)}<div style="min-width:0"><b>${esc(D.nombre)}</b><small class="mute" style="display:block">${esc(D.pdv.tienda)}</small></div></div>
                     <div class="cmp-n"><div><small>Meta</small><b>${pa.meta || '—'}</b></div><div><small>Venta</small><b>${pa.venta}</b></div><div><small>Cumpl.</small><b class="${cls}">${pc(pa.cumpl)}</b></div><div><small>Proy.</small><b>${pa.proy}</b></div>
-                    ${RV.evals ? `<div><small>Eval.</small><b>${ev && ev.promedio != null ? ev.promedio : '—'}</b></div><div><small>Incentivo</small><b>${money(D.comision.hoy.total)}</b></div>` : `<div><small>Faltan</small><b>${pa.brechaUds}</b></div><div><small>Por día</small><b>${pa.ritmoReq}</b></div>`}</div>
+                    ${RV.evals ? `<div><small>Eval.</small><b>${ev && ev.promedio != null ? ev.promedio : '—'}</b></div><div><small>Faltan</small><b>${pa.brechaUds}</b></div>` : `<div><small>Faltan</small><b>${pa.brechaUds}</b></div><div><small>Por día</small><b>${pa.ritmoReq}</b></div>`}</div>
                     ${RV.ficha ? `<button class="btn btn-ghost sm" data-ficha="${esc(D.id)}" style="width:100%">📲 Ver tarjeta</button>` : ''}</div>`; }).join('')}</div></section>`;
         }
         const x = $('#z-adv-x', box); if (x) x.onclick = () => { advSel = new Set(); paintAdvBtn(); paintAdvPanel(); };
@@ -821,7 +830,7 @@ registerModule('zona', (() => {
             <div class="cfg-panel" data-panel="meta">
             <p class="mute">Target del mes, HC Infinix y foco de la semana de cada PDV. El target por referencia se fija en cada tienda (⚙️ Ajustes); si aquí dejas el total en 0, se usa la suma por referencia. HC en 0 = se cuentan los asesores activos. El foco en blanco se calcula solo (mayor brecha frente al target).</p>
             <div class="tbl-scroll" style="max-height:56vh"><table class="tbl compact"><thead><tr><th>PDV</th>${multi ? '<th>Zona</th>' : ''}<th>Σ ref.</th><th>Target mes</th><th>HC</th><th>Ref. foco</th><th>Foco de trabajo</th></tr></thead><tbody>
-            ${zs.map(s => `<tr><td class="l">${storeLogo(s, 'xs')} <b>${esc(s.tienda)}</b></td>${multi ? `<td><small>${esc(s.zona)}</small></td>` : ''}<td>${sum(INFINIX_MODELS.map(x => int(s.metas && s.metas[x.key]))) || '—'}</td><td><input class="input num" type="number" min="0" data-cfg="meta" data-id="${esc(s.id)}" value="${int(s.metaMes)}"></td><td><input class="input num" type="number" min="0" data-cfg="hc" data-id="${esc(s.id)}" value="${int(s.hc && s.hc.INFINIX)}"></td>
+            ${zs.map(s => `<tr><td class="l">${storeLogo(s, 'xs')} <b>${esc(s.tienda)}</b></td>${multi ? `<td><small>${esc(s.zona)}</small></td>` : ''}<td>${sum(INFINIX_MODELS.map(x => int(s.metas && s.metas[x.key]))) || '—'}</td><td><input class="input num" type="number" min="0" data-cfg="meta" data-id="${esc(s.id)}" value="${int(s.metaMes)}" ${canTarget() ? '' : 'disabled title="Solo el coordinador cambia el target"'}></td><td><input class="input num" type="number" min="0" data-cfg="hc" data-id="${esc(s.id)}" step="0.5" value="${+(s.hc && s.hc.INFINIX) || 0}" ${canTarget() ? '' : 'disabled title="Solo el coordinador cambia el HC"'}></td>
                 <td><select class="input" data-cfg="fref" data-id="${esc(s.id)}"><option value="">auto</option>${INFINIX_MODELS.map(x => `<option value="${x.key}" ${s.foco && s.foco.ref === x.key ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></td>
                 <td><input class="input" data-cfg="fnota" data-id="${esc(s.id)}" value="${esc(s.foco && s.foco.nota || '')}" placeholder="Ej. Movimiento de mesa"></td></tr>`).join('')}
             </tbody></table></div></div>
@@ -850,10 +859,10 @@ registerModule('zona', (() => {
             const ops = [];
             zs.forEach(s => {
                 const g = k => $(`[data-cfg="${k}"][data-id="${s.id}"]`, m).value;
-                const meta = int(g('meta')), hc = int(g('hc')), fref = g('fref'), fnota = g('fnota').trim();
+                const meta = int(g('meta')), hc = numf(g('hc')), fref = g('fref'), fnota = g('fnota').trim();
                 const upd = {};
-                if (meta !== int(s.metaMes)) upd.metaMes = meta;
-                if (hc !== int(s.hc && s.hc.INFINIX)) upd.hc = { ...(s.hc || {}), INFINIX: hc };
+                if (canTarget() && meta !== int(s.metaMes)) upd.metaMes = meta;
+                if (canTarget() && hc !== (+(s.hc && s.hc.INFINIX) || 0)) upd.hc = { ...(s.hc || {}), INFINIX: hc };
                 if (fref !== ((s.foco && s.foco.ref) || '') || fnota !== ((s.foco && s.foco.nota) || '')) upd.foco = { ref: fref, nota: fnota, at: Date.now(), by: me().nombre };
                 // Asesores: lo desmarcado pasa a "retirado" (conserva fecha y quién lo marcó); lo marcado de nuevo vuelve a activo
                 if (canAdv && advOf[s.id].length) {
