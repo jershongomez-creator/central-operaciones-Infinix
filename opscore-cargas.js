@@ -95,7 +95,7 @@ const Match = (() => {
 const canMalla = () => !!(State.session && ['supervisor', 'coordinador', 'gerente', 'admin'].includes(State.session.rol));
 const DayStatus = (() => {
     const CODES = {
-        comp: { label: 'Compensando', ico: '🟣', off: true }, desc: { label: 'Descanso', ico: '⚪', off: true },
+        comp: { label: 'Compensando', ico: '⛔', off: true }, desc: { label: 'Descanso', ico: '⛔', off: true },
         incap: { label: 'Incapacidad', ico: '🔴', off: true }, vac: { label: 'Vacaciones', ico: '🟠', off: true },
         permiso: { label: 'Permiso / licencia', ico: '🟡', off: true }, retiro: { label: 'Vacío laboral', ico: '⚫', off: true },
         vacante: { label: 'Vacante / en contratación', ico: '⚫', off: true }, apoyo: { label: 'Apoyo en otra tienda', ico: '🔵', off: true },
@@ -115,7 +115,8 @@ const DayStatus = (() => {
         if (/DESCANS/.test(t)) return 'desc';
         if (/INCAPACI/.test(t)) return 'incap';
         if (/VACACION/.test(t)) return 'vac';
-        if (/VACANTE|CONTRATACI|CONTATACI/.test(t)) return 'vacante';
+        if (/VACANTE|CONTRATACI|CONTATACI|PDTE/.test(t)) return 'vacante';
+        if (/RUTA|OTRA TIENDA|APOYO/.test(t)) return 'apoyo';
         if (/VACIO|RETIR|RENUNCI/.test(t)) return 'retiro';
         if (/PERMISO|LICENCIA|CALAMIDAD/.test(t)) return 'permiso';
         if (/CAPACITA|FORMACION/.test(t)) return 'cap';
@@ -128,7 +129,13 @@ const DayStatus = (() => {
         const nv = (st.novedades || []).filter(n => n.desde <= fecha && (n.hasta || n.desde) >= fecha && Match.person(n.nombre, nombre)).sort((a, b) => b.at - a.at)[0];
         if (nv) return { src: 'novedad', code: nv.tipo, label: tipoLabel(nv.tipo), off: NOV_OFF.has(nv.tipo), ico: nv.tipo === 'tarde' || nv.tipo === 'otro' ? '🟡' : (CODES[nv.tipo] || { ico: '🔴' }).ico, nota: nv.nota || '', by: nv.by || '', nov: nv };
         const M = mallaOf(st); if (!M) return null;
-        const k = Object.keys(M).find(n => Match.person(n, nombre)); if (!k) return null;
+        let k = Object.keys(M).find(n => Match.person(n, nombre));
+        if (!k && st.malla.ced) {               // por cédula: el nombre de la malla puede venir distinto al de la data
+            let C = {}; try { C = JSON.parse(st.malla.ced); } catch (e) { }
+            const a = (typeof storeAdvisors === 'function' ? storeAdvisors(st) : []).find(x => x.alias.some(n => Match.person(n, nombre)));
+            const ced = a && advDigits(a.cedula); if (ced && ced.length >= 5) k = Object.keys(C).find(n => advDigits(C[n]) === ced);
+        }
+        if (!k) return null;
         const raw = M[k][fecha]; if (!raw) return null;
         const [code, txt] = String(raw).split('|'); const C = CODES[code]; if (!C) return null;
         return { src: 'malla', code, label: code === 'apoyo' ? 'Apoyo · ' + (txt || '') : C.label, off: C.off, ico: C.ico, nota: code === 'turno' ? (txt || '') : '', turno: code === 'turno' ? txt : '' };
@@ -169,7 +176,10 @@ const DayStatus = (() => {
             <table class="rp-tbl rp-nov"><thead><tr><th class="l">ASESOR</th><th class="l">TIENDA</th><th class="l">ESTADO</th><th class="l">DETALLE</th></tr></thead><tbody>
             ${L.map(x => `<tr><td class="l">${esc(x.nombre)}</td><td class="l">${esc(x.st.tienda)}</td><td class="l">${x.s.ico} ${esc(x.s.label)}</td><td class="l">${esc(x.s.nota || (x.s.src === 'malla' ? 'Según malla de horarios' : ''))}${x.s.by ? ' · ' + esc(x.s.by) : ''}</td></tr>`).join('')}</tbody></table>`;
     }
-    return { CODES, NOV_TIPOS, classify, ofAdvisor, zoneDay, chip, novForm, reportBlock, tipoLabel, mallaOf };
+    // ¿La zona cargó malla para ese día? Si ninguna tienda tiene datos de esa fecha: "sin información de malla"
+    const zoneHasMalla = (zona, fecha = todayStr()) => State.stores.filter(s => s.zona === zona).some(st => { const M = mallaOf(st); return M && Object.values(M).some(d => d && d[fecha]); });
+    const noMallaZones = (zonas, fecha = todayStr()) => zonas.filter(z => !zoneHasMalla(z, fecha));
+    return { CODES, NOV_TIPOS, classify, ofAdvisor, zoneDay, chip, novForm, reportBlock, tipoLabel, mallaOf, zoneHasMalla, noMallaZones };
 })();
 
 // ---------- Archivo de target del mes ----------
@@ -251,50 +261,60 @@ const TargetFile = (() => {
 
 // ---------- Malla de horarios ----------
 const MallaFile = (() => {
+    // Lee los dos formatos de malla: la de promotores nacional (CADENA, ZONA, PUNTO DE VENTA, CÉDULA, NOMBRE DCR y un día
+    // por columna con la fecha en el encabezado) y la de zona (PROMOTOR, PUNTO DE VENTA, fila de fechas arriba).
     function parse(sheets) {
         const lo = addDays(todayStr(), -35), hi = addDays(todayStr(), 45);
-        const out = [];               // { sheet, pdv, cadena, promotor, dias: { fecha: código|texto } }
+        const out = [], zonas = {};
         sheets.forEach(sh => {
-            const hiRow = sh.rows.findIndex(r => r.some(c => Match.N(c) === 'PROMOTOR'));
+            const hiRow = sh.rows.findIndex(r => r.some(c => ['PROMOTOR', 'NOMBRE DCR', 'NOMBRE'].includes(Match.N(c))) && r.some(c => /^PUNTO DE VENTA|^TIENDA$|^PDV$/.test(Match.N(c))));
             if (hiRow < 0) return;
-            // Fila de fechas: la de arriba con más fechas
-            let dRow = -1, best = 0;
+            // Fechas: en la misma fila de encabezados o en la fila de arriba con más fechas
+            let dRow = hiRow, best = (sh.rows[hiRow] || []).filter(c => XL.iso(c)).length;
             for (let i = Math.max(0, hiRow - 4); i < hiRow; i++) { const n = (sh.rows[i] || []).filter(c => XL.iso(c)).length; if (n > best) { best = n; dRow = i; } }
-            if (dRow < 0 || best < 5) return;
+            if (best < 5) return;
             const dates = (sh.rows[dRow] || []).map(c => XL.iso(c));
-            if (!dates.some(d => d && d >= lo && d <= hi)) return;                     // hoja vieja (2024, 2025…)
+            if (!dates.some(d => d && d >= lo && d <= hi)) return;                      // hoja de otro mes o año
             const H = sh.rows[hiRow].map(c => Match.N(c));
-            const cP = H.indexOf('PROMOTOR'), cT = H.findIndex(h => /^PUNTO DE VENTA|^TIENDA$|^PDV/.test(h)), cC = H.indexOf('CADENA');
+            const cP = H.findIndex(h => h === 'PROMOTOR' || h === 'NOMBRE DCR' || h === 'NOMBRE'), cT = H.findIndex(h => /^PUNTO DE VENTA|^TIENDA$|^PDV$/.test(h));
+            const cC = H.indexOf('CADENA'), cZ = H.indexOf('ZONA'), cD = H.findIndex(h => /^CEDULA/.test(h));
             if (cP < 0 || cT < 0) return;
             for (let i = hiRow + 1; i < sh.rows.length; i++) {
-                const r = sh.rows[i] || []; const first = Match.N(r[0]);
-                if (/^TOTAL/.test(first)) break;
-                const prom = String(r[cP] || '').trim(), pdv = String(r[cT] || '').trim();
+                const r = sh.rows[i] || [];
+                if (/^TOTAL/.test(Match.N(r[0]))) break;
+                let prom = String(r[cP] || '').trim(); const pdv = String(r[cT] || '').trim();
                 if (!prom || !pdv || /VACANTE/.test(Match.N(prom))) continue;
+                let ced = cD >= 0 ? advDigits(r[cD]) : '';
+                const m = prom.match(/^(\d{5,})\s+(.+)$/); if (m) { prom = m[2]; if (!ced) ced = m[1]; }
+                const zona = cZ >= 0 ? String(r[cZ] || '').trim() : '';
                 const dias = {};
-                dates.forEach((d, j) => { if (!d || d < lo || d > hi) return; const v = String(r[j] ?? '').trim(); const code = DayStatus.classify(v); if (code) dias[d] = code + '|' + v.replace(/\s+/g, ' ').slice(0, 28); });
-                if (Object.keys(dias).length) out.push({ sheet: sh.name, pdv, cadena: cC >= 0 ? String(r[cC] || '').trim() : '', promotor: ZoneData.titleCase(prom.replace(/^\d{5,}\s+/, '')), dias });
+                dates.forEach((d, j) => { if (!d || d < lo || d > hi || j === cP || j === cT) return; const v = String(r[j] ?? '').trim(); const code = DayStatus.classify(v); if (code) dias[d] = code + '|' + v.replace(/\s+/g, ' ').slice(0, 28); });
+                if (zona) { const Z = zonas[Match.N(zona)] = zonas[Match.N(zona)] || { zona, filas: 0, conDatos: 0 }; Z.filas++; if (Object.keys(dias).length) Z.conDatos++; }
+                if (Object.keys(dias).length) out.push({ sheet: sh.name, pdv, cadena: cC >= 0 ? String(r[cC] || '').trim() : '', zona, ced, promotor: ZoneData.titleCase(prom), dias });
             }
         });
-        if (!out.length) throw new Error('No encontré la malla: debe tener la fila de fechas, la columna PROMOTOR y la de PUNTO DE VENTA, con días de este mes.');
+        if (!out.length) throw new Error('No encontré la malla: debe tener las columnas PUNTO DE VENTA y PROMOTOR (o NOMBRE DCR) y un día por columna con fechas de este mes.');
+        out.zonas = zonas;
         return out;
     }
     function match(rows) {
-        rows.forEach(r => { const st = Match.store(r.pdv, { cadena: r.cadena, zona: '', stores: State.stores }); r.st = st && !st.deleted ? st : null; });
+        rows.forEach(r => { const st = Match.store(r.pdv, { cadena: r.cadena, zona: r.zona, stores: State.stores }); r.st = st && !st.deleted ? st : null; });
         return rows;
     }
     async function apply(rows, fileName) {
         const by = {}, me = State.session;
-        rows.filter(r => r.st && inScope(r.st.zona)).forEach(r => { const g = by[r.st.id] = by[r.st.id] || { st: r.st, data: {} }; g.data[r.promotor] = { ...(g.data[r.promotor] || {}), ...r.dias }; });
-        const ops = [];
+        rows.filter(r => r.st && inScope(r.st.zona)).forEach(r => { const g = by[r.st.id] = by[r.st.id] || { st: r.st, data: {}, ced: {} }; g.data[r.promotor] = { ...(g.data[r.promotor] || {}), ...r.dias }; if (r.ced) g.ced[r.promotor] = r.ced; });
+        const ops = [], zonasCon = new Set(Object.values(by).map(g => g.st.zona));
         Object.values(by).forEach(g => {
             const ds = Object.values(g.data).flatMap(o => Object.keys(o)).sort();
-            const malla = { desde: ds[0], hasta: ds[ds.length - 1], file: fileName, at: Date.now(), by: me.nombre, data: JSON.stringify(g.data) };
+            const malla = { desde: ds[0], hasta: ds[ds.length - 1], file: fileName, at: Date.now(), by: me.nombre, data: JSON.stringify(g.data), ced: JSON.stringify(g.ced) };
             g.st.malla = malla; ops.push({ op: 'set', col: COL.stores, id: g.st.id, data: { malla, updatedAt: Date.now() }, merge: true });
         });
-        ops.push({ op: 'set', col: COL.config, id: 'cargas', data: { malla: { file: fileName, at: Date.now(), by: me.nombre, tiendas: ops.length } }, merge: true });
+        // Tiendas de una zona que vino en el archivo pero que no aparecen en él: se les quita la malla vieja
+        State.stores.filter(st => zonasCon.has(st.zona) && inScope(st.zona) && !by[st.id] && st.malla).forEach(st => { st.malla = null; ops.push({ op: 'set', col: COL.stores, id: st.id, data: { malla: null, updatedAt: Date.now() }, merge: true }); });
+        ops.push({ op: 'set', col: COL.config, id: 'cargas', data: { malla: { file: fileName, at: Date.now(), by: me.nombre, tiendas: Object.keys(by).length } }, merge: true });
         const r = await Data.batch(ops);
-        return { tiendas: ops.length - 1, synced: r.synced };
+        return { tiendas: Object.keys(by).length, synced: r.synced };
     }
     return { parse, match, apply };
 })();
@@ -375,7 +395,9 @@ registerModule('datos', (() => {
         const out = $('#up-mal-out'); if (!out || !mal) return;
         const mine = mal.filter(r => r.st && inScope(r.st.zona)), unm = mal.filter(r => !r.st);
         const hoy = todayStr(), off = mine.filter(r => { const c = (r.dias[hoy] || '').split('|')[0]; return c && c !== 'turno'; });
-        out.innerHTML = `<div class="up-sum"><b>${mal.length}</b> asesores en la malla (${[...new Set(mal.map(r => r.sheet))].map(esc).join(', ')}) · <b>${mine.length}</b> de tu alcance en ${new Set(mine.map(r => r.st.id)).size} PDV${unm.length ? ` · <b class="warn-t">${unm.length} sin cruzar</b>` : ''}</div>
+        const Z = Object.values(mal.zonas || {}), sinInfo = Z.filter(z => !z.conDatos);
+        out.innerHTML = `<div class="up-sum"><b>${mal.length}</b> asesores con malla (${[...new Set(mal.map(r => r.sheet))].map(esc).join(', ')}) · <b>${mine.length}</b> de tu alcance en ${new Set(mine.map(r => r.st.id)).size} PDV${unm.length ? ` · <b class="warn-t">${unm.length} sin cruzar</b>` : ''}</div>
+            ${Z.length ? `<p class="hint">Zonas en el archivo: ${Z.map(z => `${esc(z.zona)} (${z.conDatos}/${z.filas})`).join(' · ')}${sinInfo.length ? `<br><b class="warn-t">Sin información de malla:</b> ${sinInfo.map(z => esc(z.zona)).join(', ')}` : ''}</p>` : ''}
             ${off.length ? `<p><b>Hoy no están en el PDV:</b> ${off.map(r => `${esc(r.promotor)} <small class="mute">(${esc(r.st.tienda)} · ${esc(DayStatus.CODES[r.dias[hoy].split('|')[0]].label)})</small>`).join(' · ')}</p>` : '<p class="hint">Hoy todos los asesores de tu alcance tienen turno.</p>'}
             ${unm.length ? `<p class="hint">Sin cruzar (no se reconoce la tienda): ${unm.slice(0, 10).map(r => esc(r.pdv + ' · ' + r.promotor)).join(', ')}${unm.length > 10 ? '…' : ''}</p>` : ''}
             <div class="row end" style="margin-top:10px"><button class="btn btn-primary" id="up-mal-ok">✅ Aplicar malla</button></div>`;
@@ -393,7 +415,9 @@ registerModule('datos', (() => {
         const S = scopedStores(), hoy = todayStr(), man = addDays(hoy, 1);
         const H = DayStatus.zoneDay(S, hoy), M = DayStatus.zoneDay(S, man);
         const list = (L, f) => L.length ? `<div class="ds-list">${L.map(x => `<div class="ds-row"><span><b>${esc(x.nombre)}</b> <small class="mute">${esc(x.st.tienda)}</small></span>${DayStatus.chip(x.s)}<button class="icon-btn" title="Registrar novedad" data-nv="${esc(x.st.id)}|${esc(x.nombre)}">⚑</button></div>`).join('')}</div>` : `<p class="hint">Todos en el PDV ${f}.</p>`;
+        const sinMalla = DayStatus.noMallaZones(scopedZones(), hoy);
         box.innerHTML = `<h3 class="h3">👥 Asesores fuera del PDV y novedades</h3>
+            ${sinMalla.length ? `<p class="ds-nomalla">⚠️ Sin información de malla hoy: <b>${sinMalla.map(esc).join(', ')}</b></p>` : ''}
             <div class="grid2"><div><h4 class="sec">Hoy · ${esc(fechaLarga(hoy))}</h4>${list(H, 'hoy')}</div><div><h4 class="sec">Mañana · ${esc(fechaLarga(man))}</h4>${list(M, 'mañana')}</div></div>
             <div class="row end" style="margin-top:8px"><button class="btn btn-ghost" id="up-nv-new">⚑ Registrar novedad de un asesor</button></div>`;
         box.onclick = e => {

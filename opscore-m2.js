@@ -107,7 +107,8 @@ registerModule('m2', (() => {
                 const have = rows.find(r => r.storeId === it.storeId);
                 if (!have && rows.length >= MAX) continue;
                 const r = have || await addStoreById(it.storeId); if (!have) nSt++;
-                for (const nm of (it.asesores || [])) if (r && addAdvisor(r, nm)) nAdv++;
+                // Quien está compensando, en descanso o con novedad ese día no entra al plan (se avisa)
+                for (const nm of (it.asesores || [])) { const ds = typeof DayStatus !== 'undefined' ? DayStatus.ofAdvisor(storeById(it.storeId), nm, fecha) : null; if (ds && ds.off) { toast(`${nm}: ${ds.label} el ${fecha.slice(8)} — no se incluye en el plan`, 'warn', 5000); continue; } if (r && addAdvisor(r, nm)) nAdv++; }
             }
             paint();
             if (nSt || nAdv) toast(`${nSt} PDV${nAdv ? ` y ${nAdv} asesor(es)` : ''} cargados con la data real. Revisa las acciones sugeridas y ajusta el compromiso.`, 'ok', 6000);
@@ -208,7 +209,7 @@ registerModule('m2', (() => {
         const S = SEMC(), pc = Advisor.pc;
         return `<div class="pa-box">
             <label class="lbl">👤 Asesores a trabajar en la visita <small class="mute">· al marcarlos se pre-llenan foco, acciones, impacto y compromiso desde su venta, el inventario del PDV y su evaluación</small></label>
-            <div class="chips">${list.map(d => `<label class="chip adv-pick"><input type="checkbox" data-advpick="${i}" value="${esc(d.id)}" ${r.asesores.some(a => a.id === d.id) ? 'checked' : ''}><span><i class="rd-dot" style="background:${S[d.prescripcion.semaforo].color}"></i>${esc(d.nombre)} <small>${pc(d.pacing.cumpl)}</small></span></label>`).join('')}</div>
+            <div class="chips">${list.map(d => { const ds = typeof DayStatus !== 'undefined' ? DayStatus.ofAdvisor(st, d.nombre, fecha) : null, off = ds && ds.off && !r.asesores.some(a => a.id === d.id); return `<label class="chip adv-pick ${off ? 'is-off' : ''}" title="${off ? esc(ds.label) + ': no se recomienda incluirlo hoy' : ''}"><input type="checkbox" data-advpick="${i}" value="${esc(d.id)}" ${r.asesores.some(a => a.id === d.id) ? 'checked' : ''} ${off ? 'disabled' : ''}><span><i class="rd-dot" style="background:${S[d.prescripcion.semaforo].color}"></i>${esc(d.nombre)} <small>${pc(d.pacing.cumpl)}</small>${ds && (ds.off || ds.src === 'novedad') ? ' ' + DayStatus.chip(ds) : ''}</span></label>`; }).join('')}</div>
             ${r.asesores.map(a => { const c = S[a.semaforo] || S.gris; return `<div class="pa-item" style="border-left-color:${c.color}"><div class="row between wrap" style="gap:6px"><b>${esc(a.nombre)}</b><button type="button" class="btn btn-ghost sm" data-ficha="${esc(a.id)}">📄 Ficha</button></div>
                 <div class="pa-line">Cumplimiento <b>${pc(a.cumpl)}</b> (${a.venta} de ${a.meta || '—'} uds) · día ${a.day}/${a.dim}, esperado ${pc(a.esperado)}${a.stockFoco ? ` · <b>${a.stockFoco} uds foco sin rotar</b>: ${esc(a.rezagos.map(m => `${m.name} ×${m.inv}`).join(', '))}` : ''}${a.nota != null ? ` · eval. ${a.nota}${a.semanaEval ? ' (' + esc(a.semanaEval) + ')' : ''}` : ''}</div>
                 ${a.temas.length ? `<div class="pa-temas">${a.temas.map(x => `<span>${esc(x)}</span>`).join('')}</div>` : ''}

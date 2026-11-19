@@ -775,3 +775,9 @@ details.card.acc > summary::after { content: '▾'; color: #64748B; } details.ca
 /* Barra de acciones: se acomoda sola (vista previa, WhatsApp, imagen, PDF y solo guardar) */
 .actions, .actions:has([data-act="store"]) { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 @media (max-width: 560px) { .actions, .actions:has([data-act="store"]) { grid-template-columns: 1fr 1fr; } .actions .btn-wa { grid-column: span 2; order: -1; } .actions .btn-ok { grid-column: span 2; order: -2; } }
+
+/* Malla: rojo = no está en el PDV; ámbar = está en otra tienda o capacitación */
+.ds-chip.off { background: #FEE2E2; color: #991B1B; }
+.ds-chip.ds-apoyo, .ds-chip.ds-cap, .ds-chip.ds-tarde, .ds-chip.ds-otro { background: var(--amber-l); color: #92400E; }
+.ds-nomalla { background: #FFFBEB; border: 1px solid #FCD34D; border-radius: 10px; padding: 6px 10px; font-size: 13px; margin: 4px 0 8px; }
+.chip.adv-pick.is-off span { opacity: .75; text-decoration: none; background: #FEF2F2; border-color: #FECACA; }
