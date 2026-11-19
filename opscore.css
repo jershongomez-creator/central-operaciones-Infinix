@@ -971,3 +971,14 @@ tr.vs-inf td { background: #F0FDF4; } tr.vs-inf td b { color: #047857; }
 .m1-strip button.wk { border-style: dashed; border-width: 2px; }
 .ev-edit { border: 0; background: none; cursor: pointer; padding: 2px; border-radius: 8px; }
 .ev-edit:hover { background: #F1F5F9; } .ev-edit.man { background: #FEF3C7; }
+/* Ranking de asesores (v1.14) */
+.rk-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; } .rk-chips span { color: #fff; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 700; }
+.ark .ark-dist { display: flex; margin: 12px 40px 0; border-radius: 12px; overflow: hidden; height: 34px; }
+.ark .ark-dist > div { display: flex; align-items: center; justify-content: center; gap: 6px; color: #fff; font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; min-width: 70px; }
+.ark .ark-tbl td { padding: 7px 6px; } .ark .ark-tbl td.small { font-size: 12.5px; }
+.ark .ark-bar { position: relative; height: 20px; background: #EEF2F6; border-radius: 99px; min-width: 130px; }
+.ark .ark-bar > i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 99px; } .ark .ark-bar > b { position: relative; display: block; text-align: center; line-height: 20px; font-size: 12.5px; }
+.ark .ark-ev { display: flex; gap: 4px; flex-wrap: wrap; }
+.ark .ark-ev i { font-style: normal; display: inline-flex; flex-direction: column; align-items: center; min-width: 36px; border-radius: 7px; padding: 1px 4px; font-size: 9.5px; font-weight: 700; background: #E2E8F0; color: #334155; line-height: 1.1; }
+.ark .ark-ev i b { font-size: 13px; } .ark .ark-ev i.g { background: #DCFCE7; color: #166534; } .ark .ark-ev i.a { background: #FEF3C7; color: #92400E; } .ark .ark-ev i.r, .ark .ark-ev i.x { background: #FEE2E2; color: #991B1B; }
+.ark td.c-tot.g2 { color: #15803D; }

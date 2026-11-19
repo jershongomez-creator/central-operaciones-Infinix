@@ -602,6 +602,9 @@ registerModule('zona', (() => {
                     <div class="actions" style="margin-top:10px"><button class="btn btn-ghost" data-act="preview">👁️ Vista previa</button><button class="btn btn-wa" data-act="share">📲 WhatsApp</button><button class="btn btn-primary" data-act="save">⬇️ Descargar</button></div></section>
                 <div id="z-quick"></div>
             </div>
+            <section class="card rep-card" id="z-rep-rank"><h3 class="h3">🏆 Ranking de asesores · ${esc(viewLabel())}</h3><p class="mute">Todos los asesores del mejor al más crítico: meta, venta, cumplimiento, proyección, ROI y evaluaciones, con el mismo semáforo de las tiendas.</p>
+                <div class="rk-mini" id="z-rk-mini"></div>
+                <div class="actions" style="margin-top:10px"><button class="btn btn-ghost" data-act="preview">👁️ Vista previa</button><button class="btn btn-wa" data-act="share">📲 WhatsApp</button><button class="btn btn-primary" data-act="save">⬇️ Descargar</button></div></section>
             ${RV.ficha ? `<section class="card rep-card"><h3 class="h3">📲 Tarjetas de asesor</h3><p class="mute">Elige el asesor y abre su tarjeta (para él o para tus jefes).</p>
                 <div class="row wrap" style="gap:8px;margin-top:8px"><select class="input grow" id="z-rep-adv">${radarData.list.map(d => `<option value="${esc(d.id)}">${esc(d.nombre)} · ${esc(d.pdv.tienda)}</option>`).join('')}</select><button class="btn btn-primary" id="z-rep-adv-go">Abrir tarjeta</button></div></section>` : ''}
         </div>`;
@@ -624,6 +627,14 @@ registerModule('zona', (() => {
             const rk = an.ranking;
             Charts.add(new Chart($('#z-bars'), { type: 'bar', data: { labels: rk.map(r => r.st.tienda.length > 26 ? r.st.tienda.slice(0, 25) + '…' : r.st.tienda), datasets: [{ data: rk.map(r => Math.round((r.cumplProj || 0) * 100)), backgroundColor: rk.map(r => STATUS[r.status][2]), borderRadius: 5 }] }, options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => c.raw + '% proyectado' } } }, scales: { x: { grid: { color: THEME.line }, max: Math.max(120, ...rk.map(r => Math.round((r.cumplProj || 0) * 100))), ticks: { callback: v => v + '%' } }, y: { grid: { display: false }, ticks: { font: { size: 10, weight: '600' } } } } } }), 'view');
         }
+        const RK = advisorRanking(radarData.list);
+        const mini = $('#z-rk-mini'); if (mini) mini.innerHTML = `<div class="rk-chips">${['meta', 'bien', 'riesgo', 'critico', 'cero', 'sin'].filter(k => RK.count[k]).map(k => `<span style="background:${STATUS[k][2]}">${STATUS[k][0]} <b>${RK.count[k]}</b></span>`).join('')}</div>`;
+        ReportActions.bind($('#z-rep-rank'), {
+            title: 'Ranking de asesores · Central de Operaciones',
+            validate: () => RK.list.length ? null : 'Carga la data primero.',
+            filename: () => `Ranking_asesores_${slug(viewLabel())}_${an.corte}.png`,
+            build: stage => buildAdvRankCanvas(stage, { zona: viewLabel(), an, RK, autor: me(), snap: viewSnap() })
+        });
         ReportActions.bind($('#z-rep-zona'), {
             title: 'Reporte de zona · Central de Operaciones',
             validate: () => an ? null : 'Carga la data primero.',
@@ -1002,6 +1013,56 @@ function buildZoneCanvas(stage, d) {
     return el;
 }
 
+
+// ----------------------------------------------------------------------------
+// RANKING DE ASESORES: del mejor al más crítico, con el mismo semáforo de las tiendas (por proyección vs. meta)
+// ----------------------------------------------------------------------------
+const ADV_ST = { meta: ['En meta', '#00C853'], bien: ['Bien', '#16A34A'], riesgo: ['En riesgo', '#F59E0B'], critico: ['Crítico', '#EF4444'], cero: ['Sin venta', '#7F1D1D'], sin: ['Sin meta', '#94A3B8'] };
+function advisorRanking(list) {
+    const ORD = { meta: 0, bien: 1, riesgo: 2, critico: 3, cero: 4, sin: 5 };
+    const L = list.map(d => {
+        const p = d.pacing, pc = p.meta > 0 ? (p.proyCumpl != null ? p.proyCumpl : p.proy / p.meta) : null;
+        const status = !p.meta ? 'sin' : !p.venta ? 'cero' : pc >= 1 ? 'meta' : pc >= .85 ? 'bien' : pc >= .7 ? 'riesgo' : 'critico';
+        const evs = (d.evSemanas || []).filter(x => x.estado !== 'sin'), hechas = evs.filter(x => x.estado === 'ok').length;
+        return { d, status, pc, hechas, evTot: evs.length, prom: d.evaluacion && d.evaluacion.promedio != null ? d.evaluacion.promedio : null };
+    }).sort((a, b) => ORD[a.status] - ORD[b.status] || (b.pc ?? -1) - (a.pc ?? -1) || b.d.pacing.venta - a.d.pacing.venta);
+    const count = {}; L.forEach(x => { count[x.status] = (count[x.status] || 0) + 1; });
+    return { list: L, count };
+}
+function buildAdvRankCanvas(stage, d) {
+    const { RK, an, autor } = d, L = RK.list, dash = '—', pc = v => v == null ? dash : Math.round(v * 100) + '%';
+    const cls = v => v == null ? '' : v >= 1 ? 'g' : v >= .85 ? 'g2' : v >= .7 ? 'a' : 'r';
+    const conMeta = L.filter(x => x.d.pacing.meta > 0), metaT = sum(conMeta.map(x => x.d.pacing.meta)), ventaT = sum(L.map(x => x.d.pacing.venta)), proyT = sum(L.map(x => Math.round(x.d.pacing.proy || 0)));
+    const evH = sum(L.map(x => x.hechas)), evT = sum(L.map(x => x.evTot)), proms = L.map(x => x.prom).filter(n => n != null);
+    const ks = ['meta', 'bien', 'riesgo', 'critico', 'cero', 'sin'].filter(k => RK.count[k]);
+    const el = document.createElement('div'); el.className = 'rp sp ark';
+    el.innerHTML = `<div class="rp-bar"></div>
+    <header class="rp-head"><img class="rp-logo" src="${LOGO_INFINIX}" alt="Infinix">
+        <div class="rp-head-mid"><div class="rp-kicker">RANKING DE ASESORES · VENTA REAL, PROYECCIÓN Y EVALUACIONES</div><div class="rp-title">${esc((/^(ZONA|REGIONAL|NACIONAL)/i.test(d.zona) ? d.zona : 'ZONA ' + d.zona).toUpperCase())}</div>
+        <div class="rp-sub">Corte ${esc(fechaLarga(an.corte))} · día ${an.day} de ${an.dim} · ${L.length} asesores${d.snap && d.snap.fileName ? ' · Fuente: ' + esc(d.snap.fileName) : ''}</div></div>
+        <div class="pl-who"><b>${esc(autor.nombre)}</b><small>${ROLES[autor.rol] ? ROLES[autor.rol].label : ''}</small></div></header>
+    <div class="sp-band">
+        <div class="hero"><span>EN META O BIEN</span><b>${int(RK.count.meta) + int(RK.count.bien)}<small style="font-size:28px;color:#CBD5E1">/${L.length}</small></b><em>asesores con proyección ≥ 85% de su meta</em></div>
+        <div><span>Venta asesores</span><b>${ventaT}</b><em class="${metaT ? cls(ventaT / metaT) : ''}">${metaT ? pc(ventaT / metaT) + ' de ' + metaT : ''}</em></div>
+        <div><span>Proyección</span><b>${proyT}</b><em class="${metaT ? cls(proyT / metaT) : ''}">${metaT ? pc(proyT / metaT) + ' de la meta' : ''}</em></div>
+        <div><span>En riesgo</span><b class="a">${int(RK.count.riesgo)}</b><em>proyección 70% a 85%</em></div>
+        <div class="${int(RK.count.critico) + int(RK.count.cero) ? 'bad' : 'ok'}"><span>Críticos</span><b>${int(RK.count.critico) + int(RK.count.cero)}</b><em>proyección &lt; 70% o sin venta</em></div>
+        <div><span>Evaluaciones</span><b>${evT ? pc(evH / evT) : dash}</b><em>${evT ? `${evH} de ${evT} · prom. ${proms.length ? Math.round(sum(proms) / proms.length) : dash}` : 'sin evaluaciones cargadas'}</em></div>
+    </div>
+    <div class="ark-dist">${ks.map(k => `<div style="flex:${RK.count[k]};background:${ADV_ST[k][1]}"><b>${RK.count[k]}</b> ${ADV_ST[k][0]}</div>`).join('')}</div>
+    <div class="rp-sec">ASESORES DEL MEJOR AL MÁS CRÍTICO</div>
+    <table class="rp-tbl sp-tbl ark-tbl"><thead><tr><th class="l">#</th><th class="l">ASESOR</th><th class="l">PUNTO DE VENTA</th><th>ESTADO</th><th>META</th><th>VENTA</th><th>CUMPL.</th><th>PROY.</th><th>% PROYECCIÓN</th><th>ROI</th><th>ROI PROY.</th><th class="l">EVALUACIONES</th><th>PROM.</th></tr></thead><tbody>
+    ${L.map((x, i) => { const p = x.d.pacing; return `<tr><td class="l">${i + 1}</td><td class="l"><b>${esc(x.d.nombre.split(' ').slice(0, 3).join(' '))}</b></td><td class="l small"><div class="sp-pdv">${chainLogo(x.d.pdv.logoKey, x.d.pdv.cadena, 'xs')}<span>${esc(x.d.pdv.tienda)}</span></div></td>
+        <td><i class="ztag" style="background:${ADV_ST[x.status][1]}">${ADV_ST[x.status][0]}</i></td><td>${p.meta || dash}</td><td><b>${p.venta}</b></td><td class="c-tot ${cls(p.cumpl)}">${pc(p.cumpl)}</td><td>${Math.round(p.proy || 0)}</td>
+        <td><div class="ark-bar"><i style="width:${Math.min(100, Math.round((x.pc || 0) * 100))}%;background:${ADV_ST[x.status][1]}"></i><b>${pc(x.pc)}</b></div></td>
+        <td>${p.venta}</td><td class="roi"><b>${Math.round(p.proy || 0)}</b></td>
+        <td class="l"><div class="ark-ev">${(x.d.evSemanas || []).filter(e => e.estado !== 'sin').map(e => `<i class="${e.estado === 'ok' ? (e.nota == null || e.nota >= 80 ? 'g' : e.nota >= 70 ? 'a' : 'r') : 'x'}">${e.w.slice(1)}<b>${e.estado === 'ok' ? (e.nota == null ? '✓' : e.nota) : '✕'}</b></i>`).join('') || dash}</div></td>
+        <td><b>${x.prom ?? dash}</b></td></tr>`; }).join('')}
+    <tr class="tot"><td class="l" colspan="4">TOTAL · ${L.length} ASESORES</td><td>${metaT || dash}</td><td>${ventaT}</td><td class="c-tot ${metaT ? cls(ventaT / metaT) : ''}">${metaT ? pc(ventaT / metaT) : dash}</td><td>${proyT}</td><td class="c-tot">${metaT ? pc(proyT / metaT) : dash}</td><td>${ventaT}</td><td class="roi">${proyT}</td><td class="l">${evT ? `${evH}/${evT}` : ''}</td><td>${proms.length ? Math.round(sum(proms) / proms.length) : ''}</td></tr>
+    </tbody></table>
+    <footer class="rp-foot"><span>Estado por proyección frente a la meta del asesor: en meta ≥100%, bien ≥85%, en riesgo ≥70%, crítico &lt;70%. Proyección = venta ÷ días transcurridos × días del mes. ROI del asesor = sus unidades (1 promotor); ROI proyectado = unidades proyectadas al cierre. Evaluaciones: nota de cada semana cargada (✕ = no la presentó).</span><b>Infinix · Central de Operaciones</b></footer><div class="rp-bar"></div>`;
+    stage.appendChild(el); return el;
+}
 
 // ----------------------------------------------------------------------------
 // LIENZO · REPORTE RÁPIDO (zona, cadena o tienda) · 1080 px
