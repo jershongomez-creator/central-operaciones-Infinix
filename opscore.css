@@ -964,3 +964,8 @@ tr.vs-inf td { background: #F0FDF4; } tr.vs-inf td b { color: #047857; }
 .rp .nov-c.off .nov-h { background: #FEF2F2; color: #991B1B; } .rp .nov-c.warn .nov-h { background: #FFFBEB; color: #92400E; }
 .rp .nov-i { display: flex; justify-content: space-between; gap: 10px; padding: 6px 14px; border-top: 1px solid #F1F5F9; font-size: 14px; } .rp .nov-i span { color: #64748B; text-align: right; }
 .rp-zona .rp-dash { grid-template-columns: 1.7fr 1.15fr .8fr 1.15fr; }
+/* Cierre semanal del piloto (v1.13) */
+.m1-mode { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+.m1-mode .input { min-width: 220px; }
+.m1-strip button.miss { background: #FEF2F2; border-color: #FCA5A5; color: #B91C1C; }
+.m1-strip button.wk { border-style: dashed; border-width: 2px; }

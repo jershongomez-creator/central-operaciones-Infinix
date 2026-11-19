@@ -3,7 +3,7 @@
 // Todo lo editable por negocio vive en este archivo.
 // ============================================================================
 
-const OPS_VERSION = '1.12.2';
+const OPS_VERSION = '1.13.0';
 const APP_NAME = 'Central de Operaciones';
 
 // --- Firebase: proyecto propio de OpsCore -------------------------------------
@@ -254,7 +254,9 @@ const MODEL_TIPS = {
 };
 
 // Auditoría de disciplina operativa (0 = domingo … 6 = sábado)
-const STORE_DAYS = [0, 1, 2, 3, 4, 5, 6];   // días en que la tienda debe enviar cierre
+const STORE_DAYS = [0, 1, 2, 3, 4, 5, 6];
+// Piloto: en estos meses la tienda puede cargar la venta de toda la semana en un solo cierre (corte del domingo)
+const WEEKLY_PILOT_MONTHS = ['2026-11'];   // días en que la tienda debe enviar cierre
 const STAFF_DAYS = [1, 2, 3, 4, 5, 6];      // días en que el staff debe enviar plan
 
 // --- Semilla oficial de tiendas · Regional Santander -------------------------

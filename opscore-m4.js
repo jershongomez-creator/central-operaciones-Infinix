@@ -132,13 +132,13 @@ registerModule('m4', (() => {
             const proj = metaFactor === 1 ? Math.round(inf / Math.max(1, parseD(endData).getDate()) * dim) : Math.round(inf / elapsed * rangeDays);
             const inv = last ? (last.inventario || {}) : (st.inventario || {});
             return {
-                st, cierres: cs.length, inf, total, brands, share: total > 0 ? inf / total : 0, hc, meta, proj,
+                st, cierres: [...closureDaysCovered(cs)].filter(d => d >= f.from && d <= f.to).length, inf, total, brands, share: total > 0 ? inf / total : 0, hc, meta, proj,
                 cumpl: meta > 0 ? inf / meta : null, cumplProj: meta > 0 ? proj / meta : null,
                 roi: hc > 0 ? inf / hc : null, roiProj: hc > 0 ? proj / hc : null,
                 acc: sum(cs.map(c => sum(Object.values(c.accesorios || {}).map(int)))),
                 inv, invTotal: sum(INFINIX_MODELS.map(m => int(inv[m.key]))),
                 dcr: !!rg, dcrVentas: rg ? rg.ventas : null, corteDCR: dcr ? dcr.corte : '', sem: dcr ? dcr.sem || {} : {},
-                lastFecha: last ? last.fecha : null, expected: expectedDays(f.from, f.to, STORE_DAYS, cs.some(c => c.fecha === today0))
+                lastFecha: last ? last.fecha : null, expected: expectedDays(f.from, f.to, STORE_DAYS, closureDaysCovered(cs).has(today0))
             };
         });
         rows.forEach(r => { r.efect = r.expected > 0 ? Math.min(1, r.cierres / r.expected) : null; });

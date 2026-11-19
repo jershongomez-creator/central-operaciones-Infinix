@@ -1486,6 +1486,12 @@ const fetchStoreClosures = (storeId, fecha) => Data.list(COL.closures, [['storeM
 const closureInfinix = c => sum(INFINIX_MODELS.map(m => int(c.ventas && c.ventas[m.key])));
 const closureBrand = (c, b) => b === 'INFINIX' ? closureInfinix(c) : int(c.competencia && c.competencia[b]);
 
+// Días cubiertos por los cierres (un cierre semanal del piloto cubre todos los días de su semana)
+function closureDaysCovered(cs) {
+    const set = new Set();
+    cs.forEach(c => { if (c.semana && c.semana.desde && c.semana.hasta) { for (let d = c.semana.desde; d <= c.semana.hasta; d = addDays(d, 1)) set.add(d); } else if (c.fecha) set.add(c.fecha); });
+    return set;
+}
 function computeStore(store, closures, fecha) {
     const ym = fecha.slice(0, 7);
     const byDate = {}; closures.forEach(c => { if (c.storeId === store.id) byDate[c.fecha] = c; });

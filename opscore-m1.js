@@ -6,6 +6,18 @@
 
 registerModule('m1', (() => {
     let fecha = todayStr(), closures = [], invBase = {}, invTouched = {}, invAccBase = {}, invAccTouched = {};
+    // Piloto (noviembre): cierre semanal. modo 'semana' → per = { desde, hasta }; el cierre se guarda con la fecha de cierre
+    // de la semana y cubre todos sus días. Al guardarlo reemplaza los cierres diarios que hubiera en esa semana.
+    let modo = 'dia', per = null, wkCur = null, wkDaily = [];
+    const pilotOn = d => WEEKLY_PILOT_MONTHS.includes((d || todayStr()).slice(0, 7));
+    // Semanas del mes (lunes a domingo, recortadas al mes) hasta hoy
+    function pilotWeeks(ym) {
+        const last = Math.min(daysInMonth(ym), ym === todayStr().slice(0, 7) ? int(todayStr().slice(8)) : 31), out = [];
+        for (let i = 1; i <= last; i++) { const d = `${ym}-${pad2(i)}`, wd = weekDays(d), k = wd[0]; let w = out.find(x => x.k === k); if (!w) { w = { k, desde: d, hasta: d }; out.push(w); } w.hasta = d; }
+        return out.map(w => ({ ...w, enCurso: w.hasta === todayStr() && weekDays(w.hasta)[6] !== w.hasta, label: `${int(w.desde.slice(8))}${w.desde !== w.hasta ? ' al ' + int(w.hasta.slice(8)) : ''} de ${MESES[+ym.slice(5) - 1]}` }));
+    }
+    const weekOf = d => pilotWeeks(d.slice(0, 7)).find(w => d >= w.desde && d <= w.hasta) || null;
+    const weeklyCovering = d => closures.find(c => c.semana && d >= c.semana.desde && d <= c.semana.hasta) || null;
 
     const stepper = (id, v, ro) => `<div class="stp"><button type="button" data-d="-1" ${ro ? 'disabled' : ''}>−</button>
         <input class="input num" type="number" inputmode="numeric" min="0" id="${id}" value="${int(v)}" ${ro ? 'readonly' : ''}>
@@ -23,6 +35,9 @@ registerModule('m1', (() => {
                 <div class="row">${storeLogo(st)}<div><h2 class="h2">Reporte de cierre diario</h2><p class="mute">${esc(st.tienda)} · ${esc(st.ciudad || '')} · Zona ${esc(st.zona || '')}</p></div></div>
                 <label class="field-inline"><span class="lbl">Fecha del cierre</span><span class="row" style="gap:4px"><button type="button" class="icon-btn" id="m1-prev" title="Día anterior">◀</button><input type="date" id="m1-fecha" class="input" value="${fecha}" max="${todayStr()}"><button type="button" class="icon-btn" id="m1-next" title="Día siguiente">▶</button></span></label>
             </div>
+            ${pilotOn() ? `<div class="m1-mode"><div class="seg sm"><button type="button" class="seg-btn" data-modo="dia">📅 Cierre diario</button><button type="button" class="seg-btn" data-modo="semana">🗓️ Cierre semanal (piloto)</button></div>
+                <span id="m1-wkbox" hidden><select class="input" id="m1-wk"></select></span></div>
+                <p class="hint" id="m1-wkhint" hidden>Piloto de ${esc(mesLargo(todayStr().slice(0, 7)))}: carga en un solo cierre toda la venta de la semana (Infinix, accesorios y competencia), con corte el domingo. Si ya había cierres diarios en esa semana, se suman aquí y quedan reemplazados por este.</p>` : ''}
             <div class="m1-days" id="m1-days"></div>
             <label class="lbl">¿Quién reporta hoy?</label>
             <div class="chips" id="m1-asesores">${(st.asesores || []).map((a, i) => `<label class="chip"><input type="checkbox" value="${esc(a)}" ${i === 0 ? 'checked' : ''}><span>${esc(a)}</span></label>`).join('') || '<span class="mute">Configura los asesores en ⚙️ Ajustes de tienda.</span>'}</div>
@@ -32,7 +47,7 @@ registerModule('m1', (() => {
 
         <details class="card acc" open>
             <summary><span>📱 Infinix · ventas del día e inventario</span><span class="badge" id="m1-tot-inf">0 uds</span></summary>
-            <table class="tbl compact"><thead><tr><th>Referencia</th><th>Target</th><th>Inventario</th><th>Venta hoy</th></tr></thead><tbody>
+            <table class="tbl compact"><thead><tr><th>Referencia</th><th>Target</th><th>Inventario</th><th class="m1-vl">Venta hoy</th></tr></thead><tbody>
                 ${INFINIX_MODELS.map(m => `<tr><td><b>${esc(m.name)}</b></td><td class="c">${tgt(metas[m.key])}</td><td><input class="input num" type="number" inputmode="numeric" min="0" id="m1-i-${m.key}" value="0"></td><td>${stepper('m1-v-' + m.key, 0)}</td></tr>`).join('')}
             </tbody></table>
             <p class="hint">Target y HC se fijan en ⚙️ Ajustes de tienda. El inventario se descuenta solo con cada venta y queda listo para mañana; corrígelo si recibiste mercancía.</p>
@@ -40,15 +55,15 @@ registerModule('m1', (() => {
 
         <details class="card acc" open>
             <summary><span>🎧 Accesorios Infinix (venta independiente)</span><span class="badge" id="m1-tot-acc">0 uds</span></summary>
-            <table class="tbl compact"><thead><tr><th>Accesorio</th><th>Target</th><th>Inventario</th><th>Venta hoy</th></tr></thead><tbody>
+            <table class="tbl compact"><thead><tr><th>Accesorio</th><th>Target</th><th>Inventario</th><th class="m1-vl">Venta hoy</th></tr></thead><tbody>
                 ${INFINIX_ACCESSORIES.map(a => `<tr><td><b>${esc(a.name)}</b></td><td class="c">${tgt(metasAcc[a.key])}</td><td><input class="input num" type="number" inputmode="numeric" min="0" id="m1-ia-${a.key}" value="0"></td><td>${stepper('m1-a-' + a.key, 0)}</td></tr>`).join('')}
             </tbody></table>
             <p class="hint">No cuentan para el share ni para el ROI de celulares.</p>
         </details>
 
         <details class="card acc" open>
-            <summary><span>🏬 Ventas del día de la competencia</span><span class="badge" id="m1-tot-st">0 uds tienda</span></summary>
-            <table class="tbl compact"><thead><tr><th>Marca</th><th>HC</th><th>Target</th><th>Venta hoy</th></tr></thead><tbody>
+            <summary><span id="m1-comp-t">🏬 Ventas del día de la competencia</span><span class="badge" id="m1-tot-st">0 uds tienda</span></summary>
+            <table class="tbl compact"><thead><tr><th>Marca</th><th>HC</th><th>Target</th><th class="m1-vl">Venta hoy</th></tr></thead><tbody>
                 ${BRANDS.map(b => `<tr class="${b === 'INFINIX' ? 'row-own' : ''}"><td><span class="dot" style="background:${BRAND_COLORS[b]}"></span><b>${b}</b></td><td class="c">${int(hc[b]) || '—'}</td><td class="c">${tgt(b === 'INFINIX' ? storeMetaMes(st) : metasComp[b])}</td><td>${stepper('m1-c-' + b, 0, b === 'INFINIX')}</td></tr>`).join('')}
             </tbody></table>
         </details>
@@ -68,15 +83,33 @@ registerModule('m1', (() => {
         $('#m1-fecha').onchange = e => { fecha = e.target.value || todayStr(); load(); };
         const go = d => { const f = addDays(fecha, d); if (f > todayStr()) return; fecha = f; $('#m1-fecha').value = f; load(); };
         $('#m1-prev').onclick = () => go(-1); $('#m1-next').onclick = () => go(1);
-        $('#m1-days').onclick = e => { const b = e.target.closest('[data-day]'); if (!b) return; fecha = b.dataset.day; $('#m1-fecha').value = fecha; load(); };
+        $('#m1-days').onclick = e => { const b = e.target.closest('[data-day]'); if (!b) return; const d = b.dataset.day; if (modo === 'semana') { const w = weekOf(d); if (w) { per = w; $('#m1-wk').value = w.desde; fecha = w.hasta; load(); } return; } fecha = d; $('#m1-fecha').value = fecha; load(); };
+        $$('[data-modo]', view).forEach(b => b.onclick = () => setModo(b.dataset.modo));
+        if ($('#m1-wk')) $('#m1-wk').onchange = e => { per = pilotWeeks(fecha.slice(0, 7)).find(w => w.desde === e.target.value) || per; fecha = per.hasta; load(); };
+        if (pilotOn()) setModo(modo, true);
 
         ReportActions.bind(view, {
             title: 'Reporte diario de ventas',
-            validate: () => $$('#m1-asesores input:checked').length ? null : 'Marca al menos un asesor que reporta.',
-            filename: () => `Cierre_${slug(currentStore().tienda)}_${fecha}.png`,
+            validate: () => !$$('#m1-asesores input:checked').length ? 'Marca al menos un asesor que reporta.' : (modo === 'dia' && weeklyCovering(fecha) ? `Este día ya está dentro del cierre semanal del ${weeklyCovering(fecha).semana.desde.slice(8)} al ${weeklyCovering(fecha).semana.hasta.slice(8)}: edítalo en "Cierre semanal".` : null),
+            filename: () => `Cierre_${slug(currentStore().tienda)}_${modo === 'semana' && per ? per.desde + '_a_' + per.hasta : fecha}.png`,
             build: stage => buildClosureCanvas(stage, currentStore(), computeStore(currentStore(), merged(), fecha), collect()),
             persist
         });
+        if (!pilotOn()) load();
+    }
+    function setModo(m, first) {
+        modo = m;
+        $$('[data-modo]').forEach(b => b.classList.toggle('active', b.dataset.modo === m));
+        const wk = m === 'semana';
+        if ($('#m1-wkbox')) $('#m1-wkbox').hidden = !wk; if ($('#m1-wkhint')) $('#m1-wkhint').hidden = !wk;
+        const fb = $('#m1-fecha') && $('#m1-fecha').closest('.field-inline'); if (fb) fb.hidden = wk;
+        $$('.m1-vl').forEach(t => { t.textContent = wk ? 'Venta semana' : 'Venta hoy'; });
+        if ($('#m1-comp-t')) $('#m1-comp-t').textContent = wk ? '🏬 Ventas de la semana de la competencia' : '🏬 Ventas del día de la competencia';
+        if (wk) {
+            const ws = pilotWeeks(fecha.slice(0, 7)); per = weekOf(fecha) || ws[ws.length - 1];
+            $('#m1-wk').innerHTML = ws.map(w => `<option value="${w.desde}" ${per && w.desde === per.desde ? 'selected' : ''}>Semana del ${esc(w.label)}${w.enCurso ? ' (en curso)' : ''}</option>`).join('');
+            fecha = per.hasta;
+        } else { per = null; fecha = $('#m1-fecha').value || todayStr(); }
         load();
     }
 
@@ -84,7 +117,9 @@ registerModule('m1', (() => {
         const st = currentStore(); if (!st) return;
         closures = await fetchStoreClosures(st.id, fecha);
         if (!$('#m1-fecha')) return;
-        const cur = closures.find(c => c.fecha === fecha);
+        if (modo === 'semana' && per) { loadWeek(st); return; }
+        const cur = closures.find(c => c.fecha === fecha && !c.semana);
+        if (weeklyCovering(fecha)) toast(`Este día está dentro del cierre semanal del ${weeklyCovering(fecha).semana.desde.slice(8)} al ${weeklyCovering(fecha).semana.hasta.slice(8)}.`, 'info', 4500);
         invTouched = {}; invBase = {};
         // Día sin cierre: el inventario parte del último cierre anterior (llenar el mes día a día) o del inventario vigente
         const prev = cur ? null : closures.filter(c => c.fecha < fecha && c.inventario).sort((a, b) => b.fecha.localeCompare(a.fecha))[0];
@@ -105,7 +140,30 @@ registerModule('m1', (() => {
         });
         BRANDS.forEach(b => { if (b !== 'INFINIX') $('#m1-c-' + b).value = cur ? int(cur.competencia && cur.competencia[b]) : 0; });
         if (cur && cur.asesores) $$('#m1-asesores input').forEach(i => { i.checked = cur.asesores.includes(i.value); });
-        if (!cur && later && !prev) toast('Este día no tiene cierre: revisa el inventario antes de guardar.', 'info', 4000);
+        if (!cur && later && !prev && !weeklyCovering(fecha)) toast('Este día no tiene cierre: revisa el inventario antes de guardar.', 'info', 4000);
+        recalc(); paintDays();
+    }
+
+    // Semana del piloto: precarga el semanal ya guardado o la suma de los cierres diarios de esa semana
+    function loadWeek(st) {
+        wkCur = closures.find(c => c.semana && c.semana.desde === per.desde) || null;
+        wkDaily = closures.filter(c => !c.semana && c.fecha >= per.desde && c.fecha <= per.hasta);
+        const src = wkCur ? [wkCur] : wkDaily, last = src.slice().sort((a, b) => b.fecha.localeCompare(a.fecha))[0];
+        const sumOf = (field, k) => sum(src.map(c => int(c[field] && c[field][k])));
+        const prev = closures.filter(c => (c.semana ? c.semana.hasta : c.fecha) < per.desde && c.inventario).sort((a, b) => b.fecha.localeCompare(a.fecha))[0];
+        const baseInv = prev ? prev.inventario : st.inventario, baseAcc = prev ? prev.invAcc : st.invAcc;
+        invTouched = {}; invBase = {}; invAccTouched = {}; invAccBase = {};
+        INFINIX_MODELS.forEach(m => {
+            const v = sumOf('ventas', m.key), inv = last ? int(last.inventario && last.inventario[m.key]) : int(baseInv && baseInv[m.key]);
+            invBase[m.key] = last ? inv + v : inv; $('#m1-v-' + m.key).value = v; $('#m1-i-' + m.key).value = inv;
+        });
+        INFINIX_ACCESSORIES.forEach(a => {
+            const v = sumOf('accesorios', a.key), inv = last && last.invAcc ? int(last.invAcc[a.key]) : int(baseAcc && baseAcc[a.key]);
+            invAccBase[a.key] = last && last.invAcc ? inv + v : inv; $('#m1-a-' + a.key).value = v; $('#m1-ia-' + a.key).value = inv;
+        });
+        BRANDS.forEach(b => { if (b !== 'INFINIX') $('#m1-c-' + b).value = sumOf('competencia', b); });
+        const as = [...new Set(src.flatMap(c => c.asesores || []))]; if (as.length) $$('#m1-asesores input').forEach(i => { i.checked = as.includes(i.value); });
+        if (!wkCur && wkDaily.length) toast(`Se sumaron ${wkDaily.length} cierre(s) diario(s) de esa semana. Al guardar quedan en este cierre semanal.`, 'info', 5500);
         recalc(); paintDays();
     }
 
@@ -113,11 +171,12 @@ registerModule('m1', (() => {
     function paintDays() {
         const box = $('#m1-days'); if (!box) return;
         const ym = fecha.slice(0, 7), last = todayStr().slice(0, 7) === ym ? int(todayStr().slice(8)) : new Date(+ym.slice(0, 4), +ym.slice(5), 0).getDate();
-        const done = new Set(closures.filter(c => c.month === ym || (c.fecha || '').slice(0, 7) === ym).map(c => c.fecha));
-        const n = done.size;
+        const done = closureDaysCovered(closures.filter(c => c.month === ym || (c.fecha || '').slice(0, 7) === ym));
+        const n = [...done].filter(d => d.slice(0, 7) === ym).length, today = todayStr();
+        const inSel = d => modo === 'semana' && per ? d >= per.desde && d <= per.hasta : d === fecha;
         box.innerHTML = `<span class="lbl">${esc(mesLargo(ym))}: ${n} de ${last} días guardados</span><div class="m1-strip">${Array.from({ length: last }, (_, i) => {
-            const d = `${ym}-${String(i + 1).padStart(2, '0')}`;
-            return `<button type="button" data-day="${d}" class="${done.has(d) ? 'ok' : ''} ${d === fecha ? 'cur' : ''}" title="${done.has(d) ? 'Guardado' : 'Sin cierre'}">${i + 1}</button>`;
+            const d = `${ym}-${String(i + 1).padStart(2, '0')}`, wk = weeklyCovering(d);
+            return `<button type="button" data-day="${d}" class="${done.has(d) ? 'ok' : d < today ? 'miss' : ''} ${wk ? 'wk' : ''} ${inSel(d) ? 'cur' : ''}" title="${done.has(d) ? (wk ? 'En cierre semanal' : 'Guardado') : 'Sin cierre'}">${i + 1}</button>`;
         }).join('')}</div>`;
     }
 
@@ -159,15 +218,24 @@ registerModule('m1', (() => {
             metas: st.metas || {}, metasComp: st.metasComp || {}, metasAcc: st.metasAcc || {},
             hc: st.hc || {}, metaMes: storeMetaMes(st),
             totalInfinix, totalTienda: totalInfinix + sum(Object.values(competencia)),
+            ...(modo === 'semana' && per ? { semana: { desde: per.desde, hasta: per.hasta, dias: Math.round((parseD(per.hasta) - parseD(per.desde)) / 864e5) + 1 } } : {}),
             updatedAt: Date.now()
         };
     }
-    const merged = () => closures.filter(c => c.fecha !== fecha).concat($('#m1-fecha') ? collect() : []);
+    const merged = () => closures.filter(c => c.fecha !== fecha && !(modo === 'semana' && per && ((c.semana && c.semana.desde === per.desde) || (!c.semana && c.fecha >= per.desde && c.fecha <= per.hasta)))).concat($('#m1-fecha') ? collect() : []);
 
     async function persist() {
         const st = currentStore(), doc = collect();
-        const saving = [Data.set(COL.closures, doc.id, doc, false)];
-        closures = closures.filter(c => c.fecha !== fecha).concat(doc);
+        let saving;
+        if (modo === 'semana' && per) {           // el semanal reemplaza al semanal anterior y a los diarios de esa semana
+            const gone = closures.filter(c => c.id !== doc.id && ((c.semana && c.semana.desde === per.desde) || (!c.semana && c.fecha >= per.desde && c.fecha <= per.hasta)));
+            saving = [Data.batch([{ op: 'set', col: COL.closures, id: doc.id, data: doc, merge: false }].concat(gone.map(c => ({ op: 'del', col: COL.closures, id: c.id }))))];
+            closures = closures.filter(c => c.id !== doc.id && !gone.includes(c)).concat(doc);
+            wkCur = doc; wkDaily = [];
+        } else {
+            saving = [Data.set(COL.closures, doc.id, doc, false)];
+            closures = closures.filter(c => c.fecha !== fecha).concat(doc);
+        }
         paintDays();
         if (!st.lastClosure || fecha >= st.lastClosure) {      // el inventario vigente es el del último cierre
             const upd = { inventario: doc.inventario, invAcc: doc.invAcc, lastClosure: fecha };
@@ -227,10 +295,10 @@ function buildClosureCanvas(stage, store, c, closure) {
     <header class="rp-head">
         <img class="rp-logo" src="${LOGO_INFINIX}" alt="Infinix">
         <div class="rp-head-mid">
-            <div class="rp-kicker">REPORTE DIARIO DE VENTAS</div>
+            <div class="rp-kicker">${closure.semana ? 'CIERRE SEMANAL DE VENTAS (PILOTO)' : 'REPORTE DIARIO DE VENTAS'}</div>
             <div class="rp-title">${esc(store.tienda.toUpperCase())}</div>
             <div class="rp-sub">Zona ${esc(store.zona || dash)} · ${esc(store.ciudad || '')} · Asesor(es): <b>${esc((closure.asesores || []).join(', ') || dash)}</b></div>
-            <div class="rp-sub">Cierre: ${esc(fechaLarga(c.fecha))} · Semana W${c.wk} · ${esc(mesLargo(c.ym))}</div>
+            <div class="rp-sub">${closure.semana ? `Venta del <b>${esc(fechaLarga(closure.semana.desde))}</b> al <b>${esc(fechaLarga(closure.semana.hasta))}</b>` : `Cierre: ${esc(fechaLarga(c.fecha))}`} · Semana W${c.wk} · ${esc(mesLargo(c.ym))}</div>
         </div>
         <div class="rp-chain">${storeLogo(store)}</div>
     </header>
