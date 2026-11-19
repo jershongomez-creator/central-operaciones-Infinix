@@ -329,8 +329,40 @@ const Data = (() => {
         } catch (e) { return () => { }; }
     }
 
+    // Archivos pesados (fotos en base64): van directo a Firestore, sin la caché del navegador (no cabrían en ella).
+    // Sin señal, Firebase los deja en su cola del teléfono y los sube solo al volver la conexión.
+    const mem = {};
+    const memList = (col, filters) => Object.values(mem[col] || {}).filter(d => filters.every(f => match(d, f)));
+    async function setRaw(col, id, data) {
+        (mem[col] = mem[col] || {})[id] = { ...data, id };
+        if (!db) return { synced: false };
+        const payload = JSON.parse(JSON.stringify(data)); delete payload.id;
+        try { await withTimeout(db.collection(col).doc(id).set(payload)); setOnline(true); return { synced: true }; }
+        catch (e) { setOnline(false, e); return { synced: false, denied }; }
+    }
+    async function listRaw(col, filters = []) {
+        if (!db) return memList(col, filters);
+        let q = db.collection(col); filters.forEach(f => { q = q.where(f[0], f[1], f[2]); });
+        try {
+            const snap = await withTimeout(q.get()); setOnline(true);
+            const docs = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+            memList(col, filters).forEach(m => { if (!docs.some(d => d.id === m.id)) docs.push(m); });   // lo recién subido que aún no llega
+            return docs;
+        } catch (e) {
+            setOnline(false, e);
+            try { const snap = await q.get({ source: 'cache' }); const docs = snap.docs.map(d => ({ ...d.data(), id: d.id })); return docs.length ? docs : memList(col, filters); }
+            catch (e2) { return memList(col, filters); }
+        }
+    }
+    async function delRaw(col, id) {
+        if (mem[col]) delete mem[col][id];
+        if (!db) return { synced: false };
+        try { await withTimeout(db.collection(col).doc(id).delete()); setOnline(true); return { synced: true }; }
+        catch (e) { setOnline(false, e); return { synced: false }; }
+    }
+
     return {
-        init, fetch, list, get, set, del, batch, flush, watch, hasCloud: () => !!db, denied: () => denied,
+        init, fetch, list, get, set, del, batch, flush, watch, setRaw, listRaw, delRaw, hasCloud: () => !!db, denied: () => denied,
         local: col => Object.values(readCache(col)),
         seedLocal: (col, docs) => { const c = readCache(col); docs.forEach(d => { if (!c[d.id]) c[d.id] = d; }); writeCache(col, c); },
         onStatus: fn => { listeners.push(fn); if (online !== null) fn(online); },
@@ -984,7 +1016,15 @@ const REMINDERS = [
     {   id: 'cierre', when: () => { const st = currentStore(); return !!st && new Date().getHours() >= 20 && st.lastClosure !== todayStr(); },
         text: () => '🌙 <b>Son más de las 8 p.m.:</b> no olvides llenar y guardar tu <b>reporte de cierre de ventas</b> de hoy.',
         btn: 'Llenar cierre', go: () => navigate('m1'),
-        note: () => 'Recuerda llenar tu reporte de cierre de ventas de hoy.' }
+        note: () => 'Recuerda llenar tu reporte de cierre de ventas de hoy.' },
+    {   id: 'adm', when: () => { const st = currentStore(); return !!st && inReminderWindow() && typeof admPendientes === 'function' && admPendientes(st).length > 0; },
+        text: () => `📁 <b>Del 1 al 5:</b> sube las <b>cargas administrativas de ${esc(mesLargo(todayStr().slice(0, 7)))}</b>. Falta: ${esc(admPendientes(currentStore()).join(', '))}.`,
+        btn: 'Cargar ahora', go: () => navigate('adm'),
+        note: () => `Cargas administrativas del mes: falta ${admPendientes(currentStore()).join(', ')}.` },
+    {   id: 'planilla', when: () => { const st = currentStore(); return !!st && (window.__fakeSunday || new Date().getDay() === 0) && new Date().getHours() >= 20 && typeof admPlanSemanaPend === 'function' && admPlanSemanaPend(st); },
+        text: () => '🗒️ <b>Es domingo:</b> sube la foto de la <b>planilla física de ventas</b> de esta semana.',
+        btn: 'Subir planilla', go: () => navigate('adm'),
+        note: () => 'Es domingo: sube la foto de la planilla física de ventas de la semana.' }
 ];
 function paintReminder() {
     const ban = $('#month-banner'); if (!ban) return;

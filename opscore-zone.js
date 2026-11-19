@@ -579,6 +579,7 @@ registerModule('zona', (() => {
         <div class="zpanel" data-zp="asesores" ${ztab === 'asesores' ? '' : 'hidden'}><div id="z-radar"></div></div>
 
         <div class="zpanel" data-zp="tiendas" ${ztab === 'tiendas' ? '' : 'hidden'}>
+            <div id="z-adm"></div>
             <section class="card"><h3 class="h3">Ranking de PDV <small class="mute">por proyección de cierre</small></h3>
                 <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>#</th><th>PDV</th>${multi ? '<th>Zona</th>' : ''}<th>Estado</th><th>Target</th><th>Venta</th><th>Proy.</th><th>Cumpl.</th><th>ROI</th><th>Ref. rezagada</th></tr></thead><tbody>
                 ${an.ranking.map((r, i) => `<tr><td>${i + 1}</td><td class="l"><div class="row" style="gap:6px;flex-wrap:nowrap">${storeLogo(r.st, 'xs')}<b>${esc(r.st.tienda)}</b></div><small class="mute">${r.asesores.map(a => `${esc(a.nombre.split(' ')[0])} ${a.total}`).join(' · ') || 'sin asesores en la data'}</small></td>${multi ? `<td><small>${esc(r.zona)}</small></td>` : ''}<td>${stTag(r.status)}</td><td>${r.meta || '—'}</td><td><b>${r.venta}</b></td><td>${r.proj}</td><td>${pill(r.cumplProj)}</td><td>${fmt1(r.roi)}</td><td><small>${r.rezagadas.map(x => esc(x.name)).join(', ')}</small></td></tr>`).join('')}
@@ -607,6 +608,7 @@ registerModule('zona', (() => {
         $$('[data-goto]', out).forEach(b => b.onclick = () => showTab(b.dataset.goto));
         $$('[data-ficha-or-sel]', out).forEach(b => b.onclick = () => { advSel = new Set([b.dataset.fichaOrSel]); paintAdvPanel(); paintAdvBtn(); $('#z-adv').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
         if ($('#z-rep-adv-go')) $('#z-rep-adv-go').onclick = () => openAdvisorFicha($('#z-rep-adv').value);
+        if (typeof paintAdmZone === 'function') paintAdmZone($('#z-adm'), an.rows.map(r => r.st), viewLabel());
         paintRadar();
         if (ztab === 'share' && typeof paintRealShare === 'function') paintRealShare($('#z-share'), an.rows.map(r => r.st), viewLabel());
         paintQuick();

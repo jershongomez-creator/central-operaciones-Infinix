@@ -193,6 +193,22 @@ Resultado: quién presentó, quién falta, quién repitió y con qué notas, pro
 - **Plan de trabajo:** cada tienda avisa si ese día su asesor está compensando o con novedad («nadie en el PDV») para evitar visitas innecesarias.
 - **Inhabilitar tienda:** muestra su target, HC y el total de la zona, y deja elegir: pasar target, HC, asesores y metas a otra tienda (el total de la zona no cambia y la venta que llegue con su código se suma a la que la recibe) o descontar su target. Se registra quién la inhabilitó; restaurar devuelve todo como estaba.
 
+## 5h. Novedades v1.10 y v1.11 (lista de la reunión del 18 de noviembre)
+
+- **Simulador:** sin compartir ni descargar.
+- **Data real por cadena** (Cargar datos, solo coordinador, gerente y admin): sell-out de Éxito, Falabella, Alkosto/Ktronix, Olímpica, Cencosud, WOM y Claro en formato largo o ancho. Análisis de zona › **📊 Share real** muestra share, participación y puesto con la data real (si no hay, con los cierres) y alerta las tiendas donde el reporte del asesor no cuadra (diferencia de ±3 uds y 15 %, de 10 puntos de share o sin cierres en el periodo). La visita usa el share real cuando existe.
+- **Malla nacional** (Malla_de_promotores): detecta quién descansa por nombre o cédula; las zonas sin malla muestran «Sin información de malla»; chip rojo (fuera del PDV) o ámbar (apoyo, capacitación) en las listas; los asesores fuera no entran al plan.
+- **Target y HC:** solo el coordinador (y gerente/admin). La tienda edita HC e inventario solo los lunes, una vez, con aviso ese día.
+- **Imágenes 2K/4K** (3840 px de ancho; en iPhone hasta 16 MP) y botón **📄 PDF** en todos los reportes.
+- **Data plana por usuario:** cada quien ve la que cargó y solo de su zona. Malla, data real y evaluaciones son nacionales: lo que cargue cualquiera lo ven todos.
+- **Reportes de venta** (nuevo menú): status del día (meta del día, debería llevar a la hora, lleva, proyección, mejor y peor asesor), venta 0 por día o rango con fecha y hora reales de carga, día a día, IMEI sin activar; filtros por zona, cadena y tienda; tarjeta con plan de acción según el cargo.
+- **Gestión:** Configuración solo admin; supervisor y formador solo la pestaña Asesores (retirar o mover); coordinador tiendas, zonas y equipo.
+- **Avisos:** cierre a las 8 p.m. a la tienda; target y HC del 1 al 5 a los líderes; inventario los lunes; cargas administrativas del 1 al 5 y planilla los domingos a las 8 p.m. Salen en la franja superior y como notificación del teléfono **cuando la app está abierta** (para avisos con la app cerrada se necesita un servidor de notificaciones, plan Blaze de Firebase).
+- **Plan del supervisor** en formato de reporte (meta del día de la zona y por PDV, compromiso y gestiones de presión comercial); cierre consolidado por cargo (supervisor en números, formador en conocimiento) con collage de fotos.
+- **Ficha del asesor y calculadora sin dinero:** solo llaves, ROI y lo que falta para el 100 % de la meta; la calculadora muestra lo ganado y lo que falta, sin proyecciones.
+- **Cargas administrativas (tienda, v1.11):** acta de sample, hasta 10 samples (referencia, IMEI de 15 dígitos y foto), foto HORIZONTAL de la mesa con los asesores, hasta 6 fotos de visibilidad y la planilla física de ventas de cada semana (hasta 3 hojas). Toda foto lleva marca de agua (Infinix, tienda, tipo, fecha y hora, quién la subió) y se reduce para que pese menos de 1 MB. Cumplimiento del mes = acta + al menos un sample + mesa + al menos una de visibilidad + planilla de cada semana cuyo domingo ya pasó.
+- **Ficha administrativa (líderes):** Análisis de zona › Tiendas › 📁 Cargas administrativas: cumplimiento de cada PDV, fotos para ver y descargar (una a una o todas) y tarjeta del PDV en imagen, PDF o WhatsApp.
+
 ## 6. Calculadora (tienda)
 
 El asesor elige su nombre. Su target por referencia sale del target de la tienda dividido entre los asesores y lo puede ajustar a mano; sus unidades llegan de la data de zona (o se escriben). Muestra apertura (KPI), lo ganado y el siguiente bono según el **plan comisional general**, que el Administrador configura en Gestión › Configuración › Plan comisional (valor por referencia y accesorio, apertura y bonos).
@@ -253,5 +269,8 @@ GitHub Pages gratuito publica repositorios **públicos**: el código queda visib
 | `opscore-m1.js` … `opscore-m5.js` | Cierre, plan, visita, central y simulador |
 | `opscore-zone.js`, `opscore-evals.js`, `opscore-calc.js` | Análisis de zona, evaluaciones y calculadora |
 | `opscore-admin.js`, `opscore-demo.js` | Gestión y datos de demostración |
+| `opscore-cargas.js`, `opscore-real.js` | Cargar datos: target, malla, novedades y data real por cadena |
+| `opscore-ventas.js`, `opscore-plan-roles.js` | Reportes de venta y planes/cierres por cargo |
+| `opscore-adm.js` | Cargas administrativas de la tienda y ficha administrativa del PDV |
 | `opscore-assets.js` | Logos embebidos (necesarios para exportar imágenes) |
 | `sw.js`, `manifest.json`, `logo-512.png` | Instalación como app |
