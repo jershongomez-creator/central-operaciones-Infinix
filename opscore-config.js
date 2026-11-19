@@ -3,7 +3,7 @@
 // Todo lo editable por negocio vive en este archivo.
 // ============================================================================
 
-const OPS_VERSION = '1.10.2';
+const OPS_VERSION = '1.10.3';
 const APP_NAME = 'Central de Operaciones';
 
 // --- Firebase: proyecto propio de OpsCore -------------------------------------
@@ -57,16 +57,16 @@ const LOGO_INFINIX = LOGOS.infinix;        // ver opscore-assets.js
 // --- Roles (RBAC) ------------------------------------------------------------
 const ROLES = {
     asesor:      { label: 'Tienda (PDV)',  modules: ['m1', 'central', 'calc', 'm5'] },
-    supervisor:  { label: 'Supervisor',    modules: ['zona', 'm2', 'm3', 'm4', 'm5', 'datos', 'admin'] },      // sin evaluaciones
-    formador:    { label: 'Formador',      modules: ['zona', 'evals', 'm2', 'm3', 'm4', 'm5', 'datos', 'admin'] },
-    coordinador: { label: 'Coordinador',   modules: ['zona', 'm4', 'evals', 'm5', 'datos', 'admin'] },          // no hace plan ni visita: analiza y consulta reportes
-    gerente:     { label: 'Gerente',       modules: ['m4', 'zona', 'm5', 'datos', 'admin'] },
-    admin:       { label: 'Administrador', modules: ['zona', 'm2', 'm3', 'm4', 'evals', 'm5', 'datos', 'admin'] }
+    supervisor:  { label: 'Supervisor',    modules: ['zona', 'ventas', 'm2', 'm3', 'm4', 'm5', 'datos', 'admin'] },      // sin evaluaciones
+    formador:    { label: 'Formador',      modules: ['zona', 'ventas', 'evals', 'm2', 'm3', 'm4', 'm5', 'datos', 'admin'] },
+    coordinador: { label: 'Coordinador',   modules: ['zona', 'ventas', 'm4', 'evals', 'm5', 'datos', 'admin'] },          // no hace plan ni visita: analiza y consulta reportes
+    gerente:     { label: 'Gerente',       modules: ['m4', 'zona', 'ventas', 'm5', 'datos', 'admin'] },
+    admin:       { label: 'Administrador', modules: ['zona', 'ventas', 'm2', 'm3', 'm4', 'evals', 'm5', 'datos', 'admin'] }
 };
 const STAFF_ROLES = ['supervisor', 'formador', 'coordinador', 'gerente', 'admin'];
 const MODULE_LABELS = {
     m1: 'Cierre diario', m2: 'Plan de trabajo', m3: 'Visita PDV',
-    m4: 'Central de reportes', m5: 'Simulador', admin: 'Gestión', datos: 'Cargar datos', zona: 'Análisis de zona', calc: 'Calculadora', evals: 'Evaluaciones', central: 'Mi central'
+    m4: 'Central de reportes', m5: 'Simulador', admin: 'Gestión', datos: 'Cargar datos', ventas: 'Reportes de venta', zona: 'Análisis de zona', calc: 'Calculadora', evals: 'Evaluaciones', central: 'Mi central'
 };
 
 // Claves iniciales (solo su hash SHA-256; el Administrador las cambia en Gestión › Configuración).

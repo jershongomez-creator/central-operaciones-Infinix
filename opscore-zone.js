@@ -27,9 +27,11 @@ const ZoneData = (() => {
         position: ['POSITION', 'CARGO'],
         city: ['CITY', 'CIUDAD', 'MUNICIPIO'],
         channel: ['SALESCHANNEL', 'CANALDEVENTA', 'TIPOCANAL'],
+        uploadDate: ['UPLOADDATE', 'FECHADECARGA', 'FECHACARGA'], uploadTime: ['UPLOADTIME', 'HORADECARGA', 'HORACARGA', 'HORA'],
+        activation: ['ACTIVATIONSTATUS', 'ESTADOACTIVACION', 'ACTIVACION'], imei: ['IMEISN', 'IMEI', 'SERIAL'],
         chain: ['SHOPALIAS', 'CADENA', 'CLIENTE', 'CANAL', 'RETAIL', 'ALIADO']
     };
-    const PRIORITY = ['storeId', 'store', 'advisor', 'ref', 'qty', 'date', 'zone', 'region', 'brand', 'category', 'position', 'city', 'channel', 'chain'];
+    const PRIORITY = ['storeId', 'store', 'advisor', 'ref', 'qty', 'date', 'uploadDate', 'uploadTime', 'activation', 'imei', 'zone', 'region', 'brand', 'category', 'position', 'city', 'channel', 'chain'];
     // Regla de oro: solo se analizan las 7 cadenas (Éxito, Alkosto, Ktronix, Falabella, Cencosud, WOM, Olímpica). IR y demás canales se ignoran.
     const OFFICIAL_ALIAS = /^(EXITO|ALKOSTO|KTRONIX|FALABELLA|CENCOSUD|JUMBO|METRO|WOM|OLIMPICA)/;
 
@@ -73,7 +75,7 @@ const ZoneData = (() => {
             else if (v.result !== undefined) v = v.result;
             else if (v.text !== undefined) v = v.text;
         }
-        if (v instanceof Date) return dstr(new Date(v.getTime() + v.getTimezoneOffset() * 60000));
+        if (v instanceof Date) { const u = new Date(v.getTime() + v.getTimezoneOffset() * 60000); return u.getFullYear() <= 1900 ? `${pad2(u.getHours())}:${pad2(u.getMinutes())}:${pad2(u.getSeconds())}` : dstr(u); }   // hora sola (Excel la guarda en 1899-12-30)
         return v == null ? '' : String(v).trim();
     }
     function parseCSV(text) {
@@ -171,6 +173,9 @@ const ZoneData = (() => {
                 return;
             }
             if (!zoneSet.has(st.zona)) { tot.rowsOtherZone++; return; }
+            // Día real de la venta = fecha y hora de carga (lo cargado después de las 7 p.m. el sistema lo pasa al día siguiente)
+            const ud = map.uploadDate !== undefined ? normDate(get('uploadDate')) : '', ut = map.uploadTime !== undefined ? String(get('uploadTime')).slice(0, 5) : '';
+            const rd = ud || d; if (rd && ut && rd + ' ' + ut > (tot.maxUpload || '')) tot.maxUpload = rd + ' ' + ut;
             const ck = chainGroup(st).key; tot.chainUnits[ck] = (tot.chainUnits[ck] || 0) + qty; if (!chainOn(st)) tot.rowsOffChain += qty;   // la data de todas las cadenas se guarda; el filtro se aplica al analizar
             const snap = snaps[st.zona];
             const S = snap.stores[st.id] = snap.stores[st.id] || { storeId: st.id, tienda: st.tienda, total: 0, ventas: {}, otros: 0, asesores: {}, refsOtras: {}, accesorios: {}, cedulas: {} };
@@ -192,9 +197,12 @@ const ZoneData = (() => {
             if (P.cedula) { A.cedula = P.cedula; S.cedulas[adv] = P.cedula; }
             A.total += qty; if (mk) A.ventas[mk] = (A.ventas[mk] || 0) + qty;
             if (wk) { A.sem = A.sem || {}; A.sem[wk] = (A.sem[wk] || 0) + qty; if (mk) { A.semRef = A.semRef || {}; const sr = A.semRef[wk] = A.semRef[wk] || {}; sr[mk] = (sr[mk] || 0) + qty; } }
+            if (rd) { A.dr = A.dr || {}; A.dr[rd] = (A.dr[rd] || 0) + qty; S.dr = S.dr || {}; S.dr[rd] = (S.dr[rd] || 0) + qty; if (ut) { A.lastAt = (A.lastAt || '') > rd + ' ' + ut ? A.lastAt : rd + ' ' + ut; } }
+            // IMEI sin activar: se guardan para el reporte (el asesor pide factura o soporte para no perder la venta)
+            if (map.activation !== undefined && /NOT|NO /i.test(get('activation'))) { S.inact = S.inact || []; if (S.inact.length < 400) S.inact.push({ imei: get('imei'), ref: get('ref'), f: rd || d, a: adv, h: ut }); }
             snap.rowsUsed += qty; tot.rowsUsed += qty;
         });
-        Object.values(snaps).forEach(sn => { sn.advisors = sum(Object.values(sn.stores).map(s => Object.keys(s.asesores).length)); sn.maxDate = tot.maxDate; });
+        Object.values(snaps).forEach(sn => { sn.advisors = sum(Object.values(sn.stores).map(s => Object.keys(s.asesores).length)); sn.maxDate = tot.maxDate; sn.maxUpload = tot.maxUpload || ''; });
         tot.advisors = sum(Object.values(snaps).map(s => s.advisors)); tot.storesN = sum(Object.values(snaps).map(s => Object.keys(s.stores).length));
         return { snaps, tot };
     }
