@@ -10,7 +10,7 @@
 // ============================================================================
 
 registerModule('ventas', (() => {
-    let F = { zona: '', cadena: '', tienda: '', preset: 'hoy', desde: todayStr(), hasta: todayStr() }, tab = 'cero', view = null;
+    let F = { zona: '', cadena: '', tienda: '', preset: 'hoy', desde: todayStr(), hasta: todayStr() }, tab = 'refs', view = null;
     const me = () => State.session;
     const HORA_ABRE = 10, HORA_CIERRA = 21;                  // jornada comercial para "a esta hora debería llevar"
 
@@ -66,6 +66,23 @@ registerModule('ventas', (() => {
         return Object.values(out).sort((a, b) => b.items.length - a.items.length);
     }
 
+    // ---- Venta por referencia y asesor en el rango, con el inventario de la tienda (último cierre)
+    function refsData(D) {
+        const dim = daysInMonth(D[D.length - 1].slice(0, 7)), C = corteOf(), day = Math.max(1, int((C.fecha || D[D.length - 1]).slice(8)));
+        const groups = storesF().map(st => {
+            const A = activeAdvisors(st).map(a => { const v = {}; let tot = 0; D.forEach(d => Object.entries((a.drr || {})[d] || {}).forEach(([k, q]) => { v[k] = (v[k] || 0) + q; tot += q; })); return { nombre: a.nombre, v, tot, ds: typeof DayStatus !== 'undefined' ? DayStatus.ofAdvisor(st, a.nombre, D[D.length - 1]) : null }; }).sort((a, b) => b.tot - a.tot);
+            const venta = {}; A.forEach(a => Object.entries(a.v).forEach(([k, q]) => { venta[k] = (venta[k] || 0) + q; }));
+            const Z = ZoneData.forStore(st.id);
+            return { st, A, venta, inv: st.inventario || {}, mes: (Z && Z.ventas) || {}, tot: sum(Object.values(venta)) };
+        }).filter(g => g.A.length).sort((a, b) => a.st.tienda.localeCompare(b.st.tienda, 'es'));
+        const keys = INFINIX_MODELS.filter(m => groups.some(g => int(g.venta[m.key]) || int(g.inv[m.key]) || int(g.mes[m.key]))).map(m => m.key);
+        const resumen = keys.map(k => { const inv = sum(groups.map(g => int(g.inv[k]))), v = sum(groups.map(g => int(g.venta[k]))), mes = sum(groups.map(g => int(g.mes[k]))), ritmo = mes / day;
+            return { k, name: (INFINIX_MODELS.find(m => m.key === k) || {}).name || k, inv, v, mes, dias: inv > 0 && ritmo > 0 ? Math.round(inv / ritmo) : null, sinRotar: groups.filter(g => int(g.inv[k]) > 0 && !int(g.venta[k])).length }; });
+        const hasDrr = storesF().some(st => activeAdvisors(st).some(a => a.drr && Object.keys(a.drr).length));
+        return { groups, keys, resumen, hasDrr, day, dim };
+    }
+    const refShort = k => ((INFINIX_MODELS.find(m => m.key === k) || {}).name || k).replace(/^Note /i, 'N. ').replace(/ Pro\+$/i, ' P+');
+
     // ---- Plan de acción según quien genera el reporte
     function planAccion(rol, ctx) {
         const top = ctx.tiendas.slice(0, 3).map(t => t.tienda).join(', ') || 'los PDV en cero';
@@ -108,7 +125,7 @@ registerModule('ventas', (() => {
                 <span class="rv-dates"><input type="date" class="input" id="rv-d" value="${F.desde}" max="${todayStr()}"><span>a</span><input type="date" class="input" id="rv-h" value="${F.hasta}" max="${todayStr()}"></span></div>
         </section>
         <section id="rv-status"></section>
-        <nav class="ztabs" id="rv-tabs">${[['cero', '🚫 Venta 0'], ['dia', '📅 Día a día'], ['imei', '📵 IMEI inactivos']].map(([k, l]) => `<button class="ztab ${tab === k ? 'on' : ''}" data-tab2="${k}">${l}</button>`).join('')}</nav>
+        <nav class="ztabs" id="rv-tabs">${[['refs', '📱 Por referencia'], ['dia', '📅 Día a día'], ['imei', '📵 IMEI inactivos']].map(([k, l]) => `<button class="ztab ${tab === k ? 'on' : ''}" data-tab2="${k}">${l}</button>`).join('')}</nav>
         <section class="card" id="rv-body"></section>
         ${actionBarHTML()}`;
         $('#rv-load', v).onclick = () => { navigate('zona'); setTimeout(() => { const f = $('#z-file'); if (f) f.click(); }, 500); };
@@ -127,7 +144,7 @@ registerModule('ventas', (() => {
         ReportActions.bind(v, {
             title: 'Reporte de venta · Central de Operaciones',
             validate: () => hasDr() ? null : 'Carga primero la data plana del día para generar el reporte.',
-            filename: () => `Reporte_${tab === 'cero' ? 'Venta0' : tab === 'dia' ? 'DiaADia' : 'IMEI'}_${slug(F.tienda ? storeById(F.tienda).tienda : F.zona || zonasF().join('_'))}_${F.desde}${F.hasta !== F.desde ? '_' + F.hasta : ''}.png`,
+            filename: () => `Reporte_${tab === 'refs' ? 'Referencias' : tab === 'dia' ? 'DiaADia' : 'IMEI'}_${slug(F.tienda ? storeById(F.tienda).tienda : F.zona || zonasF().join('_'))}_${F.desde}${F.hasta !== F.desde ? '_' + F.hasta : ''}.png`,
             build: stage => buildVentasCanvas(stage, reportData(), me())
         });
         paint();
@@ -148,7 +165,7 @@ registerModule('ventas', (() => {
         const S = status(F.hasta);
         $('#rv-status').innerHTML = (C.fecha && F.hasta > C.fecha ? `<div class="ds-nomalla">⚠️ Tu data llega hasta el <b>${esc(C.fecha)}${C.hora ? ' ' + esc(C.hora) : ''}</b>: lo de ${F.hasta === todayStr() ? 'hoy' : 'después'} aún no está cargado. Carga la data plana del momento para ver el corte real.</div>` : '') + statusHTML(S);
         const D = days(F.desde, F.hasta);
-        $('#rv-body').innerHTML = tab === 'cero' ? ceroHTML(cero(D), D) : tab === 'dia' ? diaHTML(D) : imeiHTML(imei(D), D);
+        $('#rv-body').innerHTML = tab === 'refs' ? refsHTML(refsData(D)) : tab === 'cero' ? ceroHTML(cero(D), D) : tab === 'dia' ? diaHTML(D) : imeiHTML(imei(D), D);
     }
     const rangoTxt = () => F.desde === F.hasta ? fechaLarga(F.desde) : `${fechaLarga(F.desde)} a ${fechaLarga(F.hasta)}`;
     function statusHTML(S) {
@@ -169,6 +186,21 @@ registerModule('ventas', (() => {
             <div class="ds-list">${R.lista.map(x => advRow(x, `<em class="rv-dias ${x.sinVender == null || x.sinVender >= 3 ? 'r' : 'a'}">${x.sinVender == null ? 'sin ventas en el mes' : x.sinVender === 0 ? 'vendió antes en el día' : `${x.sinVender} día${x.sinVender > 1 ? 's' : ''} sin vender`}${x.last ? ` · última ${esc(x.last.slice(5))}` : ''}</em>`)).join('') || '<p class="empty">🎉 Todos los asesores tienen venta en el rango.</p>'}</div>
             ${R.novedad.length ? `<h4 class="sec">Sin venta por compensatorio o novedad</h4><div class="ds-list">${R.novedad.map(x => advRow(x, DayStatus.chip(DayStatus.ofAdvisor(x.st, x.nombre, D[D.length - 1])))).join('')}</div>` : ''}`;
     }
+    function refsHTML(R) {
+        if (!R.hasDrr) return '<p class="empty">Para ver la venta por referencia de cada asesor y día, vuelve a cargar la data plana (desde esta versión se guarda la referencia por día).</p>';
+        const cell = (q, inv) => `<td class="${q ? 'g' : int(inv) > 0 ? 'z' : 'n'}">${q || 0}</td>`;
+        return `<div class="row between wrap"><h3 class="h3">📱 Venta por referencia · ${esc(rangoTxt())}</h3><b>${sum(R.groups.map(g => g.tot))} uds · ${R.groups.length} PDV</b></div>
+            <details class="acc" open><summary><span>📦 Inventario vs. venta por referencia</span></summary>
+            <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>Referencia</th><th>Inventario</th><th>Venta rango</th><th>Venta mes</th><th>Días de inventario</th><th>PDV con inventario sin vender</th></tr></thead><tbody>
+            ${R.resumen.map(r => `<tr><td class="l"><b>${esc(r.name)}</b></td><td><b>${r.inv}</b></td><td><b class="${r.v ? 'g' : r.inv ? 'r' : ''}">${r.v}</b></td><td>${r.mes}</td><td>${r.dias == null ? (r.inv ? '<i class="pill bad">sin rotación</i>' : '—') : `<i class="pill ${r.dias > 30 ? 'bad' : r.dias > 15 ? 'warn' : 'ok'}">${r.dias} d</i>`}</td><td>${r.sinRotar ? `<b class="r">${r.sinRotar}</b>` : '0'}</td></tr>`).join('')}</tbody></table></div></details>
+            ${R.groups.map(g => `<details class="acc rv-refst" ${R.groups.length <= 6 ? 'open' : ''}><summary><span>${storeLogo(g.st, 'xs')} <b>${esc(g.st.tienda)}</b> · ${g.tot} uds</span></summary>
+                <div class="tbl-scroll"><table class="tbl compact rv-grid"><thead><tr><th>Asesor</th>${R.keys.map(k => `<th>${esc(refShort(k))}</th>`).join('')}<th>Total</th></tr></thead><tbody>
+                <tr class="rv-inv"><td class="l">📦 Inventario</td>${R.keys.map(k => `<td><b>${int(g.inv[k])}</b></td>`).join('')}<td><b>${sum(R.keys.map(k => int(g.inv[k])))}</b></td></tr>
+                <tr class="rv-sum"><td class="l">🛒 Venta tienda</td>${R.keys.map(k => `<td><b>${int(g.venta[k])}</b></td>`).join('')}<td><b>${g.tot}</b></td></tr>
+                ${g.A.map(a => `<tr><td class="l"><b>${esc(a.nombre)}</b>${a.ds && a.ds.off ? ' ' + DayStatus.chip(a.ds) : ''}</td>${R.keys.map(k => cell(int(a.v[k]), g.inv[k])).join('')}<td><b>${a.tot}</b></td></tr>`).join('')}
+                </tbody></table></div></details>`).join('') || '<p class="empty">Sin asesores en el filtro.</p>'}
+            <p class="hint">0 en rojo = la tienda tiene inventario de esa referencia y el asesor no la vendió en el rango. Inventario = último cierre de la tienda. Días de inventario = inventario ÷ venta diaria del mes.</p>`;
+    }
     function diaHTML(D) {
         const A = advisorsF().map(x => ({ ...x, v: ventaRango(x, D) })).sort((a, b) => a.v - b.v || a.st.tienda.localeCompare(b.st.tienda, 'es'));
         const cols = D.slice(-14);
@@ -185,12 +217,14 @@ registerModule('ventas', (() => {
                 <table class="tbl compact"><tbody>${g.items.map(r => `<tr><td class="l"><code>${esc(r.imei || '—')}</code></td><td class="l">${esc(r.ref || '')}</td><td>${esc((r.f || '').slice(5))}${r.h ? ' ' + esc(r.h) : ''}</td></tr>`).join('')}</tbody></table></div>`).join('') || '<p class="empty">Sin IMEI inactivos en el rango.</p>'}`;
     }
     function reportData() {
-        const D = days(F.desde, F.hasta), S = status(F.hasta), R = cero(D), I = imei(D);
+        const D = days(F.desde, F.hasta), S = status(F.hasta), R = cero(D), I = imei(D), RF = refsData(D);
         const byStore = {}; R.lista.forEach(x => { byStore[x.st.id] = byStore[x.st.id] || { tienda: x.st.tienda, n: 0 }; byStore[x.st.id].n++; });
         const zs = storesF(), refs = INFINIX_MODELS.map(m => ({ name: m.name, gap: sum(zs.map(st => int(st.metas && st.metas[m.key]) - int(((ZoneData.forStore(st.id) || {}).ventas || {})[m.key]))) })).sort((a, b) => b.gap - a.gap);
         const ctx = { n: R.lista.length, tiendas: Object.values(byStore).sort((a, b) => b.n - a.n), foco: refs[0] && refs[0].gap > 0 ? refs[0].name : '', hora: S.hora, metaDia: S.metaDia, imei: sum(I.map(g => g.items.length)) };
         const C = corteOf();
-        return { tab, F: { ...F }, D, S, R, I, aviso: C.fecha && F.hasta > C.fecha ? `Data hasta el ${C.fecha}${C.hora ? ' ' + C.hora : ''}` : '', plan: planAccion(me().rol, ctx), zonas: zonasF(), filtro: [F.cadena ? (chainList(scopedStores()).find(c => c.key === F.cadena) || {}).label : '', F.tienda ? storeById(F.tienda).tienda : ''].filter(Boolean).join(' · '), rango: rangoTxt(), dayList: D };
+        const lentas = RF.resumen.filter(r => r.inv > 0).sort((a, b) => (b.dias ?? 999) - (a.dias ?? 999)).slice(0, 2);
+        const planR = tab === 'refs' && lentas.length ? lentas.map(r => `${r.name}: ${r.inv} uds en inventario y ${r.v} vendidas en el rango${r.sinRotar ? ` (${r.sinRotar} PDV sin venderla)` : ''}. Presión con cada asesor que tiene 0: meta de 1 unidad hoy, demo en mesa y argumento frente a la competencia.`) : [];
+        return { tab, F: { ...F }, D, S, R, I, RF, aviso: C.fecha && F.hasta > C.fecha ? `Data hasta el ${C.fecha}${C.hora ? ' ' + C.hora : ''}` : '', plan: planR.concat(planAccion(me().rol, ctx)).slice(0, 6), zonas: zonasF(), filtro: [F.cadena ? (chainList(scopedStores()).find(c => c.key === F.cadena) || {}).label : '', F.tienda ? storeById(F.tienda).tienda : ''].filter(Boolean).join(' · '), rango: rangoTxt(), dayList: D };
     }
     return { render, onData: () => { if (view && view.isConnected && !$('#modal-root').children.length) paint(); } };
 })());
@@ -198,13 +232,21 @@ registerModule('ventas', (() => {
 // ---------- Lienzo del reporte de venta (para compartir en los grupos) ----------
 function buildVentasCanvas(stage, d, autor) {
     const S = d.S, dash = '—', pc = v => Math.round(v * 100) + '%', ritmo = S.deberia ? S.ventaHoy / S.deberia : null;
-    const kind = d.tab === 'cero' ? 'VENTA 0' : d.tab === 'dia' ? 'VENTA DÍA A DÍA' : 'IMEI SIN ACTIVAR';
+    const kind = d.tab === 'refs' ? 'VENTA POR REFERENCIA' : d.tab === 'cero' ? 'VENTA 0' : d.tab === 'dia' ? 'VENTA DÍA A DÍA' : 'IMEI SIN ACTIVAR';
     const row0 = x => `<tr><td class="l"><b>${esc(x.nombre)}</b></td><td class="l">${esc(x.st.tienda)}</td><td class="l small">${esc(chainGroup(x.st).label)}</td><td class="c-tot ${x.sinVender == null || x.sinVender >= 3 ? 'r' : 'a'}">${x.sinVender == null ? 'sin ventas' : x.sinVender === 0 ? 'hoy' : x.sinVender + ' d'}</td><td>${x.last ? esc(x.last.slice(5)) : dash}</td></tr>`;
     const cols = d.dayList.slice(-14);
     let body = '';
     if (d.tab === 'cero') body = `<div class="rp-sec">ASESORES EN VENTA 0 · ${esc(d.rango.toUpperCase())} · ${d.R.lista.length} DE ${d.R.total}</div>
         <table class="rp-tbl sp-tbl"><thead><tr><th class="l">ASESOR</th><th class="l">TIENDA</th><th class="l">CADENA</th><th class="c-tot">SIN VENDER</th><th>ÚLTIMA VENTA</th></tr></thead><tbody>${d.R.lista.map(row0).join('') || '<tr><td colspan="5">Todos los asesores tienen venta en el rango 🎉</td></tr>'}</tbody></table>
         ${d.R.novedad.length ? `<p class="rv-note">Sin venta por compensatorio o novedad: ${d.R.novedad.map(x => esc(x.nombre.split(' ').slice(0, 2).join(' '))).join(', ')}.</p>` : ''}`;
+    else if (d.tab === 'refs') { const R = d.RF, nm = k => ((INFINIX_MODELS.find(m => m.key === k) || {}).name || k);
+        body = `<div class="rp-sec">INVENTARIO VS. VENTA POR REFERENCIA · ${esc(d.rango.toUpperCase())}</div>
+        <table class="rp-tbl sp-tbl"><thead><tr><th class="l">REFERENCIA</th><th>INVENTARIO</th><th class="c-tot">VENTA RANGO</th><th>VENTA MES</th><th>DÍAS DE INVENTARIO</th><th>PDV SIN VENDER</th></tr></thead><tbody>${R.resumen.map(r => `<tr><td class="l"><b>${esc(r.name)}</b></td><td><b>${r.inv}</b></td><td class="c-tot ${r.v ? '' : r.inv ? 'r' : ''}"><b>${r.v}</b></td><td>${r.mes}</td><td class="${r.dias == null ? (r.inv ? 'r' : '') : r.dias > 30 ? 'r' : r.dias > 15 ? 'a' : 'g'}">${r.dias == null ? (r.inv ? 'sin rotación' : dash) : r.dias + ' d'}</td><td class="${r.sinRotar ? 'r' : ''}">${r.sinRotar}</td></tr>`).join('')}</tbody></table>
+        ${R.groups.map(g => `<div class="rp-sec light">${esc(g.st.tienda.toUpperCase())} · ${g.tot} UDS</div>
+        <table class="rp-tbl sp-tbl rv-gridp"><thead><tr><th class="l">ASESOR</th>${R.keys.map(k => `<th>${esc(nm(k).toUpperCase())}</th>`).join('')}<th class="c-tot">TOTAL</th></tr></thead><tbody>
+        <tr class="rv-inv"><td class="l"><b>📦 INVENTARIO</b></td>${R.keys.map(k => `<td><b>${int(g.inv[k])}</b></td>`).join('')}<td class="c-tot"><b>${sum(R.keys.map(k => int(g.inv[k])))}</b></td></tr>
+        <tr class="rv-sum"><td class="l"><b>🛒 VENTA TIENDA</b></td>${R.keys.map(k => `<td><b>${int(g.venta[k])}</b></td>`).join('')}<td class="c-tot"><b>${g.tot}</b></td></tr>
+        ${g.A.map(a => `<tr><td class="l"><b>${esc(a.nombre)}</b></td>${R.keys.map(k => { const q = int(a.v[k]); return `<td class="${q ? 'g' : int(g.inv[k]) > 0 ? 'r' : ''}">${q}</td>`; }).join('')}<td class="c-tot"><b>${a.tot}</b></td></tr>`).join('')}</tbody></table>`).join('')}`; }
     else if (d.tab === 'dia') { const A = advisorsAll(d); body = `<div class="rp-sec">VENTA POR ASESOR Y DÍA · ${esc(d.rango.toUpperCase())}</div>
         <table class="rp-tbl sp-tbl rv-gridp"><thead><tr><th class="l">ASESOR</th><th class="l">TIENDA</th>${cols.map(x => `<th>${x.slice(8)}</th>`).join('')}<th class="c-tot">TOTAL</th></tr></thead><tbody>${A.map(x => `<tr><td class="l"><b>${esc(x.nombre)}</b></td><td class="l small">${esc(x.st.tienda)}</td>${cols.map(c => `<td class="${int(x.dr[c]) ? '' : 'r'}">${int(x.dr[c])}</td>`).join('')}<td class="c-tot"><b>${sum(cols.map(c => int(x.dr[c])))}</b></td></tr>`).join('')}</tbody></table>`; }
     else body = `<div class="rp-sec">IMEI SIN ACTIVAR · ${esc(d.rango.toUpperCase())} · ${sum(d.I.map(g => g.items.length))} IMEI</div>

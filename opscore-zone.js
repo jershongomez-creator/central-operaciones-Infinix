@@ -197,7 +197,7 @@ const ZoneData = (() => {
             if (P.cedula) { A.cedula = P.cedula; S.cedulas[adv] = P.cedula; }
             A.total += qty; if (mk) A.ventas[mk] = (A.ventas[mk] || 0) + qty;
             if (wk) { A.sem = A.sem || {}; A.sem[wk] = (A.sem[wk] || 0) + qty; if (mk) { A.semRef = A.semRef || {}; const sr = A.semRef[wk] = A.semRef[wk] || {}; sr[mk] = (sr[mk] || 0) + qty; } }
-            if (rd) { A.dr = A.dr || {}; A.dr[rd] = (A.dr[rd] || 0) + qty; S.dr = S.dr || {}; S.dr[rd] = (S.dr[rd] || 0) + qty; if (ut) { A.lastAt = (A.lastAt || '') > rd + ' ' + ut ? A.lastAt : rd + ' ' + ut; } }
+            if (rd) { A.dr = A.dr || {}; A.dr[rd] = (A.dr[rd] || 0) + qty; if (mk) { A.drr = A.drr || {}; const o = A.drr[rd] = A.drr[rd] || {}; o[mk] = (o[mk] || 0) + qty; } S.dr = S.dr || {}; S.dr[rd] = (S.dr[rd] || 0) + qty; if (ut) { A.lastAt = (A.lastAt || '') > rd + ' ' + ut ? A.lastAt : rd + ' ' + ut; } }
             // IMEI sin activar: se guardan para el reporte (el asesor pide factura o soporte para no perder la venta)
             if (map.activation !== undefined && /NOT|NO /i.test(get('activation'))) { S.inact = S.inact || []; if (S.inact.length < 400) S.inact.push({ imei: get('imei'), ref: get('ref'), f: rd || d, a: adv, h: ut }); }
             snap.rowsUsed += qty; tot.rowsUsed += qty;
@@ -236,7 +236,7 @@ const ZoneData = (() => {
                 const D = snap.stores[d.id] = snap.stores[d.id] || { storeId: d.id, tienda: d.tienda, total: 0, ventas: {}, otros: 0, asesores: {}, refsOtras: {}, accesorios: {}, cedulas: {} };
                 D.total += S.total || 0; D.otros = (D.otros || 0) + (S.otros || 0);
                 ['ventas', 'refsOtras', 'accesorios', 'sem', 'dias', 'diasRef'].forEach(k => { if (S[k]) D[k] = addMap(D[k] || {}, S[k]); });
-                Object.values(S.asesores || {}).forEach(x => { const A = D.asesores[x.nombre] = D.asesores[x.nombre] || { nombre: x.nombre, cedula: x.cedula, total: 0, ventas: {} }; A.total += x.total || 0; A.ventas = addMap(A.ventas || {}, x.ventas); if (x.sem) A.sem = addMap(A.sem || {}, x.sem); if (x.semRef) A.semRef = addMap(A.semRef || {}, x.semRef); });
+                Object.values(S.asesores || {}).forEach(x => { const A = D.asesores[x.nombre] = D.asesores[x.nombre] || { nombre: x.nombre, cedula: x.cedula, total: 0, ventas: {} }; A.total += x.total || 0; A.ventas = addMap(A.ventas || {}, x.ventas); if (x.sem) A.sem = addMap(A.sem || {}, x.sem); if (x.drr) A.drr = addMap(A.drr || {}, x.drr); if (x.dr) A.dr = addMap(A.dr || {}, x.dr); if (x.semRef) A.semRef = addMap(A.semRef || {}, x.semRef); });
             }
             delete snap.stores[st.id];
         });
@@ -536,7 +536,7 @@ registerModule('zona', (() => {
         radarData = Advisor.scan(viewStores()); if (RV.salesOnly) radarData.list.sort((a, b) => (a.pacing.indice ?? 9) - (b.pacing.indice ?? 9));
         const critA = radarData.list.filter(d => levelOf(d)[0] === 'rojo').slice(0, 4), critS = an.rows.slice().sort((a, b) => b.prio - a.prio).slice(0, 4);
         const pc = Advisor.pc;
-        const tabs = [['resumen', '📋 Resumen'], ['asesores', `👥 Asesores (${radarData.list.length})`], ['tiendas', `🏬 Tiendas (${an.rows.length})`], ['share', '📊 Share real']].concat(canPlan ? [['plan', '☀️ Plan de trabajo']] : []).concat([['reportes', '📤 Reportes']]);
+        const tabs = [['resumen', '📋 Resumen'], ['asesores', `👥 Asesores (${radarData.list.length})`], ['tiendas', `🏬 Tiendas (${an.rows.length})`], ['share', '📊 Share real'], ['versus', '⚔️ Infinix vs competencia']].concat(canPlan ? [['plan', '☀️ Plan de trabajo']] : []).concat([['reportes', '📤 Reportes']]);
         if (!tabs.some(x => x[0] === ztab)) ztab = 'resumen';
         out.innerHTML = `
         <section class="kpi-row six">
@@ -579,21 +579,22 @@ registerModule('zona', (() => {
         <div class="zpanel" data-zp="asesores" ${ztab === 'asesores' ? '' : 'hidden'}><div id="z-radar"></div></div>
 
         <div class="zpanel" data-zp="tiendas" ${ztab === 'tiendas' ? '' : 'hidden'}>
-            <div id="z-adm"></div>
-            <section class="card"><h3 class="h3">Ranking de PDV <small class="mute">por proyección de cierre</small></h3>
+            <details class="card acc" open><summary><span>🏆 Ranking de PDV · cumplimiento, proyección, ROI y referencia rezagada</span></summary>
                 <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>#</th><th>PDV</th>${multi ? '<th>Zona</th>' : ''}<th>Estado</th><th>Target</th><th>Venta</th><th>Proy.</th><th>Cumpl.</th><th>ROI</th><th>Ref. rezagada</th></tr></thead><tbody>
                 ${an.ranking.map((r, i) => `<tr><td>${i + 1}</td><td class="l"><div class="row" style="gap:6px;flex-wrap:nowrap">${storeLogo(r.st, 'xs')}<b>${esc(r.st.tienda)}</b></div><small class="mute">${r.asesores.map(a => `${esc(a.nombre.split(' ')[0])} ${a.total}`).join(' · ') || 'sin asesores en la data'}</small></td>${multi ? `<td><small>${esc(r.zona)}</small></td>` : ''}<td>${stTag(r.status)}</td><td>${r.meta || '—'}</td><td><b>${r.venta}</b></td><td>${r.proj}</td><td>${pill(r.cumplProj)}</td><td>${fmt1(r.roi)}</td><td><small>${r.rezagadas.map(x => esc(x.name)).join(', ')}</small></td></tr>`).join('')}
-                </tbody></table></div></section>
+                </tbody></table></div></details>
             <details class="card acc"><summary><span>📊 Cumplimiento proyectado por PDV (gráfica)</span></summary><div class="chart-box" style="height:${Math.min(900, Math.max(220, an.rows.length * 24))}px"><canvas id="z-bars"></canvas></div></details>
             <details class="card acc"><summary><span>📦 Referencias de ${esc(viewLabel())} · venta vs. target</span></summary>
                 <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>Referencia</th><th>Target</th><th>Venta</th><th>Proy.</th><th>Cumpl.</th><th>Share</th></tr></thead><tbody>
                 ${an.refsZona.map(r => `<tr><td class="l"><b>${esc(r.name)}</b></td><td>${r.meta || '—'}</td><td><b>${r.venta}</b></td><td>${r.proj}</td><td>${pill(r.cumpl)}</td><td>${r.share}%</td></tr>`).join('')}
                 </tbody></table></div></details>
+            <div id="z-adm"></div>
         </div>
 
         ${canPlan ? `<div class="zpanel" data-zp="plan" ${ztab === 'plan' ? '' : 'hidden'}><section class="card" id="z-planbox"></section></div>` : ''}
 
         <div class="zpanel" data-zp="share" ${ztab === 'share' ? '' : 'hidden'}><section class="card"><h3 class="h3">📊 Market share real y alertas de reporte</h3><div id="z-share"></div></section></div>
+        <div class="zpanel" data-zp="versus" ${ztab === 'versus' ? '' : 'hidden'}><section class="card"><h3 class="h3">⚔️ Infinix vs. competencia · referencias más vendidas</h3><div id="z-versus"></div></section></div>
 
         <div class="zpanel" data-zp="reportes" ${ztab === 'reportes' ? '' : 'hidden'}>
             <div class="grid2">
@@ -611,6 +612,7 @@ registerModule('zona', (() => {
         if (typeof paintAdmZone === 'function') paintAdmZone($('#z-adm'), an.rows.map(r => r.st), viewLabel());
         paintRadar();
         if (ztab === 'share' && typeof paintRealShare === 'function') paintRealShare($('#z-share'), an.rows.map(r => r.st), viewLabel());
+        if (ztab === 'versus' && typeof paintVersus === 'function') paintVersus($('#z-versus'), an.rows.map(r => r.st), viewLabel());
         paintQuick();
         paintPlanBox();
         paintAdvBtn();
@@ -634,6 +636,7 @@ registerModule('zona', (() => {
     function showTab(k) {
         ztab = k;
         if (k === 'share' && typeof paintRealShare === 'function' && an) paintRealShare($('#z-share'), an.rows.map(r => r.st), viewLabel());
+        if (k === 'versus' && typeof paintVersus === 'function' && an) paintVersus($('#z-versus'), an.rows.map(r => r.st), viewLabel());
         $$('#z-tabs [data-ztab]').forEach(b => b.classList.toggle('on', b.dataset.ztab === k));
         $$('#z-out .zpanel').forEach(p => { p.hidden = p.dataset.zp !== k; });
         const nav = $('#z-tabs'); if (nav && nav.getBoundingClientRect().top < 0) nav.scrollIntoView({ behavior: 'smooth' });
@@ -647,7 +650,7 @@ registerModule('zona', (() => {
         const nA = planMore ? 20 : 4, nS = planMore ? 20 : 4;
         box.innerHTML = `<div class="row between wrap" style="gap:8px"><h3 class="h3">☀️ Armar el plan de trabajo</h3>
             <div class="seg sm"><button class="seg-btn ${planBy === 'asesor' ? 'active' : ''}" data-planby="asesor">Por asesor</button><button class="seg-btn ${planBy === 'tienda' ? 'active' : ''}" data-planby="tienda">Por tienda</button></div></div>
-            <p class="mute">Marca a quién vas a trabajar (máximo 5 tiendas por día). El plan se abre con todo pre-llenado.</p>
+            <p class="mute">Marca a quién vas a trabajar (máximo 8 tiendas por día). El plan se abre con todo pre-llenado.</p>
             ${planBy === 'asesor' ? `<div class="mini-list">${listA.slice(0, nA).map(d => `<label class="mini pick ${radarSel.has(d.id) ? 'on' : ''}"><input type="checkbox" data-rsel="${esc(d.id)}" ${radarSel.has(d.id) ? 'checked' : ''}>${advisorAvatar(d.storeId, d.nombre, 36)}<span class="mini-t"><b>${esc(d.nombre)}</b><small>${esc(d.pdv.tienda)}</small></span><span class="mini-n"><b class="${d.pacing.indice < .85 ? 'r' : 'a'}">${pc(d.pacing.cumpl)}</b><small>${d.pacing.venta}/${d.pacing.meta}</small></span></label>`).join('')}</div>
                 <div class="row between wrap" style="margin-top:10px;gap:8px">${listA.length > 4 ? `<button class="btn btn-link sm" data-planmore="1">${planMore ? 'Ver solo los 4 más críticos' : `Ver más (${Math.min(20, listA.length)})`}</button>` : '<span></span>'}<button class="btn btn-dark" id="z-radar-plan">☀️ Crear plan con ${radarSel.size} asesor(es)</button></div>`
             : `<div class="mini-list">${listS.slice(0, nS).map(r => `<label class="mini pick ${selected.has(r.st.id) ? 'on' : ''}"><input type="checkbox" data-sel="${esc(r.st.id)}" ${selected.has(r.st.id) ? 'checked' : ''}>${storeLogo(r.st, 'xs')}<span class="mini-t"><b>${esc(r.st.tienda)}</b><small>${STATUS[r.status][0]} · foco ${esc(r.foco.name)}</small></span><span class="mini-n"><b class="${r.cumplProj != null && r.cumplProj < .7 ? 'r' : 'a'}">${pc(r.cumplProj)}</b><small>proy.</small></span></label>`).join('')}</div>
@@ -798,12 +801,12 @@ registerModule('zona', (() => {
         const x = $('#z-adv-x', box); if (x) x.onclick = () => { advSel = new Set(); paintAdvBtn(); paintAdvPanel(); };
     }
 
-    // Envía los asesores elegidos al Plan de trabajo (agrupados por tienda: máximo 5 tiendas por día)
+    // Envía los asesores elegidos al Plan de trabajo (agrupados por tienda: máximo 8 tiendas por día)
     async function radarToPlan() {
         if (!radarSel.size) return toast('Marca al menos un asesor.', 'warn');
         const by = {}; radarData.list.filter(d => radarSel.has(d.id)).forEach(d => { (by[d.storeId] = by[d.storeId] || []).push(d.nombre); });
         const items = Object.entries(by).map(([storeId, asesores]) => ({ storeId, asesores }));
-        if (items.length > 5) return toast(`El plan admite máximo 5 tiendas por día; elegiste asesores de ${items.length}.`, 'warn', 5000);
+        if (items.length > 8) return toast(`El plan admite máximo 8 tiendas por día; elegiste asesores de ${items.length}.`, 'warn', 5000);
         if (!ROLES[me().rol].modules.includes('m2')) return toast('Tu cargo no diligencia plan de trabajo.', 'warn');
         await persistSnaps();
         Modules.m2.prefill(items);
@@ -825,7 +828,7 @@ registerModule('zona', (() => {
     // Pasa las tiendas elegidas al plan de trabajo con la data real
     async function toPlan() {
         if (!selected.size) return toast('Elige al menos un PDV.', 'warn');
-        if (selected.size > 5) return toast('El plan admite máximo 5 tiendas por día.', 'warn');
+        if (selected.size > 8) return toast('El plan admite máximo 8 tiendas por día.', 'warn');
         if (!ROLES[me().rol].modules.includes('m2')) return toast('Tu cargo no diligencia plan de trabajo.', 'warn');
         await persistSnaps();
         Modules.m2.prefill([...selected]);

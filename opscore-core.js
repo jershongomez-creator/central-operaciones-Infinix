@@ -354,6 +354,12 @@ const Data = (() => {
             catch (e2) { return memList(col, filters); }
         }
     }
+    async function getRaw(col, id) {
+        if (mem[col] && mem[col][id]) return mem[col][id];
+        if (!db) return null;
+        try { const sn = await withTimeout(db.collection(col).doc(id).get()); setOnline(true); return sn.exists ? { ...sn.data(), id } : null; }
+        catch (e) { setOnline(false, e); try { const sn = await db.collection(col).doc(id).get({ source: 'cache' }); return sn.exists ? { ...sn.data(), id } : null; } catch (e2) { return null; } }
+    }
     async function delRaw(col, id) {
         if (mem[col]) delete mem[col][id];
         if (!db) return { synced: false };
@@ -362,7 +368,7 @@ const Data = (() => {
     }
 
     return {
-        init, fetch, list, get, set, del, batch, flush, watch, setRaw, listRaw, delRaw, hasCloud: () => !!db, denied: () => denied,
+        init, fetch, list, get, set, del, batch, flush, watch, setRaw, listRaw, getRaw, delRaw, hasCloud: () => !!db, denied: () => denied,
         local: col => Object.values(readCache(col)),
         seedLocal: (col, docs) => { const c = readCache(col); docs.forEach(d => { if (!c[d.id]) c[d.id] = d; }); writeCache(col, c); },
         onStatus: fn => { listeners.push(fn); if (online !== null) fn(online); },
@@ -485,7 +491,7 @@ function storeAdvisors(st) {
     const cfg = (st.asesores && st.asesores.length) ? st.asesores : (st.asesoresSeed || []);
     cfg.forEach(n => { const a = push(n, (st.cedulas || {})[n]); if (a) a.asignado = true; });
     const Z = typeof ZoneData !== 'undefined' ? ZoneData.forStore(st.id) : null;
-    const addV = (a, x) => { if (x.dr) { a.dr = { ...(a.dr || {}) }; Object.entries(x.dr).forEach(([k, v]) => { a.dr[k] = (a.dr[k] || 0) + v; }); } if (x.lastAt && (x.lastAt > (a.lastAt || ''))) a.lastAt = x.lastAt; a.total += x.total || 0; a.ventas = { ...(a.ventas || {}) }; Object.entries(x.ventas || {}).forEach(([k, v]) => { a.ventas[k] = (a.ventas[k] || 0) + (v || 0); }); a.sem = { ...(a.sem || {}) }; Object.entries(x.sem || {}).forEach(([k, v]) => { a.sem[k] = (a.sem[k] || 0) + (v || 0); }); a.semRef = JSON.parse(JSON.stringify(a.semRef || {})); Object.entries(x.semRef || {}).forEach(([w, r]) => { const o = a.semRef[w] = a.semRef[w] || {}; Object.entries(r).forEach(([k, v]) => { o[k] = (o[k] || 0) + v; }); }); };
+    const addV = (a, x) => { if (x.dr) { a.dr = { ...(a.dr || {}) }; Object.entries(x.dr).forEach(([k, v]) => { a.dr[k] = (a.dr[k] || 0) + v; }); } if (x.drr) { a.drr = JSON.parse(JSON.stringify(a.drr || {})); Object.entries(x.drr).forEach(([d, r]) => { const o = a.drr[d] = a.drr[d] || {}; Object.entries(r).forEach(([k, v]) => { o[k] = (o[k] || 0) + v; }); }); } if (x.lastAt && (x.lastAt > (a.lastAt || ''))) a.lastAt = x.lastAt; a.total += x.total || 0; a.ventas = { ...(a.ventas || {}) }; Object.entries(x.ventas || {}).forEach(([k, v]) => { a.ventas[k] = (a.ventas[k] || 0) + (v || 0); }); a.sem = { ...(a.sem || {}) }; Object.entries(x.sem || {}).forEach(([k, v]) => { a.sem[k] = (a.sem[k] || 0) + (v || 0); }); a.semRef = JSON.parse(JSON.stringify(a.semRef || {})); Object.entries(x.semRef || {}).forEach(([w, r]) => { const o = a.semRef[w] = a.semRef[w] || {}; Object.entries(r).forEach(([k, v]) => { o[k] = (o[k] || 0) + v; }); }); };
     if (Z && Z.asesores) Object.values(Z.asesores).forEach(x => { const a = push(x.nombre, x.cedula); if (a) addV(a, x); });
     (st.bajas || []).forEach(b => push(b.nombre, b.cedula));
     out.forEach(a => { a.activo = !isBaja(st, a.nombre, a.cedula) && !a.alias.some(n => isBaja(st, n, a.cedula)); });
@@ -1254,28 +1260,76 @@ const semaforo = ratio => ratio >= 1 ? { color: THEME.green, label: 'En meta', c
 
 // ---------- Motor de exportación gráfica (html2canvas) ------------------------
 const Exporter = {
-    // Resolución: 4K de ancho (3840 px) y nunca menos de 2x; se limita a lo que el navegador puede dibujar
-    // (iPhone ≈ 16 MP por lienzo; Android y PC mucho más) para que los reportes largos no fallen.
+    // Calidad para WhatsApp: en HD manda hasta 4096 px por el lado más largo (en calidad estándar, 1600 px).
+    // Cada imagen sale con su lado más largo en 4096 px; si el reporte es muy largo se parte en varias imágenes
+    // (cortando entre secciones o entre filas de tabla) para que al llegar al teléfono se lea sin hacer zoom.
+    WA_MAX: 4096, RATIO: 1.4,
+    iOS() { return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); },
     scaleFor(w, h) {
-        const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-        const maxArea = iOS ? 16.5e6 : 110e6, maxDim = iOS ? 8190 : 16000;
-        let sc = Math.min(4, Math.max(2, 3840 / Math.max(1, w)));
+        const maxArea = this.iOS() ? 16.5e6 : 110e6, maxDim = this.iOS() ? 8190 : 16000;
+        let sc = Math.max(1.5, this.WA_MAX / Math.max(1, w, h));
         sc = Math.min(sc, maxDim / Math.max(w, h), Math.sqrt(maxArea / Math.max(1, w * h)));
         return Math.max(1, Math.round(sc * 100) / 100);
     },
-    async render(build) {
+    async ready(el) {
+        await Promise.all($$('img', el).map(img => img.complete ? null : new Promise(r => { img.onload = img.onerror = r; })));
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    },
+    shot(el) {
+        return html2canvas(el, { scale: this.scaleFor(el.offsetWidth, el.offsetHeight), backgroundColor: '#FFFFFF', useCORS: true, logging: false,
+            width: el.offsetWidth, height: el.offsetHeight, windowWidth: el.offsetWidth + 80, scrollX: 0, scrollY: 0 });
+    },
+    // Parte un reporte largo en páginas: encabezado y pie se repiten; las tablas largas se cortan por filas
+    paginate(el, stage) {
+        $$('canvas', el).forEach(c => { try { const img = new Image(); img.src = c.toDataURL('image/png'); img.style.width = c.offsetWidth + 'px'; img.style.height = c.offsetHeight + 'px'; img.style.display = 'block'; c.replaceWith(img); } catch (e) { } });
+        const kids = [...el.children], W = el.offsetWidth, top0 = el.getBoundingClientRect().top;
+        let i = 0; while (i < kids.length && (kids[i].classList.contains('rp-bar') || kids[i].classList.contains('rp-head'))) i++;
+        let j = kids.length; while (j > i && (kids[j - 1].classList.contains('rp-bar') || kids[j - 1].classList.contains('rp-foot'))) j--;
+        const head = kids.slice(0, i), body = kids.slice(i, j), foot = kids.slice(j);
+        if (!body.length) return [el];
+        const T = x => x.getBoundingClientRect().top - top0, endY = foot.length ? T(foot[0]) : el.offsetHeight;
+        const hh = T(body[0]), fh = el.offsetHeight - endY, budget = Math.max(400, Math.round(W * this.RATIO) - hh - fh);
+        let blocks = body.map((b, k) => ({ el: b, h: (k + 1 < body.length ? T(body[k + 1]) : endY) - T(b) }));
+        // Tablas más altas que una página: se cortan por filas (cada trozo repite el encabezado de la tabla)
+        blocks = blocks.flatMap(B => {
+            if (B.el.tagName !== 'TABLE' || B.h <= budget * .9) return [B];
+            const thead = $('thead', B.el), rows = $$('tbody > tr', B.el); if (rows.length < 4) return [B];
+            const th = thead ? thead.offsetHeight : 0, out = []; let cur = [], ch = th;
+            rows.forEach(r => { const rh = r.offsetHeight; if (cur.length && ch + rh > budget * .9) { out.push(cur); cur = []; ch = th; } cur.push(r); ch += rh; });
+            if (cur.length) out.push(cur);
+            return out.map(rs => { const t = B.el.cloneNode(false); if (thead) t.appendChild(thead.cloneNode(true)); const tb = document.createElement('tbody'); rs.forEach(r => tb.appendChild(r.cloneNode(true))); t.appendChild(tb); return { el: t, h: th + sum(rs.map(r => r.offsetHeight)) + 4, clone: true }; });
+        });
+        // Un título de sección nunca queda solo al final de una página
+        const pages = []; let pg = [], used = 0;
+        for (let k = 0; k < blocks.length; k++) {
+            const B = blocks[k], isSec = B.el.classList && B.el.classList.contains('rp-sec'), need = B.h + (isSec && blocks[k + 1] ? Math.min(blocks[k + 1].h, budget * .3) : 0);
+            if (pg.length && used + need > budget) { pages.push(pg); pg = []; used = 0; }
+            pg.push(B); used += B.h;
+        }
+        if (pg.length) pages.push(pg);
+        if (pages.length < 2) return [el];
+        return pages.map((P, n) => {
+            const page = el.cloneNode(false);
+            head.forEach(h => page.appendChild(h.cloneNode(true)));
+            const sub = $('.rp-sub', page) || $('.rp-kicker', page); if (sub) sub.insertAdjacentHTML('beforeend', ` · <b>parte ${n + 1} de ${pages.length}</b>`);
+            P.forEach(B => page.appendChild(B.clone ? B.el : B.el.cloneNode(true)));
+            foot.forEach(f => page.appendChild(f.cloneNode(true)));
+            stage.appendChild(page); return page;
+        });
+    },
+    async renderPages(build) {
         const stage = $('#stage');
         stage.innerHTML = ''; Charts.destroyAll('stage');
         const el = await build(stage);
-        await Promise.all($$('img', el).map(img => img.complete ? null : new Promise(r => { img.onload = img.onerror = r; })));
-        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-        const canvas = await html2canvas(el, {
-            scale: this.scaleFor(el.offsetWidth, el.offsetHeight), backgroundColor: '#FFFFFF', useCORS: true, logging: false,
-            width: el.offsetWidth, height: el.offsetHeight, windowWidth: el.offsetWidth + 80, scrollX: 0, scrollY: 0
-        });
+        await this.ready(el);
+        const pages = el.classList.contains('rp') && el.offsetHeight > el.offsetWidth * (this.RATIO + .15) ? this.paginate(el, stage) : [el];
+        if (pages.length > 1) { el.remove(); await this.ready(stage); }
+        const out = [];
+        for (const p of pages) out.push(await this.shot(p));
         Charts.destroyAll('stage'); stage.innerHTML = '';
-        return canvas;
-    }
+        return out;
+    },
+    async render(build) { return (await this.renderPages(build))[0]; }
 };
 
 // Descarga de archivos. En un navegador normal (GitHub Pages) usa un enlace de descarga.
@@ -1325,7 +1379,6 @@ const actionBarHTML = () => `
         <button class="btn btn-ghost" data-act="preview">👁️ Vista previa</button>
         <button class="btn btn-wa" data-act="share">📲 Compartir en WhatsApp</button>
         <button class="btn btn-primary" data-act="save">💾 Guardar imagen</button>
-        <button class="btn btn-ghost" data-act="pdf" title="Para reportes largos: WhatsApp lo envía como documento y no pierde calidad">📄 PDF</button>
     </div>`;
 
 const ReportActions = {
@@ -1340,11 +1393,13 @@ const ReportActions = {
         $$('[data-act]', root).forEach(btn => btn.onclick = () => this.run(btn.dataset.act, cfg, btn));
     },
     async make(cfg, pdf) {
-        const canvas = await Exporter.render(cfg.build);
-        if (pdf) return { blob: await canvasToPdf(canvas) };
-        const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
-        return { blob, url: URL.createObjectURL(blob) };
+        const canvases = await Exporter.renderPages(cfg.build);
+        if (pdf) return { blob: await canvasToPdf(canvases[0]) };
+        const blobs = [];
+        for (const c of canvases) blobs.push(await new Promise(r => c.toBlob(r, 'image/png')));
+        return { blob: blobs[0], url: URL.createObjectURL(blobs[0]), blobs, urls: blobs.map(b => URL.createObjectURL(b)) };
     },
+    names(out, cfg) { const n = cfg.filename(), k = out.blobs ? out.blobs.length : 1; return k < 2 ? [n] : out.blobs.map((_, i) => n.replace(/\.png$/i, '') + `_parte${i + 1}de${k}.png`); },
     async run(act, cfg, btn) {
         const err = cfg.validate ? cfg.validate() : null;
         if (err) { toast(err, 'warn'); return; }
@@ -1364,21 +1419,24 @@ const ReportActions = {
         finally { busy(btn, false); }
     },
     preview(out, cfg) {
-        const m = openModal(`<h3 class="modal-title">Vista previa</h3>
-            <p class="mute">Así se enviará la imagen. Verifica datos y gráficas antes de compartir.</p>
-            <div class="preview-box"><img src="${out.url}" alt="Vista previa del reporte"></div>
-            <div class="actions"><button class="btn btn-wa" data-p="share">📲 Compartir en WhatsApp</button><button class="btn btn-primary" data-p="save">💾 Guardar imagen</button></div>`, { wide: true });
+        const k = (out.urls || [out.url]).length;
+        const m = openModal(`<h3 class="modal-title">Vista previa${k > 1 ? ` · ${k} imágenes` : ''}</h3>
+            <p class="mute">${k > 1 ? `El reporte es largo: sale en ${k} imágenes para que en WhatsApp se lea completo. ` : ''}Para enviarlo nítido, en WhatsApp toca <b>HD</b> antes de enviar (o déjalo fijo en Ajustes › Almacenamiento y datos › Calidad de subida de fotos › HD).</p>
+            <div class="preview-box">${(out.urls || [out.url]).map((u, i) => `<img src="${u}" alt="Vista previa ${i + 1}">`).join('')}</div>
+            <div class="actions"><button class="btn btn-wa" data-p="share">📲 Compartir en WhatsApp</button><button class="btn btn-primary" data-p="save">💾 Guardar ${k > 1 ? 'imágenes' : 'imagen'}</button></div>`, { wide: true });
         $('[data-p="share"]', m).onclick = async () => { await this.share(out, cfg); closeModal(m); };
         $('[data-p="save"]', m).onclick = async () => { await this.save(out, cfg); closeModal(m); };
     },
     async share(out, cfg) {
-        const file = new File([out.blob], cfg.filename(), { type: 'image/png' });
+        const blobs = out.blobs || [out.blob], names = this.names(out, cfg);
+        const files = blobs.map((b, i) => new File([b], names[i], { type: 'image/png' }));
         const saving = this.persist(cfg);                        // Regla de oro: compartir = guardar en Firestore
-        if (navigator.canShare && navigator.canShare({ files: [file] })) {
-            try { await navigator.share({ files: [file], title: cfg.title || 'Central de Operaciones' }); }
-            catch (e) { if (e.name !== 'AbortError' && await downloadBlob(out.blob, cfg.filename())) toast('No se pudo abrir el menú de compartir: la imagen se descargó.', 'warn'); }
-        } else if (await downloadBlob(out.blob, cfg.filename())) {
-            toast('Este navegador no comparte archivos directamente: la imagen se descargó para enviarla por WhatsApp Web.', 'info', 5200);
+        const dlAll = async () => { let ok = false; for (let i = 0; i < blobs.length; i++) { ok = await downloadBlob(blobs[i], names[i]) || ok; if (blobs.length > 1) await new Promise(r => setTimeout(r, 400)); } return ok; };
+        if (navigator.canShare && navigator.canShare({ files })) {
+            try { await navigator.share({ files, title: cfg.title || 'Central de Operaciones' }); }
+            catch (e) { if (e.name !== 'AbortError' && await dlAll()) toast('No se pudo abrir el menú de compartir: la imagen se descargó.', 'warn'); }
+        } else if (await dlAll()) {
+            toast(`Este navegador no comparte archivos directamente: ${blobs.length > 1 ? 'las imágenes se descargaron' : 'la imagen se descargó'} para enviarla por WhatsApp Web.`, 'info', 5200);
         }
         await saving;
     },
@@ -1394,7 +1452,8 @@ const ReportActions = {
     },
     async save(out, cfg) {
         const saving = this.persist(cfg);                        // Regla de oro: guardar imagen = guardar en Firestore
-        await downloadBlob(out.blob, cfg.filename());
+        const blobs = out.blobs || [out.blob], names = this.names(out, cfg);
+        for (let i = 0; i < blobs.length; i++) { await downloadBlob(blobs[i], names[i]); if (blobs.length > 1) await new Promise(r => setTimeout(r, 400)); }
         await saving;
     },
     async persist(cfg) {

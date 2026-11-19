@@ -27,6 +27,33 @@ const admWeeksOfMonth = ym => admThursdays(ym).map(th => 'W' + isoWeek(th));
 const admDocId = (stId, period, slot) => `adm_${stId}_${period}_${slot}`;
 const admSum = (st, ym) => ((st && st.adm) || {})[ym || admYm()] || {};
 const imeiOk = v => /^\d{15}$/.test(String(v || '').replace(/\D/g, ''));
+// El acta y la planilla pueden ser PDF (o foto); el resto son fotos
+const ADM_PDF_OK = { acta: true, plan: true };
+const isPdfFile = f => f && (f.type === 'application/pdf' || /\.pdf$/i.test(f.name || ''));
+function loadScriptOnce(url, test) {
+    if (test()) return Promise.resolve();
+    return new Promise((res, rej) => { const s = document.createElement('script'); s.src = url; s.onload = () => test() ? res() : rej(new Error('lib')); s.onerror = () => rej(new Error('No se pudo cargar ' + url)); document.head.appendChild(s); });
+}
+const PDFLIB_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js';
+const latin = t => String(t).replace(/[^\x20-\x7E -ÿ]/g, '');
+// Marca de agua en cada página del PDF: franja inferior con tienda, tipo, fecha y quién lo subió, y el sello INFINIX tenue
+async function admStampPdf(bytes, mark) {
+    await loadScriptOnce(PDFLIB_URL, () => !!window.PDFLib);
+    const { PDFDocument, StandardFonts, rgb, degrees } = window.PDFLib;
+    const pdf = await PDFDocument.load(bytes, { ignoreEncryption: true });
+    const bold = await pdf.embedFont(StandardFonts.HelveticaBold), reg = await pdf.embedFont(StandardFonts.Helvetica);
+    pdf.getPages().forEach(pg => {
+        const { width: W, height: H } = pg.getSize(), fs = Math.max(7, Math.min(W, H) * 0.018), band = fs * 3.2;
+        pg.drawText('INFINIX', { x: W * 0.18, y: H * 0.3, size: Math.min(W, H) * 0.16, font: bold, color: rgb(0.5, 0.5, 0.5), opacity: 0.1, rotate: degrees(Math.atan2(H, W) * 180 / Math.PI) });
+        pg.drawRectangle({ x: 0, y: 0, width: W, height: band, color: rgb(0, 0, 0), opacity: 0.62 });
+        pg.drawRectangle({ x: 0, y: 0, width: fs * 0.4, height: band, color: rgb(0, 0.78, 0.33) });
+        pg.drawText(latin(mark[0]), { x: fs, y: band - fs * 1.3, size: fs, font: bold, color: rgb(1, 1, 1), maxWidth: W - fs * 2 });
+        pg.drawText(latin(mark[1]), { x: fs, y: fs * 0.7, size: fs * 0.82, font: reg, color: rgb(1, 1, 1), maxWidth: W - fs * 2 });
+    });
+    return { bytes: await pdf.save(), pages: pdf.getPageCount() };
+}
+const bytesToB64 = u8 => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
+const b64ToBytes = b => { const bin = atob(b), a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a; };
 
 // Cumplimiento del mes: 5 frentes (acta, samples, mesa, visibilidad, planillas de las semanas ya vencidas)
 function admStatus(st, ym) {
@@ -108,23 +135,45 @@ async function admUpload(st, file, meta) {
     const who = (State.session && (State.session.nombre || State.session.userName)) || st.tienda;
     const first = `INFINIX · ${st.tienda} · ${(st.cadena || chainGroup(st).label || '').toString().toUpperCase()}`;
     const det = meta.tipo === 'sample' ? `${meta.ref || 'Sample'} · IMEI ${meta.imei}` : meta.tipo === 'vis' ? `Visibilidad · ${meta.nota || ''}` : meta.tipo === 'plan' ? `Planilla ${meta.period} · hoja ${meta.slot.slice(1)}` : ADM.TIPO[meta.tipo];
-    const ph = await admPhoto(file, [first, `${det} · ${fechaHora(Date.now())} · ${who}`], { horizontal: meta.tipo === 'mesa' });
-    const id = admDocId(st.id, meta.period, meta.slot);
-    const doc = { kind: 'adm', storeId: st.id, zona: st.zona, tienda: st.tienda, cadena: st.cadena || '', ym: meta.ym, period: meta.period, slot: meta.slot, tipo: meta.tipo,
-        ref: meta.ref || '', imei: meta.imei || '', nota: meta.nota || '', img: ph.img, w: ph.w, h: ph.h, at: Date.now(), by: who };
+    const id = admDocId(st.id, meta.period, meta.slot), mk = [first, `${det} · ${fechaHora(Date.now())} · ${who}`];
+    const base = { kind: 'adm', storeId: st.id, zona: st.zona, tienda: st.tienda, cadena: st.cadena || '', ym: meta.ym, period: meta.period, slot: meta.slot, tipo: meta.tipo,
+        ref: meta.ref || '', imei: meta.imei || '', nota: meta.nota || '', at: Date.now(), by: who };
+    let doc;
+    if (isPdfFile(file)) {
+        if (!ADM_PDF_OK[meta.tipo]) throw new Error('Aquí va una foto, no un PDF.');
+        if (file.size > 6e6) throw new Error('El PDF pesa más de 6 MB: comprímelo (por ejemplo en ilovepdf.com) o súbelo como foto.');
+        let bytes = new Uint8Array(await file.arrayBuffer()), pages = 0, marcado = false;
+        try { const o = await admStampPdf(bytes, mk); bytes = o.bytes; pages = o.pages; marcado = true; } catch (e) { console.warn('[Central] PDF sin marca de agua', e); }
+        // El PDF va en trozos de 700 KB (cada documento de la nube admite hasta 1 MB)
+        const b64 = bytesToB64(bytes), parts = []; for (let i = 0; i < b64.length; i += 700000) parts.push(b64.slice(i, i + 700000));
+        for (let i = 0; i < parts.length; i++) { const r = await Data.setRaw(COL.zoneReports, `${id}_c${i}`, { kind: 'admPart', parent: id, i, b64: parts[i] }); if (r.denied) throw new Error('La nube rechazó el archivo (permisos de Firestore).'); }
+        doc = { ...base, pdf: true, fileName: file.name, size: bytes.length, pages, parts: parts.length, marcado, img: '' };
+    } else {
+        const ph = await admPhoto(file, mk, { horizontal: meta.tipo === 'mesa' });
+        doc = { ...base, img: ph.img, w: ph.w, h: ph.h };
+    }
     const r = await Data.setRaw(COL.zoneReports, id, doc);
     if (r.denied) throw new Error('La nube rechazó la foto (permisos de Firestore).');
     return { doc, synced: r.synced };
 }
-const admFileName = (st, d) => `${slug(st.tienda)}_${d.ym}_${d.tipo}${d.tipo === 'plan' ? '_' + d.period : ''}_${d.slot}${d.imei ? '_' + d.imei : ''}.jpg`;
+const admFileName = (st, d) => `${slug(st.tienda)}_${d.ym}_${d.tipo}${d.tipo === 'plan' ? '_' + d.period : ''}_${d.slot}${d.imei ? '_' + d.imei : ''}.${d.pdf ? 'pdf' : 'jpg'}`;
+// Archivo original de una carga (foto o PDF armado desde sus trozos)
+async function admBlob(d) {
+    if (!d.pdf) return dataUrlBlob(d.img);
+    let b64 = '';
+    for (let i = 0; i < int(d.parts); i++) { const p = await Data.getRaw(COL.zoneReports, `${d.id}_c${i}`); if (!p) throw new Error('El PDF aún no termina de subir a la nube.'); b64 += p.b64; }
+    return new Blob([b64ToBytes(b64)], { type: 'application/pdf' });
+}
+async function admDownload(d) { const st = storeById(d.storeId) || { tienda: d.tienda }; try { return await downloadBlob(await admBlob(d), admFileName(st, d)); } catch (e) { toast(e.message || 'No se pudo descargar', 'error'); return false; } }
+const admPdfTile = d => `<div class="adm-pdf"><b>📄 PDF</b><small>${esc((d.fileName || '').slice(0, 28))}</small><small>${d.pages ? d.pages + ' pág. · ' : ''}${Math.round(int(d.size) / 1024)} KB</small></div>`;
 const dataUrlBlob = u => { const [h, b] = u.split(','), bin = atob(b), a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return new Blob([a], { type: (h.match(/data:([^;]+)/) || [])[1] || 'image/jpeg' }); };
 function admViewPhoto(d) {
-    const st = storeById(d.storeId) || { tienda: d.tienda };
-    const m = openModal(`<h3 class="modal-title">${ADM.ICON[d.tipo]} ${esc(ADM.TIPO[d.tipo])}${d.imei ? ' · ' + esc(d.imei) : ''}</h3>
+    const m = openModal(`<h3 class="modal-title">${ADM.ICON[d.tipo]} ${esc(ADM.TIPO[d.tipo])}${d.imei ? ' · ' + esc(d.imei) : ''}${d.tipo === 'plan' ? ' · ' + esc(d.period) : ''}</h3>
         <p class="mute">${esc(d.tienda)} · ${esc(fechaHora(d.at))} · ${esc(d.by || '')}</p>
-        <div class="preview-box"><img src="${d.img}" alt="${esc(ADM.TIPO[d.tipo])}"></div>
-        <div class="actions"><button class="btn btn-primary" data-dl>⬇️ Descargar foto</button><button class="btn btn-ghost" data-x>Cerrar</button></div>`, { wide: true });
-    $('[data-dl]', m).onclick = () => downloadBlob(dataUrlBlob(d.img), admFileName(st, d));
+        ${d.pdf ? `<div class="adm-pdf big">${admPdfTile(d)}<p class="hint">${d.marcado ? 'El PDF lleva la marca de agua en cada página.' : ''}</p></div>` : `<div class="preview-box"><img src="${d.img}" alt="${esc(ADM.TIPO[d.tipo])}"></div>`}
+        <div class="actions">${d.pdf ? '<button class="btn btn-ghost" data-open>👁️ Abrir PDF</button>' : ''}<button class="btn btn-primary" data-dl>⬇️ Descargar ${d.pdf ? 'PDF' : 'foto'}</button><button class="btn btn-ghost" data-x>Cerrar</button></div>`, { wide: true });
+    $('[data-dl]', m).onclick = e => { busy(e.currentTarget, true); admDownload(d).finally(() => busy(e.currentTarget, false)); };
+    if ($('[data-open]', m)) $('[data-open]', m).onclick = async () => { try { const u = URL.createObjectURL(await admBlob(d)); window.open(u, '_blank'); setTimeout(() => URL.revokeObjectURL(u), 60000); } catch (e) { toast(e.message, 'error'); } };
     $('[data-x]', m).onclick = () => closeModal(m);
 }
 
@@ -141,8 +190,8 @@ registerModule('adm', (() => {
         paint();
     }
     const of = (tipo, period) => docs.filter(d => d.tipo === tipo && (!period || d.period === period));
-    const thumb = (d, del = true) => `<div class="adm-th"><img src="${d.img}" alt="" data-view="${esc(d.id)}">${d.imei ? `<small>${esc(d.ref || '')}<br><b>${esc(d.imei)}</b></small>` : d.nota ? `<small>${esc(d.nota)}</small>` : ''}${del ? `<button class="adm-del" data-del="${esc(d.id)}" title="Quitar">✕</button>` : ''}</div>`;
-    const upBtn = (label, attrs, horizontal) => `<label class="btn btn-primary sm adm-up">📷 ${label}<input type="file" accept="image/*" ${horizontal ? '' : 'capture="environment"'} ${attrs} hidden></label>`;
+    const thumb = (d, del = true) => `<div class="adm-th">${d.pdf ? `<div data-view="${esc(d.id)}">${admPdfTile(d)}</div>` : `<img src="${d.img}" alt="" data-view="${esc(d.id)}">`}${d.imei ? `<small>${esc(d.ref || '')}<br><b>${esc(d.imei)}</b></small>` : d.nota ? `<small>${esc(d.nota)}</small>` : ''}${del ? `<button class="adm-del" data-del="${esc(d.id)}" title="Quitar">✕</button>` : ''}</div>`;
+    const upBtn = (label, attrs, horizontal, pdf) => `<label class="btn btn-primary sm adm-up">${pdf ? '📄' : '📷'} ${label}<input type="file" accept="${pdf ? 'application/pdf,image/*' : 'image/*'}" ${horizontal || pdf ? '' : 'capture="environment"'} ${attrs} hidden></label>`;
 
     function paint() {
         const s = st(), S = admStatus({ ...s, adm: { ...(s.adm || {}), [ym]: summaryNow() } }, ym), meses = [admYm(), addDays(admYm() + '-01', -1).slice(0, 7)];
@@ -157,9 +206,9 @@ registerModule('adm', (() => {
             <div class="adm-kpis">${S.items.map(i => `<div class="${i.ok ? 'ok' : 'bad'}"><span>${ADM.ICON[i.k]} ${esc(ADM.TIPO[i.k])}</span><b>${i.txt}</b></div>`).join('')}<div class="tot"><span>Cumplimiento</span><b>${Math.round(S.pct * 100)}%</b></div></div>
             <p class="hint">📅 Del 1 al 5 de cada mes: acta, samples, mesa y visibilidad. 🗒️ Cada domingo: la planilla física de ventas de la semana.</p></section>
 
-        <section class="card"><h3 class="h3">📝 Acta de sample <small class="mute">firmada, completa y legible</small></h3>
+        <section class="card"><h3 class="h3">📝 Acta de sample <small class="mute">PDF firmado, completo y legible (o foto)</small></h3>
             <div class="adm-grid">${acta ? thumb(acta) : '<p class="empty sm">Aún no la cargas.</p>'}</div>
-            <div class="row" style="margin-top:8px">${upBtn(acta ? 'Reemplazar acta' : 'Subir acta', 'data-up="acta"')}</div></section>
+            <div class="row" style="margin-top:8px">${upBtn(acta ? 'Reemplazar acta (PDF o foto)' : 'Subir acta (PDF o foto)', 'data-up="acta"', false, true)}</div></section>
 
         <section class="card"><h3 class="h3">📱 Samples <small class="mute">${samples.length} de ${ADM.MAX_SAMPLES} · foto del equipo en exhibición con su IMEI</small></h3>
             <div class="adm-grid">${samples.map(d => thumb(d)).join('') || '<p class="empty sm">Aún no cargas samples.</p>'}</div>
@@ -174,10 +223,10 @@ registerModule('adm', (() => {
             <div class="adm-grid">${vis.map(d => thumb(d)).join('') || '<p class="empty sm">Aún no cargas visibilidad.</p>'}</div>
             ${nextV ? `<div class="adm-form"><select class="input" id="adm-vtipo">${ADM.VIS_TIPOS.map(t => `<option>${esc(t)}</option>`).join('')}</select>${upBtn('Foto de visibilidad', `data-up="vis" data-slot="${nextV}"`)}</div>` : ''}</section>
 
-        <section class="card"><h3 class="h3">🗒️ Planilla física de ventas <small class="mute">una por semana (hasta ${ADM.MAX_PLAN} hojas)</small></h3>
+        <section class="card"><h3 class="h3">🗒️ Planilla física de ventas <small class="mute">PDF escaneado o foto, una por semana (hasta ${ADM.MAX_PLAN} archivos)</small></h3>
             <div class="seg sm wrap" style="margin:6px 0">${admWeeksOfMonth(ym).map(w => { const n = of('plan', w).length; return `<button class="seg-btn ${w === semana ? 'active' : ''}" data-wk="${w}">${w} ${n ? '✅' : '·'}</button>`; }).join('')}</div>
             <div class="adm-grid">${plan.map(d => thumb(d)).join('') || `<p class="empty sm">Sin planilla de la semana ${semana}.</p>`}</div>
-            ${nextP ? `<div class="row" style="margin-top:8px">${upBtn('Foto de la planilla ' + semana, `data-up="plan" data-slot="${nextP}"`)}</div>` : ''}</section>`;
+            ${nextP ? `<div class="row" style="margin-top:8px">${upBtn('Planilla ' + semana + ' (PDF o foto)', `data-up="plan" data-slot="${nextP}"`, false, true)}</div>` : ''}</section>`;
         $('#adm-mes').onchange = e => { ym = e.target.value; render(view); };
         $('#adm-ficha').onclick = () => openAdmFicha(st().id, ym);
         $$('[data-wk]', view).forEach(b => b.onclick = () => { semana = b.dataset.wk; paint(); });
@@ -215,7 +264,7 @@ registerModule('adm', (() => {
     async function remove(id) {
         const d = docs.find(x => x.id === id); if (!d) return;
         if (!confirm(`¿Quitar esta foto (${ADM.TIPO[d.tipo]}${d.imei ? ' ' + d.imei : ''})?`)) return;
-        await Data.delRaw(COL.zoneReports, id); docs = docs.filter(x => x.id !== id);
+        await Data.delRaw(COL.zoneReports, id); for (let i = 0; i < int(d.parts); i++) await Data.delRaw(COL.zoneReports, `${id}_c${i}`); docs = docs.filter(x => x.id !== id);
         await admSaveSummary(st(), ym, docs); paint();
     }
     return { render };
@@ -229,17 +278,19 @@ async function openAdmFicha(stId, ym) {
     let docs = [];
     try { docs = await admLoad(st.id, ym); } catch (e) { docs = []; }
     const S = admStatus(st, ym), body = $('#af-body', m); body.className = '';
-    const grupo = (tipo, titulo) => { const L = docs.filter(d => d.tipo === tipo); return `<div class="af-sec"><b>${ADM.ICON[tipo]} ${titulo} <small class="mute">(${L.length})</small></b><div class="adm-grid">${L.map(d => `<div class="adm-th"><img src="${d.img}" alt="" data-view="${esc(d.id)}">${d.imei ? `<small>${esc(d.ref || '')}<br><b>${esc(d.imei)}</b></small>` : d.tipo === 'plan' ? `<small>${esc(d.period)}</small>` : d.nota ? `<small>${esc(d.nota)}</small>` : ''}</div>`).join('') || '<p class="empty sm">Sin cargar.</p>'}</div></div>`; };
+    const grupo = (tipo, titulo) => { const L = docs.filter(d => d.tipo === tipo); return `<div class="af-sec"><div class="row between wrap" style="gap:6px"><b>${ADM.ICON[tipo]} ${titulo} <small class="mute">(${L.length})</small></b>${L.length > 1 ? `<button class="btn btn-ghost sm" data-dltipo="${tipo}">⬇️ Descargar ${L.length}</button>` : ''}</div><div class="adm-grid">${L.map(d => `<div class="adm-th">${d.pdf ? `<div data-view="${esc(d.id)}">${admPdfTile(d)}</div>` : `<img src="${d.img}" alt="" data-view="${esc(d.id)}">`}${d.imei ? `<small>${esc(d.ref || '')}<br><b>${esc(d.imei)}</b></small>` : d.tipo === 'plan' ? `<small>${esc(d.period)}</small>` : d.nota ? `<small>${esc(d.nota)}</small>` : ''}<button class="adm-dl" data-dlone="${esc(d.id)}" title="Descargar">⬇️</button></div>`).join('') || '<p class="empty sm">Sin cargar.</p>'}</div></div>`; };
     body.innerHTML = `<p class="mute">${esc(mesLargo(ym))} · ${esc(st.zona)} · última carga ${S.at ? esc(fechaHora(S.at)) + ' por ' + esc(S.by) : '—'}</p>
         <div class="adm-kpis">${S.items.map(i => `<div class="${i.ok ? 'ok' : 'bad'}"><span>${ADM.ICON[i.k]} ${esc(ADM.TIPO[i.k])}</span><b>${i.txt}</b></div>`).join('')}<div class="tot"><span>Cumplimiento</span><b>${Math.round(S.pct * 100)}%</b></div></div>
         ${grupo('acta', 'Acta de sample')}${grupo('sample', 'Samples')}${grupo('mesa', 'Mesa con asesores')}${grupo('vis', 'Visibilidad')}${grupo('plan', 'Planillas semanales')}
-        <div class="actions" id="af-act" style="margin-top:12px"><button class="btn btn-ghost" data-all ${docs.length ? '' : 'disabled'}>⬇️ Descargar las ${docs.length} fotos</button><button class="btn btn-ghost" data-act="preview">👁️ Tarjeta</button><button class="btn btn-wa" data-act="share">📲 WhatsApp</button><button class="btn btn-primary" data-act="save">⬇️ Tarjeta PNG</button><button class="btn btn-ghost" data-act="pdf">📄 PDF</button></div>`;
+        <div class="actions" id="af-act" style="margin-top:12px"><button class="btn btn-ghost" data-all ${docs.length ? '' : 'disabled'}>⬇️ Descargar los ${docs.length} archivos</button><button class="btn btn-ghost" data-act="preview">👁️ Tarjeta</button><button class="btn btn-wa" data-act="share">📲 WhatsApp</button><button class="btn btn-primary" data-act="save">⬇️ Tarjeta PNG</button></div>`;
     body.addEventListener('click', async e => {
         const v = e.target.closest('[data-view]'); if (v) { const d = docs.find(x => x.id === v.dataset.view); if (d) admViewPhoto(d); return; }
+        const one = e.target.closest('[data-dlone]'); if (one) { const d = docs.find(x => x.id === one.dataset.dlone); if (d) { busy(one, true); await admDownload(d); busy(one, false); } return; }
+        const tp = e.target.closest('[data-dltipo]'); if (tp) { busy(tp, true); for (const d of docs.filter(x => x.tipo === tp.dataset.dltipo)) { await admDownload(d); await new Promise(r => setTimeout(r, 450)); } busy(tp, false); return; }
         const all = e.target.closest('[data-all]'); if (all) {
             busy(all, true);
-            for (const d of docs) { await downloadBlob(dataUrlBlob(d.img), admFileName(st, d)); await new Promise(r => setTimeout(r, 450)); }
-            busy(all, false); toast(`${docs.length} fotos descargadas`, 'ok');
+            for (const d of docs) { await admDownload(d); await new Promise(r => setTimeout(r, 450)); }
+            busy(all, false); toast(`${docs.length} archivos descargados`, 'ok');
         }
     });
     ReportActions.bind($('#af-act', m), {
@@ -253,7 +304,7 @@ async function openAdmFicha(stId, ym) {
 function buildAdmCanvas(stage, st, ym, S, docs) {
     const autor = State.session || {}, rol = ROLES[autor.rol] ? ROLES[autor.rol].label : 'Tienda';
     const fotos = (tipo, n) => docs.filter(d => d.tipo === tipo).slice(0, n);
-    const cell = d => `<figure><img src="${d.img}" alt=""><figcaption>${d.imei ? `${esc(d.ref || '')} · <b>${esc(d.imei)}</b>` : d.tipo === 'plan' ? `Planilla ${esc(d.period)}` : esc(d.nota || ADM.TIPO[d.tipo])}</figcaption></figure>`;
+    const cell = d => `<figure>${d.pdf ? `<div class="af-pdf"><b>📄</b><span>${esc(ADM.TIPO[d.tipo])}${d.tipo === 'plan' ? ' ' + esc(d.period) : ''}</span><small>PDF${d.pages ? ' · ' + d.pages + ' pág.' : ''} · cargado ${esc(fechaHora(d.at))}</small></div>` : `<img src="${d.img}" alt="">`}<figcaption>${d.imei ? `${esc(d.ref || '')} · <b>${esc(d.imei)}</b>` : d.tipo === 'plan' ? `Planilla ${esc(d.period)}` : esc(d.nota || ADM.TIPO[d.tipo])}</figcaption></figure>`;
     const samples = docs.filter(d => d.tipo === 'sample');
     const el = document.createElement('div'); el.className = 'rp af-rep';
     el.innerHTML = `<div class="rp-bar"></div>
@@ -278,11 +329,17 @@ function paintAdmZone(box, stores, label) {
     if (!box) return;
     const ym = admYm(), rows = stores.map(st => ({ st, s: admStatus(st, ym) })).sort((a, b) => a.s.pct - b.s.pct || a.st.tienda.localeCompare(b.st.tienda));
     const prom = rows.length ? sum(rows.map(r => r.s.pct)) / rows.length : 0, full = rows.filter(r => r.s.done === 5).length;
-    const mk = i => `<td class="${i.ok ? 'g' : 'r'}">${i.txt}</td>`;
-    box.innerHTML = `<section class="card"><div class="row between wrap" style="gap:8px"><h3 class="h3">📁 Cargas administrativas · ${esc(mesLargo(ym))}</h3><small class="mute">${esc(label || '')} · ${full} de ${rows.length} PDV al 100% · promedio ${Math.round(prom * 100)}%</small></div>
-        <p class="mute">Toca un PDV para ver sus fotos, descargarlas y generar su ficha administrativa.</p>
+    const S0 = st => admSum(st, ym), has = (st, k) => k === 'acta' ? int(S0(st).acta) : k === 'sample' ? int(S0(st).samples) : k === 'mesa' ? int(S0(st).mesa) : k === 'vis' ? int(S0(st).vis) : Object.values(S0(st).plan || {}).reduce((a, b) => a + int(b), 0);
+    const mkS = (st, i) => `<td class="${i.ok ? 'g' : 'r'}">${has(st, i.k) ? `<button class="adm-cell ${i.ok ? 'g' : 'a'}" data-admdl="${esc(st.id)}|${i.k}" title="Descargar">${i.txt} ⬇️</button>` : i.txt}</td>`;
+    box.innerHTML = `<details class="card acc"><summary><span>📁 Cargas administrativas · ${esc(mesLargo(ym))} · ${full} de ${rows.length} PDV al 100% · promedio ${Math.round(prom * 100)}%</span></summary>
+        <p class="mute">Toca ⬇️ en cada casilla para descargar ese archivo (acta, samples, mesa, visibilidad o planillas) o 🪪 Ficha para ver todo y generar la tarjeta del PDV.</p>
         <div class="tbl-scroll"><table class="tbl compact adm-tbl"><thead><tr><th>PDV</th><th>📝 Acta</th><th>📱 Samples</th><th>👥 Mesa</th><th>🎯 Visib.</th><th>🗒️ Planillas</th><th>%</th><th></th></tr></thead><tbody>
-        ${rows.map(r => `<tr><td class="l"><div class="row" style="gap:6px;flex-wrap:nowrap">${storeLogo(r.st, 'xs')}<b>${esc(r.st.tienda)}</b></div></td>${r.s.items.map(mk).join('')}<td><i class="pill ${r.s.pct >= 1 ? 'ok' : r.s.pct >= .6 ? 'warn' : 'bad'}">${Math.round(r.s.pct * 100)}%</i></td><td><button class="btn btn-ghost sm" data-adm="${esc(r.st.id)}">🪪 Ficha</button></td></tr>`).join('')}
-        </tbody></table></div></section>`;
+        ${rows.map(r => `<tr><td class="l"><div class="row" style="gap:6px;flex-wrap:nowrap">${storeLogo(r.st, 'xs')}<b>${esc(r.st.tienda)}</b></div></td>${r.s.items.map(i => mkS(r.st, i)).join('')}<td><i class="pill ${r.s.pct >= 1 ? 'ok' : r.s.pct >= .6 ? 'warn' : 'bad'}">${Math.round(r.s.pct * 100)}%</i></td><td><button class="btn btn-ghost sm" data-adm="${esc(r.st.id)}">🪪 Ficha</button></td></tr>`).join('')}
+        </tbody></table></div></details>`;
     $$('[data-adm]', box).forEach(b => b.onclick = () => openAdmFicha(b.dataset.adm, ym));
+    $$('[data-admdl]', box).forEach(b => b.onclick = async () => {
+        const [id, k] = b.dataset.admdl.split('|'); busy(b, true);
+        try { const L = (await admLoad(id, ym)).filter(d => d.tipo === k); if (!L.length) toast('Aún no hay archivos de ese tipo en la nube.', 'warn'); for (const d of L) { await admDownload(d); await new Promise(r => setTimeout(r, 450)); } }
+        finally { busy(b, false); }
+    });
 }

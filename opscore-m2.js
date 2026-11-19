@@ -7,7 +7,7 @@
 // ============================================================================
 
 registerModule('m2', (() => {
-    const MAX = 5;
+    const MAX = 8;
     let fecha = todayStr(), fase = 'plan', rows = [], planDoc = null, comps = {}, pendingIds = null;
     const SEMC = () => Advisor.SEM;
     const me = () => State.session;
@@ -81,7 +81,7 @@ registerModule('m2', (() => {
             title: 'Plan de trabajo · Central de Operaciones',
             validate: () => !rows.length ? 'Agrega al menos una tienda a visitar.' : rows.some(r => !r.acciones.some(a => a.trim())) ? 'Cada tienda necesita al menos una acción.' : null,
             filename: () => `${fase === 'plan' ? 'Plan' : 'CierreActividades'}_${slug(me().nombre)}_${fecha}.png`,
-            build: stage => { const d = buildDoc(); return sup() ? (fase === 'plan' ? buildPlanSupCanvas(stage, d) : buildCierreSupCanvas(stage, d)) : (fase === 'plan' ? buildPlanCanvas(stage, d, fase) : buildCierreFormCanvas(stage, d)); },
+            build: stage => { const d = buildDoc(); return sup() ? (fase === 'plan' ? buildPlanSupCanvas(stage, d) : buildCierreSupCanvas(stage, d)) : (fase === 'plan' ? buildPlanFormCanvas(stage, d) : buildCierreFormCanvas(stage, d)); },
             persist
         });
         load();
@@ -120,6 +120,7 @@ registerModule('m2', (() => {
     // Las visitas guardadas hoy (Visita PDV) pasan solas al cierre: agregan la tienda si no estaba en el plan,
     // traen lo ejecutado, la gestión, las ventas del día y las miniaturas de las fotos.
     async function attachVisits() {
+        if (typeof RealData !== 'undefined') await RealData.ensure(ym());
         let vis = [];
         try { vis = (await Data.list(COL.visits, [['fecha', '==', fecha]])).filter(v => v.userId === me().userId); } catch (e) { vis = []; }
         for (const v of vis.sort((a, b) => (a.savedAt || a.updatedAt || 0) - (b.savedAt || b.updatedAt || 0))) {
@@ -145,7 +146,7 @@ registerModule('m2', (() => {
         $('#m2-status').textContent = !planDoc ? 'Aún no hay plan registrado para esta fecha.'
             : `Plan enviado ${planDoc.planSentAt ? 'a las ' + t(planDoc.planSentAt) : '—'} · Cierre ${planDoc.cierreSentAt ? 'enviado a las ' + t(planDoc.cierreSentAt) : 'pendiente'}`;
         fillStoreSelect(); paintRows();
-        const zb = $('#m2-zone'); if (zb) zb.innerHTML = sup() ? zoneGoalHTML(zoneGoal([me().zona].filter(Boolean).length ? [me().zona] : [...new Set(rows.map(r => r.zona))], fecha)) : '';
+        const zb = $('#m2-zone'), zz = [me().zona].filter(Boolean).length ? [me().zona] : [...new Set(rows.map(r => r.zona))]; if (zb) zb.innerHTML = sup() ? zoneGoalHTML(zoneGoal(zz, fecha)) : (typeof Evals !== 'undefined' && zz.length ? Evals.zoneCardHTML(zz) : '');
     }
 
     // Al agregar la tienda se arrastra todo lo que ya existe: cierres diarios, metas e inventario
@@ -180,6 +181,12 @@ registerModule('m2', (() => {
         if (st.foco && st.foco.nota && !row.foco.trim()) row.foco = st.foco.nota;
         if (typeof Evals !== 'undefined') { const ev = Evals.pendingFor(id); if (ev) row.evals = { week: ev.week, pendientes: ev.pendientes, hechas: ev.hechas.length, prom: ev.prom }; }
         applyFoco(row); derive(row);
+        // Lo que más vende la competencia en la tienda (data real): acción sugerida de ataque o comparativo
+        if (typeof versusFor === 'function') {
+            await RealData.ensure(ym());
+            const V = versusFor(st, ym()), top = V && V.comp[0], focoName = (INFINIX_MODELS.find(m => m.key === row.focoRef) || {}).name || 'la referencia foco';
+            if (top) { row.vs = { ref: top.ref, marca: top.marca, q: top.q }; putEmpty(row.acciones, [sup() ? `Atacar ${top.ref} (${top.marca}, ${top.q} uds en la tienda) con ${focoName}: precio, exhibición y discurso` : `Comparativo y role play: ${focoName} vs ${top.ref} (${top.marca}), lo más vendido de la competencia`], []); }
+        }
         if (sup() && !int(row.compromisoUnd)) row.compromisoUnd = row.metaDia;      // supervisor: el compromiso arranca en la meta del día del PDV
         if ($('#m2-rows')) paintRows();
         return row;
@@ -301,7 +308,7 @@ registerModule('m2', (() => {
                     <div class="numcell"><span>¿Se cumplió?</span><div data-ok="${i}" style="min-height:42px;display:flex;align-items:center">${okHTML(r)}</div></div>` : ''}
                 </div>
             </div>
-        </section>`).join('') || '<div class="card empty">Agrega entre 1 y 5 tiendas para armar el plan del día.</div>';
+        </section>`).join('') || '<div class="card empty">Agrega entre 1 y 8 tiendas para armar el plan del día.</div>';
         fillStoreSelect();
     }
 

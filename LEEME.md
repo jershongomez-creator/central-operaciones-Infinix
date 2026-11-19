@@ -209,6 +209,19 @@ Resultado: quién presentó, quién falta, quién repitió y con qué notas, pro
 - **Cargas administrativas (tienda, v1.11):** acta de sample, hasta 10 samples (referencia, IMEI de 15 dígitos y foto), foto HORIZONTAL de la mesa con los asesores, hasta 6 fotos de visibilidad y la planilla física de ventas de cada semana (hasta 3 hojas). Toda foto lleva marca de agua (Infinix, tienda, tipo, fecha y hora, quién la subió) y se reduce para que pese menos de 1 MB. Cumplimiento del mes = acta + al menos un sample + mesa + al menos una de visibilidad + planilla de cada semana cuyo domingo ya pasó.
 - **Ficha administrativa (líderes):** Análisis de zona › Tiendas › 📁 Cargas administrativas: cumplimiento de cada PDV, fotos para ver y descargar (una a una o todas) y tarjeta del PDV en imagen, PDF o WhatsApp.
 
+## 5i. Novedades v1.12
+
+- **Plan del formador** con el mismo diseño del supervisor, enfocado en formación: evaluaciones de la semana (zona y PDV del plan), nota de cada asesor, cumplimiento de evaluaciones por semana, referencia foco (venta, meta, inventario), temas a reforzar y lo que más vende la competencia en cada tienda.
+- **Plan de trabajo de 1 a 8 tiendas** (supervisor y formador).
+- **Análisis de zona › Tiendas:** primero ranking, cumplimiento y proyección; todo plegable; las cargas administrativas quedan al final, con botón ⬇️ en cada casilla para descargar ese archivo.
+- **Cargas administrativas:** el acta y la planilla se suben en PDF (o foto). El PDF lleva marca de agua en cada página y se guarda en trozos (hasta 6 MB). Cada archivo se descarga por separado desde la ficha o desde la tabla.
+- **Reportes de venta › Por referencia** (reemplaza Venta 0): venta de cada asesor por referencia en el día o rango, con el inventario de la tienda, días de inventario y quién tiene 0 en una referencia con inventario. Requiere volver a cargar la data plana una vez.
+- **Data real:** Alkosto y Ktronix (Corbeta) en un solo archivo; la app reparte cada tienda a su cadena. Si el archivo trae modelo o descripción, se leen las referencias. Solo la ven los líderes.
+- **📊 Share real:** filtros por regional, zona, cadena y tienda; share, puesto y marca #1 por tienda, cadena, zona o regional; ranking de marcas; tarjeta para WhatsApp; alertas de reporte vs. venta real plegables.
+- **⚔️ Infinix vs competencia:** referencias más vendidas del mercado, lo más vendido de cada marca, por tienda, y focos de ataque. Los planes de trabajo sugieren solos el comparativo o el ataque contra la referencia #1 de la competencia de cada tienda.
+- **Evaluaciones:** doble cotejo por cédula y nombre (basta que uno esté bien; tolera dígitos cambiados o invertidos y nombres mal escritos); usa la cédula y el nombre completo de la malla. El cruce se recalcula al leer. Si la sube el administrador, un coordinador o el gerente, queda nacional (documento por semana con todas las filas); si la sube un formador, queda en su zona.
+- **Imágenes para WhatsApp HD:** cada imagen sale con 4096 px en su lado más largo (el máximo de WhatsApp HD). Los reportes largos se parten en varias imágenes (parte 1 de N) cortando entre secciones o filas. Se quitó el botón de PDF de los reportes.
+
 ## 6. Calculadora (tienda)
 
 El asesor elige su nombre. Su target por referencia sale del target de la tienda dividido entre los asesores y lo puede ajustar a mano; sus unidades llegan de la data de zona (o se escriben). Muestra apertura (KPI), lo ganado y el siguiente bono según el **plan comisional general**, que el Administrador configura en Gestión › Configuración › Plan comisional (valor por referencia y accesorio, apertura y bonos).
