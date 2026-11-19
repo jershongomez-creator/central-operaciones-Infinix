@@ -969,3 +969,5 @@ tr.vs-inf td { background: #F0FDF4; } tr.vs-inf td b { color: #047857; }
 .m1-mode .input { min-width: 220px; }
 .m1-strip button.miss { background: #FEF2F2; border-color: #FCA5A5; color: #B91C1C; }
 .m1-strip button.wk { border-style: dashed; border-width: 2px; }
+.ev-edit { border: 0; background: none; cursor: pointer; padding: 2px; border-radius: 8px; }
+.ev-edit:hover { background: #F1F5F9; } .ev-edit.man { background: #FEF3C7; }

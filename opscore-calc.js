@@ -417,7 +417,7 @@ function buildCalcCanvas(stage, st, asesor, units, targets, r, src) {
 function advisorFichaHTML(D) {
     const P = D.prescripcion, S = Advisor.SEM[P.semaforo], pa = D.pacing, ev = D.evaluacion, I = D.inventario, pc = Advisor.pc, dash = '—';
     const fill = pa.cumpl == null ? 0 : Math.min(100, Math.round(pa.cumpl * 100)), mark = Math.min(100, Math.round(pa.esperado * 100));
-    const evTxt = !ev ? ['—', 'sin evaluaciones cargadas'] : ev.nota == null ? ['Pendiente', `${esc(ev.semanaActual || ev.semana)} sin presentar`] : [`${ev.nota}<small>/100</small>`, `${esc(ev.semana)}${ev.pendiente ? ` · falta ${esc(ev.semanaActual)}` : ''}${ev.intentos > 1 ? ` · ${ev.intentos} intentos` : ''}`];
+    const evTxt = !ev ? ['—', 'sin evaluaciones cargadas'] : ev.nota == null ? ['Pendiente', `${esc(ev.semanaActual || ev.semana)} sin presentar`] : [`${ev.nota}<small>/100</small>`, `${esc(ev.semana)}${ev.pendiente ? ` · falta ${esc(ev.semanaActual)}` : ''}`];
     const evCls = ev && ev.bajo ? 'r' : ev && ev.nota != null ? 'g' : '';
     const cumCls = pa.cumpl == null ? '' : pa.indice < ((State.radar.ritmoMin || 85) / 100) ? 'r' : pa.indice < 1 ? 'a' : 'g';
     const pill = m => `<i class="fa-st ${m.estado}">${esc(m.label)}</i>`;

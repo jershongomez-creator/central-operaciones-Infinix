@@ -162,11 +162,13 @@ const Evals = (() => {
     }
 
     // Consolidado: por asesor y semana, intentos y notas
-    function summarize(weeks, R, weekKeys) {
+    function summarize(weeks, R, weekKeys, month) {
+        month = month || monthOfWeeks();
         const byKey = Object.fromEntries(R.map(a => [a.key, { ...a, weeks: {} }]));
         weekKeys.forEach(w => { const W = weeks[w]; if (!W) return; const K = keysOf(W); W.unmatched = K.unmatched; W.matchedN = K.matchedN; W.how = K.how; W.rows.forEach((r, ri) => { K.keys[ri].forEach(k => { if (!k || !byKey[k]) return; const slot = byKey[k].weeks[w] = byKey[k].weeks[w] || { intentos: [], best: null, last: null }; slot.intentos.push({ nota: r.nota, fecha: r.fecha, test: r.test }); if (r.nota != null) { slot.best = slot.best == null ? r.nota : Math.max(slot.best, r.nota); slot.last = r.nota; } }); }); });
-        const advisors = Object.values(byKey).sort((a, b) => (a.tienda + a.nombre).localeCompare(b.tienda + b.nombre, 'es'));
         const loaded = weekKeys.filter(w => weeks[w]);
+        Object.values(byKey).forEach(a => loaded.forEach(w => { const o = ovr(month, a.key, w); if (!o) return; if (o.x) delete a.weeks[w]; else a.weeks[w] = { intentos: [{ nota: o.nota }], best: o.nota, last: o.nota, manual: true }; }));
+        const advisors = Object.values(byKey).sort((a, b) => (a.tienda + a.nombre).localeCompare(b.tienda + b.nombre, 'es'));
         const perWeek = loaded.map(w => {
             const done = advisors.filter(a => a.weeks[w]), rep = done.filter(a => a.weeks[w].intentos.length > 1), notas = done.map(a => a.weeks[w].best).filter(n => n != null);
             return { w, done: done.length, pend: advisors.length - done.length, rep: rep.length, prom: notas.length ? Math.round(sum(notas) / notas.length) : null, bajo: done.filter(a => a.weeks[w].best != null && a.weeks[w].best < 70).length, pendientes: advisors.filter(a => !a.weeks[w]) };
@@ -181,6 +183,20 @@ const Evals = (() => {
     // ---- Persistencia por zona y mes ----------------------------------------
     const docId = (zona, month) => `${slug(zona)}_${month}`;
     const cache = {};
+    // Ajustes manuales del formador: { 'tienda|asesor': { W46: { nota: 85 } | { x: true } } } en un documento nacional por mes.
+    // Mandan sobre lo que cruza la data (nota corregida, "no la presentó" o una evaluación que la data no reconoció).
+    const manId = month => `manual_${month}`;
+    const man = {};
+    const ovr = (month, key, w) => ((man[month] || {})[key] || {})[w];
+    async function loadMan(month) { const d = await Data.get(COL.evalData, manId(month)).catch(() => null); man[month] = (d && d.overrides) || man[month] || {}; return man[month]; }
+    async function setManual(month, key, w, val) {         // val: { nota } | { x: true } | null (quitar el ajuste)
+        const by = (State.session && State.session.nombre) || '';
+        const M = man[month] = man[month] || {}, A = M[key] = { ...(M[key] || {}) };
+        if (val) A[w] = { ...val, by, at: Date.now() }; else delete A[w];
+        M[key] = A;
+        return Data.set(COL.evalData, manId(month), { id: manId(month), kind: 'evalManual', month, overrides: M, updatedAt: Date.now() }, false);
+    }
+    const monthOfWeeks = () => todayStr().slice(0, 7);
     // La data de evaluaciones es nacional: si la sube el administrador, un coordinador o el gerente queda un documento
     // por semana para todo el país (todas las filas, crucen o no) y lo ven todos. Si la sube un formador, queda en su zona.
     const nacId = (month, w) => `nacional_${month}_${w}`;
@@ -197,7 +213,7 @@ const Evals = (() => {
         nac[month] = out; return out;
     }
     async function load(zonas, month) {
-        const [docs] = await Promise.all([Promise.all(zonas.map(z => Data.get(COL.evalData, docId(z, month)).catch(() => null))), loadNac(month).catch(() => ({}))]);
+        const [docs] = await Promise.all([Promise.all(zonas.map(z => Data.get(COL.evalData, docId(z, month)).catch(() => null))), loadNac(month).catch(() => ({})), loadMan(month).catch(() => ({}))]);
         zonas.forEach((z, i) => { if (docs[i]) cache[docId(z, month)] = docs[i]; });
         return Object.fromEntries(zonas.map((z, i) => [z, docs[i] || cache[docId(z, month)] || null]));
     }
@@ -261,23 +277,23 @@ const Evals = (() => {
         return ops.length ? Data.batch(ops) : { synced: true };
     }
     // Llaves de asesor que presentaron una semana
-    const doneKeys = W => new Set(keysOf(W).keys.flat());
+    const doneKeys = (W, month, w, R) => { const set = new Set(keysOf(W).keys.flat()); (R || []).forEach(a => { const o = ovr(month, a.key, w); if (o) { if (o.x) set.delete(a.key); else set.add(a.key); } }); return set; };
     // Pendientes de la última semana cargada para una tienda (lo usa el plan de trabajo)
     function pendingFor(storeId, month) {
         const st = storeById(storeId); if (!st) return null;
         month = month || todayStr().slice(0, 7);
         const WS = weeksFor([st.zona], month), ws = Object.keys(WS).sort(); const w = ws[ws.length - 1]; if (!w) return null;
         const R = roster([st.zona]).filter(a => a.storeId === storeId); if (!R.length) return null;
-        const W = WS[w], K = keysOf(W), done = new Set(K.keys.flat());
-        const notas = W.rows.filter((r, i) => K.keys[i].some(k => R.some(a => a.key === k)) && r.nota != null);
-        return { week: w, pendientes: R.filter(a => !done.has(a.key)).map(a => a.nombre), hechas: R.filter(a => done.has(a.key)).map(a => a.nombre), prom: notas.length ? Math.round(sum(notas.map(n => n.nota)) / notas.length) : null, total: R.length };
+        const W = WS[w], K = keysOf(W), done = doneKeys(W, month, w, R);
+        const notas = R.map(a => { const o = ovr(month, a.key, w); if (o) return o.x ? null : o.nota; const ns = W.rows.filter((r, i) => K.keys[i].includes(a.key) && r.nota != null).map(r => r.nota); return ns.length ? Math.max(...ns) : null; }).filter(n => n != null);
+        return { week: w, pendientes: R.filter(a => !done.has(a.key)).map(a => a.nombre), hechas: R.filter(a => done.has(a.key)).map(a => a.nombre), prom: notas.length ? Math.round(sum(notas) / notas.length) : null, total: R.length };
     }
     // Cumplimiento de evaluaciones de un grupo de tiendas por semana (plan del formador)
     function weeksStatus(storeIds, month) {
         month = month || todayStr().slice(0, 7);
         const sts = storeIds.map(storeById).filter(Boolean); if (!sts.length) return [];
         const zonas = [...new Set(sts.map(s => s.zona))], WS = weeksFor(zonas, month), R = roster(zonas).filter(a => storeIds.includes(a.storeId));
-        return Object.keys(WS).sort().map(w => { const done = doneKeys(WS[w]); const h = R.filter(a => done.has(a.key)).length; return { w, hechas: h, total: R.length, pct: R.length ? h / R.length : null }; });
+        return Object.keys(WS).sort().map(w => { const done = doneKeys(WS[w], month, w, R); const h = R.filter(a => done.has(a.key)).length; return { w, hechas: h, total: R.length, pct: R.length ? h / R.length : null }; });
     }
     // Nombre de tema a partir del archivo cuando la data no trae columna de tema: "Evaluacion_Note_60_W46.xlsx" → "Evaluacion Note 60"
     const temaDeArchivo = f => String(f || '').replace(/\.[a-z0-9]+$/i, '').replace(/[_\-]+/g, ' ').replace(/\bW\d{1,2}\b/gi, '').replace(/\s+/g, ' ').trim();
@@ -292,6 +308,8 @@ const Evals = (() => {
         const porSemana = {}; let last = null;
         ws.forEach(w => {
             const W = WS[w], K = keysOf(W);
+            const o = ovr(month, key, w) || (ra ? ovr(month, ra.key, w) : null);
+            if (o) { if (o.x) return; porSemana[w] = { nota: o.nota, intentos: 1, test: '', temas: null, fileName: W.fileName || '', manual: true }; last = { w, ...porSemana[w] }; return; }
             const rows = W.rows.filter((r, i) => K.keys[i].includes(key) || (ra && K.keys[i].includes(ra.key))); if (!rows.length) return;
             const best = rows.filter(r => r.nota != null).sort((a, b) => b.nota - a.nota)[0] || rows[0];
             porSemana[w] = { nota: best.nota, intentos: rows.length, test: best.test || '', temas: best.temas || null, fileName: W.fileName || '' };
@@ -314,7 +332,7 @@ const Evals = (() => {
         const month = todayStr().slice(0, 7);
         const weeks = weeksFor(zonas, month);
         if (!Object.keys(weeks).length) return `<section class="card"><h3 class="h3">🎓 Evaluaciones</h3><p class="mute">Aún no hay evaluaciones cargadas este mes. Súbelas en la pestaña <b>Evaluaciones</b> y aquí verás quién falta.</p></section>`;
-        const R = roster(zonas), S = summarize(weeks, R, Object.keys(weeks).sort());
+        const R = roster(zonas), S = summarize(weeks, R, Object.keys(weeks).sort(), month);
         const cur = S.perWeek[S.perWeek.length - 1];
         return `<section class="card"><h3 class="h3">🎓 Evaluaciones <small class="mute">${cur ? cur.w : ''}</small></h3>
             <div class="row wrap" style="gap:8px">${S.perWeek.map(p => `<div class="achip ${p.pend ? 'warn' : 'ok'}"><small>${p.w}</small><b>${p.done}/${R.length}</b></div>`).join('')}<div class="achip hl"><small>Promedio</small><b>${S.prom == null ? '—' : S.prom}</b></div></div>
@@ -322,7 +340,7 @@ const Evals = (() => {
         </section>`;
     }
 
-    return { guessMapping, roster, rosterAll, matchRow, nameScore, processFile, summarize, load, save, saveNac, saveWeeks, canNacional, weeksFor, keysOf, removeWeek, pendingFor, weeksStatus, forAdvisor, ensureLoaded, zoneCardHTML, docId, cache };
+    return { setManual, ovr, loadMan, guessMapping, roster, rosterAll, matchRow, nameScore, processFile, summarize, load, save, saveNac, saveWeeks, canNacional, weeksFor, keysOf, removeWeek, pendingFor, weeksStatus, forAdvisor, ensureLoaded, zoneCardHTML, docId, cache };
 })();
 
 // ---------------------------------------------------------------------------
@@ -383,18 +401,31 @@ registerModule('evals', (() => {
         } catch (e) { console.error(e); toast('No se pudo leer: ' + (e.message || e), 'error', 7000); $('#ev-status').textContent = 'No se pudo leer el archivo: ' + (e.message || e); }
         finally { const i = $(`[data-w="${w}"]`); if (i) i.value = ''; }
     }
+    // Edición manual de una nota (solo formador)
+    function editNota(key, w) {
+        const a = S && S.advisors.find(x => x.key === key); if (!a) return;
+        const s = a.weeks[w], o = Evals.ovr(month, key, w);
+        const m = openModal(`<h3 class="modal-title">✏️ ${esc(a.nombre)} · ${esc(w)}</h3>
+            <p class="mute">${esc(a.tienda)} · ${o ? `ajustada a mano${o.by ? ' por ' + esc(o.by) : ''}` : s ? `según la data: ${s.best == null ? 'presentó (sin nota)' : 'nota ' + s.best}` : 'según la data: no la presentó'}</p>
+            <label class="lbl">Nota (0 a 100)</label><input class="input num" type="number" min="0" max="100" inputmode="numeric" id="en-nota" value="${s && s.best != null ? s.best : ''}">
+            <div class="actions" style="margin-top:12px"><button class="btn btn-primary" data-en="ok">💾 Guardar nota</button><button class="btn btn-ghost" data-en="x">🚫 No la presentó</button>${o ? '<button class="btn btn-ghost" data-en="del">↩️ Volver a la data</button>' : ''}</div>`);
+        const save = async val => { await Evals.setManual(month, key, w, val); closeModal(m); compute(); toast(val ? 'Nota ajustada ✅' : 'Ajuste quitado: vuelve a la data', 'ok'); };
+        $('[data-en="ok"]', m).onclick = () => { const v = $('#en-nota', m).value; if (v === '' || isNaN(+v)) return toast('Escribe la nota.', 'warn'); save({ nota: Math.max(0, Math.min(100, Math.round(+v))) }); };
+        $('[data-en="x"]', m).onclick = () => save({ x: true });
+        if ($('[data-en="del"]', m)) $('[data-en="del"]', m).onclick = () => save(null);
+    }
     function compute() {
         const out = $('#ev-out'); if (!out) return;
         const loaded = weekKeys.filter(w => weeks[w]);
         if (!R.length) { out.innerHTML = '<div class="card empty">No hay asesores en el alcance: configúralos en cada tienda o carga la data de zona.</div>'; $('#ev-status').textContent = ''; return; }
         if (!loaded.length) { S = null; out.innerHTML = `<div class="card empty">Adjunta la data de al menos una semana. Asesores en ${esc(label().toLowerCase())}: <b>${R.length}</b> en ${new Set(R.map(a => a.storeId)).size} PDV.</div>`; $('#ev-status').textContent = ''; return; }
-        S = Evals.summarize(weeks, R, weekKeys);
+        S = Evals.summarize(weeks, R, weekKeys, month);
         const cur = S.perWeek[S.perWeek.length - 1];
         const HW = loaded.reduce((acc, w) => { Object.entries(weeks[w].how || {}).forEach(([k, n]) => { acc[k] = (acc[k] || 0) + n; }); return acc; }, {});
         $('#ev-status').innerHTML = `${R.length} asesores en ${new Set(R.map(a => a.storeId)).size} PDV · ${loaded.length} semana(s) cargada(s) · cruce: ${int(HW.cedula)} por cédula, ${int(HW['cedula~'])} con cédula mal digitada, ${int(HW.nombre) + int(HW['nombre~']) + int(HW.parcial)} por nombre${dirty ? ' · <b>Al compartir o guardar el reporte, las evaluaciones quedan guardadas y el plan de trabajo mostrará los pendientes.</b>' : ''}`;
         const unmatchedAll = Object.entries(loaded.reduce((acc, w) => { Object.entries(weeks[w].unmatched || {}).forEach(([k, n]) => { acc[k] = (acc[k] || 0) + n; }); return acc; }, {}));
         const cls = n => n == null ? '' : n >= 80 ? 'ok' : n >= 70 ? 'warn' : 'bad';
-        const multi = viewZonas().length > 1;
+        const multi = viewZonas().length > 1, editor = me().rol === 'formador';
         out.innerHTML = `
         <section class="kpi-row">
             <div class="kpi hl"><span>Asesores</span><b>${S.advisors.length}</b><small>${S.stores.length} PDV · ${esc(label())}</small></div>
@@ -413,13 +444,18 @@ registerModule('evals', (() => {
                 ${cur.pend ? `<ul class="insights">${S.stores.filter(s => s.asesores.some(a => !a.weeks[cur.w])).map(s => `<li><b>${esc(s.tienda)}</b>${multi ? ` <small class="mute">${esc(s.zona)}</small>` : ''}: ${s.asesores.filter(a => !a.weeks[cur.w]).map(a => esc(a.nombre)).join(', ')}</li>`).join('')}</ul>` : '<p class="mute">✅ Todos presentaron la evaluación de la semana.</p>'}
             </section>
         </div>
-        <section class="card"><h3 class="h3">Detalle por PDV y asesor</h3>
-            <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>PDV</th><th>Asesor</th><th>Cédula</th>${S.loaded.map(w => `<th>${w}</th>`).join('')}<th>Prom.</th></tr></thead><tbody>
-            ${S.advisors.map(a => { const ns = Object.values(a.weeks).map(x => x.best).filter(n => n != null); const pr = ns.length ? Math.round(sum(ns) / ns.length) : null; return `<tr><td class="l"><small>${esc(a.tienda)}</small></td><td class="l"><b>${esc(a.nombre)}</b></td><td><small>${esc(a.cedula || '—')}</small></td>${S.loaded.map(w => { const s = a.weeks[w]; return `<td>${!s ? '<i class="pill bad">falta</i>' : s.best == null ? '<i class="pill ok">✓</i>' : `<i class="pill ${cls(s.best)}">${s.best}${s.intentos.length > 1 ? ` ×${s.intentos.length}` : ''}</i>`}</td>`; }).join('')}<td>${pr == null ? '—' : `<b>${pr}</b>`}</td></tr>`; }).join('')}
+        <section class="card"><div class="row between wrap" style="gap:8px"><h3 class="h3">Detalle por PDV y asesor</h3>${editor ? '<input class="input" id="ev-q" placeholder="🔎 Buscar asesor o tienda" style="max-width:260px">' : ''}</div>
+            ${editor ? '<p class="hint">✏️ <b>Edición manual (solo formador):</b> toca la nota de cualquier asesor en cualquier semana para corregirla, marcar que sí la presentó o que no la presentó. Lo ajustado a mano lleva ✏️ y manda sobre la data.</p>' : ''}
+            <div class="tbl-scroll"><table class="tbl compact" id="ev-det"><thead><tr><th>PDV</th><th>Asesor</th><th>Cédula</th>${S.loaded.map(w => `<th>${w}</th>`).join('')}<th>Prom.</th></tr></thead><tbody>
+            ${S.advisors.map(a => { const ns = Object.values(a.weeks).map(x => x.best).filter(n => n != null); const pr = ns.length ? Math.round(sum(ns) / ns.length) : null; return `<tr data-q="${esc(slug(a.nombre + ' ' + a.tienda))}"><td class="l"><small>${esc(a.tienda)}</small></td><td class="l"><b>${esc(a.nombre)}</b></td><td><small>${esc(a.cedula || '—')}</small></td>${S.loaded.map(w => { const s = a.weeks[w], o = Evals.ovr(month, a.key, w), pill = !s ? '<i class="pill bad">falta</i>' : s.best == null ? '<i class="pill ok">✓</i>' : `<i class="pill ${cls(s.best)}">${s.best}</i>`; return `<td>${editor ? `<button class="ev-edit ${o ? 'man' : ''}" data-ek="${esc(a.key)}" data-ew="${w}" title="Editar nota">${pill}${o ? '✏️' : ''}</button>` : pill}</td>`; }).join('')}<td>${pr == null ? '—' : `<b>${pr}</b>`}</td></tr>`; }).join('')}
             </tbody></table></div>
-            <p class="hint">×2 = presentó dos veces (se toma la mejor nota). Las notas se llevan a escala de 0 a 100.</p>
+            <p class="hint">Se toma la nota más alta de cada semana. Las notas se llevan a escala de 0 a 100.</p>
         </section>
         ${actionBarHTML()}`;
+        if (editor) {
+            const q = $('#ev-q', out); if (q) q.oninput = () => { const t = slug(q.value); $$('#ev-det tbody tr', out).forEach(tr => { tr.hidden = !!t && !tr.dataset.q.includes(t); }); };
+            $$('[data-ek]', out).forEach(b => b.onclick = () => editNota(b.dataset.ek, b.dataset.ew));
+        }
         ReportActions.bind(out, {
             title: 'Reporte de evaluaciones · Central de Operaciones',
             validate: () => S ? null : 'Carga al menos una semana.',
@@ -465,7 +501,7 @@ function buildEvalsCanvas(stage, d) {
     </tbody></table>
     <div class="rp-sec">DETALLE POR PDV Y ASESOR</div>
     <table class="rp-tbl"><thead><tr><th class="l">PDV</th><th class="l">ASESOR</th>${S.loaded.map(w => `<th>${w}</th>`).join('')}<th>PROM.</th></tr></thead><tbody>
-        ${S.advisors.map(a => { const ns = Object.values(a.weeks).map(x => x.best).filter(n => n != null); const pr = ns.length ? Math.round(sum(ns) / ns.length) : null; return `<tr><td class="l small">${esc(a.tienda)}</td><td class="l">${esc(a.nombre)}</td>${S.loaded.map(w => { const s = a.weeks[w]; return `<td class="c-tot ${!s ? 'r' : cls(s.best)}">${!s ? 'FALTA' : s.best == null ? '✓' : s.best + (s.intentos.length > 1 ? ' ×' + s.intentos.length : '')}</td>`; }).join('')}<td><b>${pr == null ? dash : pr}</b></td></tr>`; }).join('')}
+        ${S.advisors.map(a => { const ns = Object.values(a.weeks).map(x => x.best).filter(n => n != null); const pr = ns.length ? Math.round(sum(ns) / ns.length) : null; return `<tr><td class="l small">${esc(a.tienda)}</td><td class="l">${esc(a.nombre)}</td>${S.loaded.map(w => { const s = a.weeks[w]; return `<td class="c-tot ${!s ? 'r' : cls(s.best)}">${!s ? 'FALTA' : s.best == null ? '✓' : s.best}</td>`; }).join('')}<td><b>${pr == null ? dash : pr}</b></td></tr>`; }).join('')}
     </tbody></table>
     <div class="v-two">
         <div class="vbox ${cur.pend ? 'warn' : 'good'}"><div class="vbox-t">Pendientes ${cur.w}</div>${cur.pend ? `<ul class="z-list">${S.stores.filter(s => s.asesores.some(a => !a.weeks[cur.w])).map(s => `<li><b>${esc(s.tienda)}</b>: ${s.asesores.filter(a => !a.weeks[cur.w]).map(a => esc(a.nombre)).join(', ')}</li>`).join('')}</ul>` : '<p class="vtxt">Todos los asesores presentaron la evaluación de la semana.</p>'}</div>
