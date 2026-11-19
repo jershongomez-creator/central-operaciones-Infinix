@@ -170,8 +170,13 @@ const DayStatus = (() => {
         };
     }
     // Bloque para los lienzos de reporte (zona, plan, visita)
-    function reportBlock(stores, fecha = todayStr(), title) {
+    function reportBlock(stores, fecha = todayStr(), title, opts = {}) {
         const L = zoneDay(stores, fecha); if (!L.length) return '';
+        if (opts.cards) {           // tarjetas agrupadas por estado (más visual para el reporte de zona)
+            const G = {}; L.forEach(x => { (G[x.s.label] = G[x.s.label] || { s: x.s, L: [] }).L.push(x); });
+            return `<div class="rp-sec">${esc(title || 'NOVEDADES Y ASESORES FUERA DEL PDV')} · ${esc(fechaLarga(fecha).toUpperCase())} · ${L.length}</div>
+            <div class="nov-cards">${Object.values(G).sort((a, b) => b.L.length - a.L.length).map(g => `<div class="nov-c ${g.s.off ? 'off' : 'warn'}"><div class="nov-h">${g.s.ico} ${esc(g.s.label)}<b>${g.L.length}</b></div>${g.L.map(x => `<div class="nov-i"><b>${esc(x.nombre.split(' ').slice(0, 2).join(' '))}</b><span>${esc(x.st.tienda)}${x.s.nota ? ' · ' + esc(x.s.nota) : ''}</span></div>`).join('')}</div>`).join('')}</div>`;
+        }
         return `<div class="rp-sec">${esc(title || 'NOVEDADES Y ASESORES FUERA DEL PDV')} · ${esc(fechaLarga(fecha).toUpperCase())}</div>
             <table class="rp-tbl rp-nov"><thead><tr><th class="l">ASESOR</th><th class="l">TIENDA</th><th class="l">ESTADO</th><th class="l">DETALLE</th></tr></thead><tbody>
             ${L.map(x => `<tr><td class="l">${esc(x.nombre)}</td><td class="l">${esc(x.st.tienda)}</td><td class="l">${x.s.ico} ${esc(x.s.label)}</td><td class="l">${esc(x.s.nota || (x.s.src === 'malla' ? 'Según malla de horarios' : ''))}${x.s.by ? ' · ' + esc(x.s.by) : ''}</td></tr>`).join('')}</tbody></table>`;

@@ -1263,11 +1263,11 @@ const Exporter = {
     // Calidad para WhatsApp: en HD manda hasta 4096 px por el lado más largo (en calidad estándar, 1600 px).
     // Cada imagen sale con su lado más largo en 4096 px; si el reporte es muy largo se parte en varias imágenes
     // (cortando entre secciones o entre filas de tabla) para que al llegar al teléfono se lea sin hacer zoom.
-    WA_MAX: 4096, RATIO: 1.4,
+    WA_MAX: 4096, HI_MAX: 7680, RATIO: 1.6, SPLIT_AT: 2.05,
     iOS() { return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); },
-    scaleFor(w, h) {
+    scaleFor(w, h, target) {
         const maxArea = this.iOS() ? 16.5e6 : 110e6, maxDim = this.iOS() ? 8190 : 16000;
-        let sc = Math.max(1.5, this.WA_MAX / Math.max(1, w, h));
+        let sc = Math.max(1.5, (target || this.WA_MAX) / Math.max(1, w, h));
         sc = Math.min(sc, maxDim / Math.max(w, h), Math.sqrt(maxArea / Math.max(1, w * h)));
         return Math.max(1, Math.round(sc * 100) / 100);
     },
@@ -1275,8 +1275,8 @@ const Exporter = {
         await Promise.all($$('img', el).map(img => img.complete ? null : new Promise(r => { img.onload = img.onerror = r; })));
         await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
     },
-    shot(el) {
-        return html2canvas(el, { scale: this.scaleFor(el.offsetWidth, el.offsetHeight), backgroundColor: '#FFFFFF', useCORS: true, logging: false,
+    shot(el, target) {
+        return html2canvas(el, { scale: this.scaleFor(el.offsetWidth, el.offsetHeight, target), backgroundColor: '#FFFFFF', useCORS: true, logging: false,
             width: el.offsetWidth, height: el.offsetHeight, windowWidth: el.offsetWidth + 80, scrollX: 0, scrollY: 0 });
     },
     // Parte un reporte largo en páginas: encabezado y pie se repiten; las tablas largas se cortan por filas
@@ -1317,15 +1317,21 @@ const Exporter = {
             stage.appendChild(page); return page;
         });
     },
-    async renderPages(build) {
+    // Copia reducida para WhatsApp (lado más largo = 4096 px, el máximo que WhatsApp HD conserva)
+    fit(c, max) {
+        const k = max / Math.max(c.width, c.height); if (k >= 1) return c;
+        const o = document.createElement('canvas'); o.width = Math.round(c.width * k); o.height = Math.round(c.height * k);
+        const g = o.getContext('2d'); g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high'; g.drawImage(c, 0, 0, o.width, o.height); return o;
+    },
+    async renderPages(build, target) {
         const stage = $('#stage');
         stage.innerHTML = ''; Charts.destroyAll('stage');
         const el = await build(stage);
         await this.ready(el);
-        const pages = el.classList.contains('rp') && el.offsetHeight > el.offsetWidth * (this.RATIO + .15) ? this.paginate(el, stage) : [el];
+        const pages = el.classList.contains('rp') && el.offsetHeight > el.offsetWidth * this.SPLIT_AT ? this.paginate(el, stage) : [el];
         if (pages.length > 1) { el.remove(); await this.ready(stage); }
         const out = [];
-        for (const p of pages) out.push(await this.shot(p));
+        for (const p of pages) out.push(await this.shot(p, target));
         Charts.destroyAll('stage'); stage.innerHTML = '';
         return out;
     },
@@ -1392,12 +1398,16 @@ const ReportActions = {
         });
         $$('[data-act]', root).forEach(btn => btn.onclick = () => this.run(btn.dataset.act, cfg, btn));
     },
+    // Se dibuja en la máxima calidad del equipo (hasta 8K): "Guardar imagen" entrega ese original, para enviarlo
+    // por WhatsApp como Documento sin compresión; "Compartir" manda la copia de 4096 px, ideal para WhatsApp HD.
     async make(cfg, pdf) {
-        const canvases = await Exporter.renderPages(cfg.build);
+        const canvases = await Exporter.renderPages(cfg.build, pdf ? Exporter.WA_MAX : Exporter.HI_MAX);
         if (pdf) return { blob: await canvasToPdf(canvases[0]) };
-        const blobs = [];
-        for (const c of canvases) blobs.push(await new Promise(r => c.toBlob(r, 'image/png')));
-        return { blob: blobs[0], url: URL.createObjectURL(blobs[0]), blobs, urls: blobs.map(b => URL.createObjectURL(b)) };
+        const toB = c => new Promise(r => c.toBlob(r, 'image/png'));
+        const full = [], blobs = [];
+        for (const c of canvases) { full.push(await toB(c)); const f = Exporter.fit(c, Exporter.WA_MAX); blobs.push(f === c ? full[full.length - 1] : await toB(f)); }
+        const big = canvases[0] ? Math.max(canvases[0].width, canvases[0].height) : 0;
+        return { blob: blobs[0], url: URL.createObjectURL(blobs[0]), blobs, full, big, urls: blobs.map(b => URL.createObjectURL(b)) };
     },
     names(out, cfg) { const n = cfg.filename(), k = out.blobs ? out.blobs.length : 1; return k < 2 ? [n] : out.blobs.map((_, i) => n.replace(/\.png$/i, '') + `_parte${i + 1}de${k}.png`); },
     async run(act, cfg, btn) {
@@ -1421,7 +1431,7 @@ const ReportActions = {
     preview(out, cfg) {
         const k = (out.urls || [out.url]).length;
         const m = openModal(`<h3 class="modal-title">Vista previa${k > 1 ? ` · ${k} imágenes` : ''}</h3>
-            <p class="mute">${k > 1 ? `El reporte es largo: sale en ${k} imágenes para que en WhatsApp se lea completo. ` : ''}Para enviarlo nítido, en WhatsApp toca <b>HD</b> antes de enviar (o déjalo fijo en Ajustes › Almacenamiento y datos › Calidad de subida de fotos › HD).</p>
+            <p class="mute">${k > 1 ? `El reporte es largo: sale en ${k} imágenes para que en WhatsApp se lea completo. ` : ''}<b>📲 Compartir</b> envía la versión de 4096 px: en WhatsApp toca <b>HD</b> antes de enviar (o déjalo fijo en Ajustes › Almacenamiento y datos › Calidad de subida de fotos › HD). <b>💾 Guardar</b> baja el original${out.big ? ` de ${out.big} px` : ''}: envíalo en WhatsApp por 📎 › <b>Documento</b> y llega sin ninguna compresión.</p>
             <div class="preview-box">${(out.urls || [out.url]).map((u, i) => `<img src="${u}" alt="Vista previa ${i + 1}">`).join('')}</div>
             <div class="actions"><button class="btn btn-wa" data-p="share">📲 Compartir en WhatsApp</button><button class="btn btn-primary" data-p="save">💾 Guardar ${k > 1 ? 'imágenes' : 'imagen'}</button></div>`, { wide: true });
         $('[data-p="share"]', m).onclick = async () => { await this.share(out, cfg); closeModal(m); };
@@ -1452,7 +1462,7 @@ const ReportActions = {
     },
     async save(out, cfg) {
         const saving = this.persist(cfg);                        // Regla de oro: guardar imagen = guardar en Firestore
-        const blobs = out.blobs || [out.blob], names = this.names(out, cfg);
+        const blobs = out.full || out.blobs || [out.blob], names = this.names(out, cfg);
         for (let i = 0; i < blobs.length; i++) { await downloadBlob(blobs[i], names[i]); if (blobs.length > 1) await new Promise(r => setTimeout(r, 400)); }
         await saving;
     },

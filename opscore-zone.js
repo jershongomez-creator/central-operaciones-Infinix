@@ -939,7 +939,7 @@ function buildZoneCanvas(stage, d) {
         <div class="dcard hero">
             <div class="dcard-t">🎯 CUMPLIMIENTO DE LA ZONA</div>
             <div class="row" style="gap:22px">
-                ${ringCardHTML('rz-cumpl', 190, pct(S.cumpl), 'de la meta')}
+                ${ringCardHTML('rz-cumpl', 140, pct(S.cumpl), 'de la meta')}
                 <div class="dlist">
                     <div><span>Venta</span><b>${S.venta}</b></div>
                     <div><span>Target</span><b>${S.meta || dash}</b></div>
@@ -952,13 +952,13 @@ function buildZoneCanvas(stage, d) {
         <div class="dcard">
             <div class="dcard-t">ESTADO DE LOS PDV</div>
             <div class="row" style="gap:14px">
-                ${ringCardHTML('rz-status', 140, an.status.meta + an.status.bien, 'van bien')}
+                ${ringCardHTML('rz-status', 112, an.status.meta + an.status.bien, 'van bien')}
                 <div class="legend">${Object.keys(STAT).filter(k => an.status[k]).map(k => `<div><i class="dot" style="background:${STAT[k][1]}"></i><span>${STAT[k][0]}</span><b>${an.status[k]}</b></div>`).join('')}</div>
             </div>
         </div>
         <div class="dcard">
             <div class="dcard-t">ROI DE LA ZONA</div>
-            <div class="center">${ringCardHTML('rz-roi', 150, S.roi == null ? dash : fmt1(S.roi), 'uds / promotor')}</div>
+            <div class="center">${ringCardHTML('rz-roi', 112, S.roi == null ? dash : fmt1(S.roi), 'uds/HC')}</div>
             <div class="dfoot">Proyectado <b>${S.roiProj == null ? dash : fmt1(S.roiProj)}</b> · HC ${S.hc}</div>
         </div>
         <div class="dcard">
@@ -973,7 +973,7 @@ function buildZoneCanvas(stage, d) {
     </tbody></table>` : ''}
     <div class="rp-sec">RANKING DE PDV · VENTA REAL FRENTE AL TARGET${rankRows.length < an.ranking.length ? ` · ${rankRows.length} DE ${an.ranking.length} PDV (MEJORES Y MÁS CRÍTICOS)` : ''}</div>
     <table class="rp-tbl"><thead><tr><th class="l">#</th><th class="l">PUNTO DE VENTA</th>${an.multiZona ? '<th class="l">ZONA</th>' : ''}<th>ESTADO</th><th>HC</th><th>TARGET</th><th>VENTA</th><th>CUMPL.</th><th>PROY.</th><th>% PROY.</th><th>ROI</th><th>ROI PROY.</th><th class="l">ASESORES</th><th class="l">REF. REZAGADA</th><th class="l">FOCO</th></tr></thead><tbody>
-        ${rankRows.map(r => `<tr><td class="l">${an.ranking.indexOf(r) + 1}</td><td class="l">${esc(r.st.tienda)}</td>${an.multiZona ? `<td class="l small">${esc(r.zona)}</td>` : ''}<td><i class="ztag" style="background:${STAT[r.status][1]}">${STAT[r.status][0]}</i></td><td>${r.hc}</td><td>${r.meta || dash}</td><td><b>${r.venta}</b></td><td class="c-tot ${cls(r.cumpl)}">${pct(r.cumpl)}</td><td>${r.proj}</td><td class="c-tot ${cls(r.cumplProj)}">${pct(r.cumplProj)}</td><td>${fmt1(r.roi)}</td><td class="roi">${fmt1(r.roiProj)}</td><td class="l small">${r.asesores.map(a => `${esc(a.nombre)} (${a.total})`).join(', ') || dash}${r.bajaVenta ? ` · +${r.bajaVenta} ex-asesores` : ''}</td><td class="l small">${r.rezagadas[0] ? `${esc(r.rezagadas[0].name)} ${r.rezagadas[0].venta}/${r.rezagadas[0].meta}` : dash}</td><td class="l small">${esc(r.foco.name)}</td></tr>`).join('')}
+        ${rankRows.map(r => `<tr><td class="l">${an.ranking.indexOf(r) + 1}</td><td class="l">${esc(r.st.tienda)}</td>${an.multiZona ? `<td class="l small">${esc(r.zona)}</td>` : ''}<td><i class="ztag" style="background:${STAT[r.status][1]}">${STAT[r.status][0]}</i></td><td>${r.hc}</td><td>${r.meta || dash}</td><td><b>${r.venta}</b></td><td class="c-tot ${cls(r.cumpl)}">${pct(r.cumpl)}</td><td>${r.proj}</td><td class="c-tot ${cls(r.cumplProj)}">${pct(r.cumplProj)}</td><td>${fmt1(r.roi)}</td><td class="roi">${fmt1(r.roiProj)}</td><td class="l small z-adv">${r.asesores.map(a => `${esc(a.nombre.split(' ').slice(0, 2).join(' '))} <b>${a.total}</b>`).join('<br>') || dash}</td><td class="l small">${r.rezagadas[0] ? `${esc(r.rezagadas[0].name)} ${r.rezagadas[0].venta}/${r.rezagadas[0].meta}` : dash}</td><td class="l small">${esc(r.foco.name)}</td></tr>`).join('')}
         <tr class="tot"><td class="l" colspan="${an.multiZona ? 3 : 2}">TOTAL</td><td></td><td>${S.hc}</td><td>${S.meta || dash}</td><td>${S.venta}</td><td class="c-tot ${cls(S.cumpl)}">${pct(S.cumpl)}</td><td>${S.proj}</td><td class="c-tot ${cls(S.cumplProj)}">${pct(S.cumplProj)}</td><td>${S.roi == null ? dash : fmt1(S.roi)}</td><td class="roi">${S.roiProj == null ? dash : fmt1(S.roiProj)}</td><td colspan="3"></td></tr>
     </tbody></table>
 
@@ -989,10 +989,7 @@ function buildZoneCanvas(stage, d) {
         <div class="vbox"><div class="vbox-t">Lectura de la zona</div><ul class="z-list">${an.insights.lectura.map(t => `<li>${t}</li>`).join('')}</ul></div>
         <div class="vbox good"><div class="vbox-t">Recomendaciones</div><ol class="z-list">${an.insights.recomendaciones.slice(0, 6).map(t => `<li>${t}</li>`).join('') || '<li>Sostener el ritmo y cuidar inventario.</li>'}</ol></div>
     </div>
-    ${visitar.length ? `<div class="rp-sec light">PLAN DE VISITAS PROPUESTO · ${visitar.length} PDV</div>
-    <div class="z-visits">${visitar.map(r => `<div class="zv"><i class="ztag" style="background:${STAT[r.status][1]}">${STAT[r.status][0]}</i><b>${esc(r.st.tienda)}</b><span>${r.venta}/${r.meta || dash} · proy. ${pct(r.cumplProj)} · foco ${esc(r.foco.name)} (${r.foco.venta}/${r.foco.meta})${r.sinStock.length ? ' · sin stock: ' + r.sinStock.map(x => esc(x.name)).join(', ') : ''}</span></div>`).join('')}</div>` : ''}
-
-    ${typeof DayStatus !== 'undefined' ? DayStatus.reportBlock(an.rows.map(r => r.st)) : ''}
+    ${typeof DayStatus !== 'undefined' ? DayStatus.reportBlock(an.rows.map(r => r.st), todayStr(), 'ASESORES FUERA DEL PDV Y NOVEDADES', { cards: true }) : ''}
     <footer class="rp-foot"><span>Proyección = venta ÷ días transcurridos × días del mes · ROI = unidades ÷ promotores (HC) · Estados por proyección: en meta ≥100%, bien ≥85%, en riesgo ≥70%, crítico &lt;70% · Fuente: data plana de la zona.</span><b>Infinix · Central de Operaciones</b></footer>
     <div class="rp-bar"></div>`;
     stage.appendChild(el);
