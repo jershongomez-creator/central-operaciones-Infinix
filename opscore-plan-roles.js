@@ -112,41 +112,49 @@ function buildPlanFormCanvas(stage, doc) {
             return `${short} ${tag}`; }).join('<br>');
     };
     const temas = r => { const st = storeById(r.storeId); if (!st) return []; const T = {}; ((r.asesores || []).length ? r.asesores.map(a => a.nombre) : activeAdvisors(st).map(a => a.nombre)).forEach(n => { const ev = hasEv ? Evals.forAdvisor(st.id, n, '', ym) : null; (ev && ev.temasDebiles || []).forEach(t => { T[t.tema] = Math.min(T[t.tema] ?? 100, t.nota); }); }); return Object.entries(T).sort((a, b) => a[1] - b[1]).slice(0, 3).map(([t]) => t); };
+    // Un renglón por asesor a visitar: evaluaciones por semana, conocimiento, venta, cumplimiento, proyección y ROI del PDV
+    const filas = R.flatMap(r => { const st = storeById(r.storeId); if (!st) return [];
+        const names = (r.asesores || []).length ? r.asesores.map(a => a.nombre) : activeAdvisors(st).map(a => a.nombre).filter(n => { const ds = typeof DayStatus !== 'undefined' ? DayStatus.ofAdvisor(st, n, doc.fecha) : null; return !(ds && ds.off); });
+        return names.map(n => { const D = typeof Advisor !== 'undefined' ? Advisor.byId(`${st.id}|${slug(n)}`) : null, ev = hasEv ? Evals.forAdvisor(st.id, n, '', ym) : null;
+            const ws = ev ? ev.cargadas : weeks, hechas = ws.filter(w => ev && ev.porSemana[w]).length;
+            return { r, st, nombre: n, pa: D ? D.pacing : null, ev, ws, hechas, pct: ws.length ? hechas / ws.length : null, con: ev ? ev.promedio : null }; }); });
+    const totEv = sum(filas.map(f => f.ws.length)), hechasEv = sum(filas.map(f => f.hechas)), faltan = totEv - hechasEv;
+    const lastW = weeks[weeks.length - 1], lastDone = filas.filter(f => f.ev && lastW && f.ev.porSemana[lastW]).length;
+    const cons = filas.map(f => f.con).filter(n => n != null), conProm = cons.length ? Math.round(sum(cons) / cons.length) : null;
+    const vA = sum(filas.map(f => f.pa ? f.pa.venta : 0)), mA = sum(filas.map(f => f.pa ? f.pa.meta : 0)), pA = sum(filas.map(f => f.pa ? f.pa.proy || 0 : 0));
+    const bar = (v, mark, cls) => v == null ? dash : `<div class="fp-bar"><i class="${cls || col(v)}" style="width:${Math.min(100, Math.round(v * 100))}%"></i>${mark != null ? `<u style="left:${Math.min(100, Math.round(mark * 100))}%"></u>` : ''}<b>${pc(v)}</b></div>`;
     const el = document.createElement('div'); el.className = 'rp sp fp';
     el.innerHTML = `<div class="rp-bar"></div>
     <header class="rp-head"><img class="rp-logo" src="${LOGO_INFINIX}" alt="Infinix">
-        <div class="rp-head-mid"><div class="rp-kicker">FORMACIÓN · PLAN DE TRABAJO DEL DÍA</div><div class="rp-title">${esc(fechaLarga(doc.fecha).toUpperCase())}</div><div class="rp-sub">${esc(doc.week)} · Zona ${esc(zonas.join(', '))} · ${R.length} PDV a visitar · ${nForm} asesores a formar</div></div>
+        <div class="rp-head-mid"><div class="rp-kicker">FORMACIÓN · PLAN DE TRABAJO DEL DÍA</div><div class="rp-title">${esc(fechaLarga(doc.fecha).toUpperCase())}</div><div class="rp-sub">${esc(doc.week)} · Zona ${esc(zonas.join(', '))} · ${R.length} PDV · ${filas.length} asesores a formar</div></div>
         <div class="pl-who"><b>${esc(doc.nombre)}</b><small>${esc(ROLES[doc.rol] ? ROLES[doc.rol].label : 'Formador')}</small><span class="zone">ZONA ${esc(zonas[0] || '')}</span></div></header>
     <div class="sp-band">
-        <div class="hero ${lastZ ? col(lastZ.pct) : ''}"><span>EVALUACIONES ${esc(lastZ ? lastZ.w : '')} · ZONA</span><b>${lastZ ? pc(lastZ.pct) : dash}</b><em>${lastZ ? `${lastZ.hechas} de ${lastZ.total} asesores la presentaron` : 'aún no hay evaluaciones cargadas'}</em></div>
-        <div><span>Eval. PDV del plan</span><b>${lastP ? `${lastP.hechas}/${lastP.total}` : dash}</b><em class="${lastP ? col(lastP.pct) : ''}">${lastP ? pc(lastP.pct) + ' presentaron' : ''}</em></div>
-        <div><span>Promedio evaluación</span><b>${proms.length ? Math.round(sum(proms) / proms.length) : dash}</b><em>PDV del plan</em></div>
+        <div class="hero ${totEv ? col(hechasEv / totEv) : ''}"><span>EVALUACIONES DEL PLAN</span><b>${totEv ? pc(hechasEv / totEv) : dash}</b><em>${totEv ? `${hechasEv} de ${totEv} presentadas · faltan ${faltan}` : 'aún no hay evaluaciones cargadas'}</em></div>
+        <div><span>Semana ${esc(lastW || '')}</span><b>${lastW ? `${lastDone}/${filas.length}` : dash}</b><em class="${filas.length && lastW ? col(lastDone / filas.length) : ''}">${lastW ? pc(filas.length ? lastDone / filas.length : null) + ' la presentaron' : ''}</em></div>
+        <div><span>Conocimiento</span><b>${conProm ?? dash}</b><em class="${conProm == null ? '' : conProm >= 80 ? 'g' : conProm >= 70 ? 'a' : 'r'}">promedio de notas</em></div>
+        <div><span>Venta asesores</span><b>${vA}<small style="font-size:20px">/${mA || dash}</small></b><em class="${mA ? col(vA / mA) : ''}">${mA ? pc(vA / mA) + ' · proy. ' + pc(pA / mA) : ''}</em></div>
         <div><span>Ref. foco del plan</span><b>${focoV}<small style="font-size:20px">/${focoM || dash}</small></b><em class="${focoM ? col(focoV / focoM) : ''}">${focoM ? pc(focoV / focoM) + ' de la meta foco' : 'sin meta foco'}</em></div>
-        <div><span>Asesores a formar</span><b>${nForm}</b><em>en ${R.length} PDV</em></div>
-        <div class="ok"><span>Zona en venta</span><b>${pc(G.cumpl)}</b><em class="${col(G.cumplProj)}">proyección ${pc(G.cumplProj)}</em></div>
+        <div class="ok"><span>Zona · evaluaciones y venta</span><b>${lastZ ? pc(lastZ.pct) : dash}</b><em>${lastZ ? esc(lastZ.w) + ' zona · ' : ''}venta ${pc(G.cumpl)} · proy. ${pc(G.cumplProj)}</em></div>
     </div>
-    <div class="rp-sec">PUNTOS DE VENTA A VISITAR · FORMACIÓN Y PRODUCTO FOCO</div>
-    <table class="rp-tbl sp-tbl"><thead><tr><th class="l">#</th><th class="l">PUNTO DE VENTA</th><th class="l">ASESORES · NOTA ${esc(lastZ ? lastZ.w : '')}</th><th>EVAL.</th><th>PROM.</th><th class="l">REF. FOCO</th><th>VENTA</th><th>META</th><th class="c-tot">CUMPL. FOCO</th><th>INV.</th><th class="l">TEMAS A REFORZAR</th></tr></thead><tbody>
-    ${R.map((r, i) => { const focoName = (INFINIX_MODELS.find(m => m.key === r.focoRef) || {}).name || dash, cf = int(r.focoMeta) ? int(r.focoVenta) / int(r.focoMeta) : null, es = evStore(r.storeId), le = es[es.length - 1];
-        return `<tr><td class="l">${i + 1}</td><td class="l"><div class="sp-pdv">${chainLogo(r.logoKey, r.cadena, 'xs')}<b>${esc(r.tienda)}</b></div></td><td class="l small">${advCell(r) || dash}</td>
-        <td class="${le ? col(le.pct) : ''}"><b>${le ? `${le.hechas}/${le.total}` : dash}</b></td><td>${r.evals && r.evals.prom != null ? r.evals.prom : dash}</td>
-        <td class="l"><b>${esc(focoName)}</b></td><td><b>${int(r.focoVenta)}</b></td><td>${int(r.focoMeta) || dash}</td><td class="c-tot ${col(cf)}">${pc(cf)}</td><td>${int(r.focoInv) || dash}</td>
-        <td class="l small">${temas(r).map(esc).join('<br>') || dash}</td></tr>`; }).join('')}
-    <tr class="tot"><td class="l" colspan="3">TOTAL VISITA</td><td>${lastP ? `${lastP.hechas}/${lastP.total}` : ''}</td><td>${proms.length ? Math.round(sum(proms) / proms.length) : ''}</td><td></td><td>${focoV}</td><td>${focoM || ''}</td><td class="c-tot">${focoM ? pc(focoV / focoM) : ''}</td><td>${sum(R.map(r => int(r.focoInv)))}</td><td></td></tr>
+    <div class="rp-sec">ASESORES A FORMAR · EVALUACIONES, CONOCIMIENTO Y VENTA</div>
+    <table class="rp-tbl sp-tbl fp-tbl"><thead><tr><th class="l">#</th><th class="l">ASESOR</th><th class="l">EVALUACIONES</th><th class="c-tot">% EVAL.</th><th>CONOCIMIENTO</th><th>VENTA</th><th>META</th><th>CUMPLIMIENTO</th><th>PROY.</th><th>ROI PDV</th></tr></thead><tbody>
+    ${filas.map((f, i) => `<tr><td class="l">${i + 1}</td><td class="l"><div class="sp-pdv">${chainLogo(f.r.logoKey, f.r.cadena, 'xs')}<span><b>${esc(f.nombre.split(' ').slice(0, 2).join(' '))}</b><br><small class="mute2">${esc(f.st.tienda)}</small></span></div></td>
+        <td class="l"><div class="fp-ws">${f.ws.map(w => { const x = f.ev && f.ev.porSemana[w]; return `<i class="${x ? (x.nota == null || x.nota >= 80 ? 'g' : x.nota >= 70 ? 'a' : 'r') : 'x'}"><small>${w}</small>${x ? (x.nota == null ? '✓' : x.nota) : '✕'}</i>`; }).join('') || dash}</div></td>
+        <td class="c-tot ${col(f.pct)}"><b>${pc(f.pct)}</b></td>
+        <td>${f.con == null ? dash : bar(f.con / 100, .8, f.con >= 80 ? 'g' : f.con >= 70 ? 'a' : 'r').replace(`<b>${pc(f.con / 100)}</b>`, `<b>${f.con}</b>`)}</td>
+        <td><b>${f.pa ? f.pa.venta : dash}</b></td><td>${f.pa && f.pa.meta ? f.pa.meta : dash}</td>
+        <td>${f.pa ? bar(f.pa.cumpl, f.pa.esperado, f.pa.indice == null ? '' : f.pa.indice >= 1 ? 'g' : f.pa.indice >= .85 ? 'a' : 'r') : dash}</td><td>${f.pa && f.pa.proy != null ? Math.round(f.pa.proy) : dash}</td><td>${fmt1(f.r.roi)}</td></tr>`).join('') || `<tr><td colspan="10">Sin asesores en el plan.</td></tr>`}
     </tbody></table>
-    ${weeks.length ? `<div class="rp-sec">CUMPLIMIENTO DE EVALUACIONES POR SEMANA · ${esc(mesLargo(ym).toUpperCase())}</div>
-    <table class="rp-tbl sp-tbl"><thead><tr><th class="l">PUNTO DE VENTA</th>${weeks.map(w => `<th>${w}</th>`).join('')}</tr></thead><tbody>
-    ${R.map(r => { const es = evStore(r.storeId); return `<tr><td class="l"><div class="sp-pdv">${chainLogo(r.logoKey, r.cadena, 'xs')}<b>${esc(r.tienda)}</b></div></td>${weeks.map(w => { const x = es.find(e => e.w === w); return `<td class="c-tot ${x ? col(x.pct) : ''}">${x ? `${x.hechas}/${x.total} · ${pc(x.pct)}` : dash}</td>`; }).join('')}</tr>`; }).join('')}
-    <tr class="tot"><td class="l">ZONA</td>${evZ.map(x => `<td class="c-tot">${x.hechas}/${x.total} · ${pc(x.pct)}</td>`).join('')}</tr></tbody></table>` : ''}
     <div class="rp-sec">PLAN DE FORMACIÓN PROGRAMADO</div>
     <div class="sp-gest">${R.map(r => { const V = vs(storeById(r.storeId)), top = V && V.comp[0], focoName = (INFINIX_MODELS.find(m => m.key === r.focoRef) || {}).name || '';
         return `<div class="sp-g"><div class="sp-g-h">${chainLogo(r.logoKey, r.cadena, 'xs')}<b>${esc(r.tienda)}</b><em>Foco ${esc(focoName)}</em></div>
         ${r.foco && r.foco.trim() ? `<div class="sp-imp" style="margin:0 0 6px"><b>Objetivo:</b> ${esc(r.foco)}</div>` : ''}
         <ul>${r.acciones.filter(a => a && a.trim()).map(a => `<li>${esc(a)}</li>`).join('') || '<li class="mute2">Sin actividad definida</li>'}</ul>
+        ${temas(r).length ? `<div class="sp-imp">📚 Reforzar: ${temas(r).map(esc).join(' · ')}</div>` : ''}
         ${top ? `<div class="fp-vs">⚔️ Lo que más vende la competencia: <b>${esc(top.ref)}</b> (${esc(top.marca)}, ${top.q} uds)${V.lider && V.lider !== 'INFINIX' ? ` · marca #1: <b>${esc(V.lider)}</b>` : ''}</div>` : ''}
         ${r.impactos.filter(Boolean).length ? `<div class="sp-imp">🎯 ${r.impactos.filter(Boolean).map(esc).join(' · ')}</div>` : ''}</div>`; }).join('')}</div>
     ${typeof DayStatus !== 'undefined' ? DayStatus.reportBlock(R.map(r => storeById(r.storeId)).filter(Boolean), doc.fecha, 'ASESORES FUERA DEL PDV HOY (NO SE INCLUYEN EN LA FORMACIÓN)') : ''}
-    <footer class="rp-foot"><span>Nota = mejor intento de la última semana cargada (pend. = no la ha presentado). Eval. = asesores que presentaron / asesores activos. Ref. foco: venta del mes según la data DCR, meta del target del PDV e inventario del último cierre. Competencia: data real de la cadena.</span><b>Infinix · Central de Operaciones</b></footer><div class="rp-bar"></div>`;
+    <footer class="rp-foot"><span>Evaluaciones: nota de cada semana cargada (✕ = no la presentó). Conocimiento = promedio de sus notas (línea = 80). Cumplimiento = venta ÷ meta del asesor; la línea marca lo esperado a la fecha (verde si va al ritmo). Proy. = venta proyectada al cierre del mes. Competencia: data real de la cadena.</span><b>Infinix · Central de Operaciones</b></footer><div class="rp-bar"></div>`;
     stage.appendChild(el); return el;
 }
 

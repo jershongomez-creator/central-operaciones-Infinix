@@ -938,3 +938,19 @@ tr.vs-inf td { background: #F0FDF4; } tr.vs-inf td b { color: #047857; }
 .rp tr.rv-inv td { background: #EFF6FF; } .rp tr.rv-sum td { background: #F0FDF4; }
 .rp .rp-tbl td.r { color: #B91C1C; font-weight: 800; } .rp .rp-tbl td.g { color: #047857; font-weight: 700; } .rp .rp-tbl td.a { color: #B45309; font-weight: 700; }
 .preview-box img + img { border-top: 8px solid #E2E8F0; }
+/* Plan del formador condensado (v1.12.1) */
+.fp .fp-tbl td { padding: 8px 8px; }
+.fp .fp-ws { display: flex; gap: 5px; flex-wrap: wrap; }
+.fp .fp-ws i { font-style: normal; display: inline-flex; flex-direction: column; align-items: center; min-width: 46px; border-radius: 8px; padding: 2px 5px; font-weight: 800; font-size: 15px; line-height: 1.05; background: #E2E8F0; color: #334155; }
+.fp .fp-ws i small { font-size: 9.5px; font-weight: 700; opacity: .75; }
+.fp .fp-ws i.g { background: #DCFCE7; color: #166534; } .fp .fp-ws i.a { background: #FEF3C7; color: #92400E; } .fp .fp-ws i.r { background: #FEE2E2; color: #991B1B; } .fp .fp-ws i.x { background: #FEE2E2; color: #B91C1C; }
+.fp .fp-bar { position: relative; height: 22px; background: #EEF2F6; border-radius: 99px; min-width: 150px; overflow: visible; }
+.fp .fp-bar > i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 99px; background: #94A3B8; }
+.fp .fp-bar > i.g { background: #22C55E; } .fp .fp-bar > i.a { background: #F59E0B; } .fp .fp-bar > i.r { background: #EF4444; }
+.fp .fp-bar > u { position: absolute; top: -3px; bottom: -3px; width: 3px; background: #0F172A; border-radius: 2px; text-decoration: none; }
+.fp .fp-bar > b { position: relative; z-index: 1; display: block; text-align: center; font-size: 13px; line-height: 22px; color: #0F172A; }
+.rv-det { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; color: var(--mute); cursor: pointer; }
+.rv-ref th.rv-rh { border-left: 2px solid var(--line); } .rv-ref th.rv-sh { font-size: 10.5px; font-weight: 700; }
+.rv-ref td.inv { color: #64748B; background: #F8FAFC; border-left: 2px solid var(--line); font-size: 12px; }
+.rp .rv-refp th, .rp .rv-refp td { font-size: 13px; padding: 7px 4px; } .rp .rv-refp th.sh { font-size: 10.5px; }
+.rp .rv-refp td.inv { color: #64748B; background: #F8FAFC; border-left: 2px solid #CBD5E1; }
