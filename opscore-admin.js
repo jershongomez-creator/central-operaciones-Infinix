@@ -107,6 +107,32 @@ registerModule('admin', (() => {
         Object.assign(st, upd); await Data.set(COL.stores, st.id, upd, true); return true;
     };
     const advByName = (st, n) => storeAdvisors(st).find(a => a.nombre === n);
+    // Retiro del asesor: motivo, novedad en la zona y baja en TODAS las tiendas donde aparezca (asignado o en la data).
+    // Sus unidades siguen sumando a la tienda, la zona y los reportes; su nombre deja de salir en listas, rankings y tiendas.
+    const RETIRO_MOTIVOS = ['Renuncia voluntaria', 'Finalización de contrato', 'Terminación de contrato por la empresa', 'Traslado / cambio de marca', 'Otro'];
+    function retireForm(st, adv) {
+        const m = openModal(`<h3 class="modal-title">Retirar a ${esc(adv.nombre)}</h3>
+            <p class="mute">${esc(st.tienda)}. Deja de aparecer en todas las tiendas, listas y rankings; sus unidades vendidas siguen sumando a la tienda y a la zona.</p>
+            <label class="lbl">¿A qué se debe el retiro?</label><select class="input" id="rt-mot">${RETIRO_MOTIVOS.map(x => `<option>${esc(x)}</option>`).join('')}</select>
+            <div class="grid2" style="margin-top:8px"><label><span class="lbl">Fecha del retiro</span><input type="date" class="input" id="rt-f" value="${todayStr()}"></label><label><span class="lbl">Detalle (opcional)</span><input class="input" id="rt-n" placeholder="Ej.: último día laborado"></label></div>
+            <div class="row end wrap" style="margin-top:14px;gap:8px"><button class="btn btn-ghost" data-x>Cancelar</button><button class="btn btn-danger" data-ok>Guardar y retirar</button></div>`);
+        $('[data-x]', m).onclick = () => closeModal(m);
+        $('[data-ok]', m).onclick = async e => {
+            if (!canWrite()) return; busy(e.currentTarget, true);
+            const motivo = $('#rt-mot', m).value, fecha = $('#rt-f', m).value || todayStr(), nota = $('#rt-n', m).value.trim(), by = me().nombre, at = Date.now();
+            const same = n => adv.alias.some(x => sameAdvisor({ nombre: x, cedula: adv.cedula }, { nombre: n.nombre || n, cedula: n.cedula }));
+            const ops = [];
+            State.stores.filter(S => S.id === st.id || (S.asesores || []).some(n => same({ nombre: n })) || storeAdvisors(S).some(a => a.activo && same(a))).forEach(S => {
+                const upd = { updatedAt: at, asesores: assigned(S).filter(n => !same({ nombre: n })) };
+                if (!(S.bajas || []).some(b => same(b))) upd.bajas = (S.bajas || []).concat({ nombre: adv.nombre, cedula: adv.cedula || '', nombres: adv.alias, at, by, motivo, fecha });
+                if (S.id === st.id) upd.novedades = (S.novedades || []).concat({ id: 'nv' + at, nombre: adv.nombre, tipo: 'retiro', desde: fecha, hasta: addDays(fecha, 6), nota: `${motivo}${nota ? ': ' + nota : ''}`, by, rol: me().rol, at });
+                Object.assign(upd, markManual(S, ['asesores'])); Object.assign(S, upd);
+                ops.push({ op: 'set', col: COL.stores, id: S.id, data: upd, merge: true });
+            });
+            await Data.batch(ops); closeModal(m);
+            toast(`${adv.nombre} retirado (${motivo}) en ${ops.length} tienda(s): sus unidades siguen sumando`, 'ok', 5000); paint();
+        };
+    }
     const assigned = st => (st.asesores && st.asesores.length) ? st.asesores : (st.asesoresSeed || []);   // lista vigente del PDV
     async function advMeta(inp) {
         const st = storeById(inp.dataset.sid), a = st && advByName(st, inp.dataset.am); if (!a) return;
@@ -238,18 +264,21 @@ registerModule('admin', (() => {
 
     function passForm(st) {
         if (!st) return;
-        const m = openModal(`<h3 class="modal-title">Contraseña · ${esc(st.tienda)}</h3>
-            <p class="mute">${st.passHash ? 'La tienda tiene una contraseña propia.' : 'La tienda entra con la clave inicial de PDV.'} Asigna una nueva o devuélvela a la clave inicial.</p>
+        const actual = !st.passHash ? `${STORE_INITIAL_PASS} <small class="mute">(clave inicial)</small>` : st.passVer ? esc(passDec(st.passVer)) : '<span class="mute">La cambió la tienda antes de esta versión: no se puede ver. Restablécela.</span>';
+        const m = openModal(`<h3 class="modal-title">🔑 Contraseña · ${esc(st.tienda)}</h3>
+            <div class="pw-now"><span>Contraseña actual</span><b id="pf-cur" class="pw-hide">••••••••</b><button class="btn btn-ghost sm" id="pf-see">👁 Ver</button></div>
             <label class="lbl">Nueva contraseña (mínimo 6 caracteres)</label><input class="input" id="pf-p" autocomplete="new-password">
             <p id="pf-err" class="err" hidden></p>
-            <div class="row end wrap" style="margin-top:16px;gap:8px"><button class="btn btn-ghost" data-x>Cancelar</button><button class="btn btn-ghost" data-r>🔑 Volver a la clave inicial</button><button class="btn btn-primary" data-ok>Guardar contraseña</button></div>`);
+            <div class="row end wrap" style="margin-top:16px;gap:8px"><button class="btn btn-ghost" data-x>Cancelar</button><button class="btn btn-ghost" data-r>🔑 Restablecer a ${STORE_INITIAL_PASS}</button><button class="btn btn-primary" data-ok>Guardar contraseña</button></div>`);
+        $('#pf-see', m).onclick = () => { const c = $('#pf-cur', m); c.innerHTML = actual; c.classList.remove('pw-hide'); };
         $('[data-x]', m).onclick = () => closeModal(m);
-        $('[data-r]', m).onclick = async () => { await Data.set(COL.stores, st.id, { passHash: null }, true); st.passHash = null; closeModal(m); toast('Contraseña restablecida a la clave inicial', 'ok'); };
+        $('[data-r]', m).onclick = async () => { await Data.set(COL.stores, st.id, { passHash: null, passVer: null }, true); st.passHash = null; st.passVer = null; closeModal(m); toast(`Contraseña restablecida a ${STORE_INITIAL_PASS}`, 'ok'); };
         $('[data-ok]', m).onclick = async () => {
             const v = $('#pf-p', m).value; if (v.length < 6) { const e = $('#pf-err', m); e.textContent = 'Mínimo 6 caracteres.'; e.hidden = false; return; }
-            const h = pwdHash(v); await Data.set(COL.stores, st.id, { passHash: h }, true); st.passHash = h; closeModal(m); toast('Contraseña de la tienda actualizada', 'ok');
+            const h = pwdHash(v), pv = passEnc(v); await Data.set(COL.stores, st.id, { passHash: h, passVer: pv }, true); st.passHash = h; st.passVer = pv; closeModal(m); toast('Contraseña de la tienda actualizada', 'ok');
         };
     }
+
 
     // --------------------------------------------------------------- Zonas
     function zonasHTML() {
@@ -269,6 +298,7 @@ registerModule('admin', (() => {
     function equipoHTML() {
         const mine = me();
         const list = State.staff.filter(u => isAdmin() || inScope(u.zona) || (u.regional && u.regional === myRegional())).filter(u => isAdmin() || ['supervisor', 'formador'].concat(mine.rol === 'gerente' ? ['coordinador'] : []).includes(u.rol) || u.id === mine.userId)
+            .filter(u => !(u.base && !isAdmin()))
             .sort((a, b) => ((a.base ? '0' : a.demo ? '2' : '1') + a.rol + a.nombre).localeCompare((b.base ? '0' : b.demo ? '2' : '1') + b.rol + b.nombre, 'es'));
         const demoN = State.staff.filter(u => u.demo).length;
         return `<section class="card">
@@ -374,11 +404,8 @@ registerModule('admin', (() => {
         }
         if (a === 'adv-toggle') {
             const st = storeById(b.dataset.sid), adv = st && advByName(st, b.dataset.n); if (!adv) return;
-            if (adv.activo) {
-                const bajas = (st.bajas || []).concat({ nombre: adv.nombre, cedula: adv.cedula || '', nombres: adv.alias, at: Date.now(), by: me().nombre });
-                await saveStore(st, { bajas, asesores: assigned(st).filter(n => !adv.alias.some(x => sameAdvisor({ nombre: x }, { nombre: n }))) }, ['asesores']);
-                toast(`${adv.nombre} retirado: sus unidades siguen en ${st.tienda}`, 'ok');
-            } else {
+            if (adv.activo) return retireForm(st, adv);
+            else {
                 await saveStore(st, { bajas: (st.bajas || []).filter(x => !sameAdvisor(x, adv) && !adv.alias.some(n => sameAdvisor(x, { nombre: n }))), asesores: [...new Set([...assigned(st), adv.nombre])] }, ['asesores']);
                 toast(`${adv.nombre} activo de nuevo`, 'ok');
             }

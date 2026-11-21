@@ -107,7 +107,9 @@ registerModule('central', (() => {
         const W = weeksOf(month).filter(w => w.from <= day);
         const curW = 'W' + isoWeek(corte);
         if (sel !== 'tienda' && !D.some(d => d.id === sel)) sel = 'tienda';
-        $('#ct-body').innerHTML = sel === 'tienda' ? storeHTML(s, D, Z, W, curW, day, dim) : advHTML(s, D, D.find(d => d.id === sel), W, curW, day, dim);
+        // Tienda: venta de los cierres que registran los asesores. Asesor: venta real DCR (última data plana de la zona).
+        const Zc = closuresZ(month), dayC = Zc.corte ? Math.max(1, int(Zc.corte.slice(8))) : day;
+        $('#ct-body').innerHTML = sel === 'tienda' ? storeHTML(s, D, Zc, weeksOf(month).filter(w => w.from <= dayC), 'W' + isoWeek(Zc.corte || corte), dayC, dim) : advHTML(s, D, D.find(d => d.id === sel), W, curW, day, dim);
     }
 
     // Barras de semana (CSS) con variación frente a la semana anterior
@@ -131,6 +133,18 @@ registerModule('central', (() => {
     function storeSemRef(Z, month) {
         const out = {}; Object.entries(Z.diasRef || {}).forEach(([dd, r]) => { const w = 'W' + isoWeek(`${month}-${dd}`); const o = out[w] = out[w] || {}; Object.entries(r).forEach(([k, v]) => { o[k] = (o[k] || 0) + v; }); }); return out;
     }
+    // Venta de la tienda armada con sus cierres (Infinix por referencia, por semana y por día)
+    function closuresZ(month) {
+        const Z = { month, total: 0, sem: {}, ventas: {}, dias: {}, diasRef: {}, corte: '' };
+        closures.filter(c => (c.fecha || '').slice(0, 7) === month).forEach(c => {
+            const t = closureInfinix(c), w = 'W' + isoWeek(c.fecha), dd = c.fecha.slice(8);
+            Z.total += t; Z.sem[w] = (Z.sem[w] || 0) + t; Z.dias[dd] = (Z.dias[dd] || 0) + t;
+            const r = Z.diasRef[dd] = Z.diasRef[dd] || {};
+            Object.entries(c.ventas || {}).forEach(([k, v]) => { Z.ventas[k] = (Z.ventas[k] || 0) + int(v); r[k] = (r[k] || 0) + int(v); });
+            if (c.fecha > Z.corte) Z.corte = c.fecha;
+        });
+        return Z;
+    }
     // Cierres diarios por semana: Infinix y competencia
     function closuresByWeek() {
         const out = {}; closures.forEach(c => { const w = 'W' + isoWeek(c.fecha), o = out[w] = out[w] || {}; BRANDS.forEach(b => { o[b] = (o[b] || 0) + closureBrand(c, b); }); }); return out;
@@ -150,13 +164,13 @@ registerModule('central', (() => {
         const team = D.map(d => ({ d, sem: d.pacingSem || {}, total: d.pacing.venta })).sort((a, b) => b.total - a.total);
         const semOf = d => (activeAdvisors(s).find(a => sameAdvisor(a, { nombre: d.nombre })) || {}).sem || {};
         const best = W.map(w => { const r = D.map(d => ({ n: d.nombre, v: semOf(d)[w.w] || 0 })).sort((a, b) => b.v - a.v)[0]; return r && r.v ? { w: w.w, ...r } : null; }).filter(Boolean);
-        const refs = INFINIX_MODELS.map(m => ({ ...m, meta: int(s.metas && s.metas[m.key]), v: int(Z.ventas && Z.ventas[m.key]), inv: int(s.inventario && s.inventario[m.key]) })).filter(x => x.meta || x.v || x.inv);
+        const refs = INFINIX_MODELS.map(m => ({ ...m, meta: int(s.metas && s.metas[m.key]), v: int(Z.ventas && Z.ventas[m.key]), inv: int(s.inventario && s.inventario[m.key]) })).filter(x => x.meta > 0).sort((a, b) => b.v - a.v);
         const afecta = refs.filter(x => x.meta > 0).sort((a, b) => (a.v / a.meta) - (b.v / b.meta))[0];
         const cls = v => v == null ? '' : v >= 1 ? 'g' : v >= .85 ? 'a' : 'r';
         const month = (Z.month || (Z.corte || '').slice(0, 7)), semRef = storeSemRef(Z, month), CW = closuresByWeek(), cwKeys = W.map(w => w.w).filter(w => CW[w]);
         return `
         <section class="kpi-row">
-            <div class="kpi hl"><span>Venta del mes</span><b>${venta}</b><small>meta ${meta || '—'} · ${pc(meta ? venta / meta : null)}</small></div>
+            <div class="kpi hl"><span>Venta del mes · cierres</span><b>${venta}</b><small>meta ${meta || '—'} · ${pc(meta ? venta / meta : null)}${Z.corte ? ' · al ' + esc(Z.corte.slice(8)) : ''}</small></div>
             <div class="kpi"><span>A hoy debería llevar</span><b>${Math.round(meta * esp)}</b><small>${venta >= Math.round(meta * esp) ? 'va arriba ✅' : `va ${Math.round(meta * esp) - venta} abajo`}</small></div>
             <div class="kpi"><span>Proyección</span><b>${proj}</b><small>${pc(meta ? proj / meta : null)} de la meta</small></div>
             <div class="kpi"><span>Meta de la semana</span><b>${metaSemana(meta)}</b><small>${curW}: lleva ${(Z.sem || {})[curW] || 0}</small></div>
@@ -200,7 +214,7 @@ registerModule('central', (() => {
         </section>
         ${panel('msem', `📅 Mi venta semana a semana <small class="mute">meta semanal ${pa.meta ? metaSemana(pa.meta) : '—'}</small>`, weekBars(A.sem || {}, W, curW) + weekTable(A.sem || {}, semRefA, W, pa.meta, metaRefA, curW), true)}
         ${panel('vs', '🤝 Yo frente a mis compañeros', [d, ...companeros].map(x => { const sm = (activeAdvisors(s).find(a => sameAdvisor(a, { nombre: x.nombre })) || {}).sem || {}; const mx = Math.max(1, ...D.map(y => y.pacing.venta)); return `<div class="ct-vs ${x.id === d.id ? 'me' : ''}">${advisorAvatar(s.id, x.nombre, 30)}<span>${esc(x.nombre.split(' ').slice(0, 2).join(' '))}</span><div class="gv-track"><div style="width:${x.pacing.venta / mx * 100}%;background:${x.id === d.id ? '#00C853' : '#94A3B8'}"></div></div><b>${x.pacing.venta}</b>${last && prev ? varHTML(varPct(sm[last.w] || 0, sm[prev.w] || 0)) : ''}</div>`; }).join('') + `<p class="hint">Barras: venta del mes · ▲▼: variación de ${last ? last.w : ''} contra ${prev ? prev.w : ''}.</p>`, true)}
-        ${panel('tienda', '🏬 Mi tienda esta semana y en el mes', `<div class="ct-capa"><div><small>Tienda ${curW}</small><b>${(ZoneData.forStore(s.id) || {}).sem ? (ZoneData.forStore(s.id).sem[curW] || 0) : 0}</b></div><div><small>Meta sem. tienda</small><b>${metaSemana(storeMetaMes(s))}</b></div><div><small>Tienda mes</small><b>${tienda}</b></div><div><small>Meta tienda</small><b>${storeMetaMes(s)}</b></div></div>`)}
+        ${panel('tienda', '🏬 Mi tienda esta semana y en el mes', `<div class="ct-capa"><div><small>Tienda ${curW}</small><b>${closuresZ(todayStr().slice(0, 7)).sem[curW] || 0}</b></div><div><small>Meta sem. tienda</small><b>${metaSemana(storeMetaMes(s))}</b></div><div><small>Tienda mes</small><b>${closuresZ(todayStr().slice(0, 7)).total}</b></div><div><small>Meta tienda</small><b>${storeMetaMes(s)}</b></div></div>`)}
         ${panel('mref', '📦 Mis referencias', `<div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>Referencia</th><th>Mi meta</th><th>Vendidas</th><th>Cumpl.</th><th>En tienda</th></tr></thead><tbody>
             ${d.inventario.modelos.filter(m => m.meta || m.vendidas || m.inv).map(m => `<tr><td class="l"><b>${esc(m.name)}</b></td><td>${m.meta || '—'}</td><td><b>${m.vendidas}</b></td><td>${m.meta ? pc(m.vendidas / m.meta) : '—'}</td><td>${m.inv}</td></tr>`).join('')}
             </tbody></table></div><p class="hint">${C.hoy.abierto ? 'La llave (ROI 1) está abierta.' : `Te faltan ${Math.max(0, C.plan.base - pa.venta)} uds para abrir la llave (ROI 1).`} Lo que llevas ganado lo ves en la Calculadora.</p>`)}

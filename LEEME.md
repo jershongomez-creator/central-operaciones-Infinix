@@ -222,6 +222,21 @@ Resultado: quién presentó, quién falta, quién repitió y con qué notas, pro
 - **Evaluaciones:** doble cotejo por cédula y nombre (basta que uno esté bien; tolera dígitos cambiados o invertidos y nombres mal escritos); usa la cédula y el nombre completo de la malla. El cruce se recalcula al leer. Si la sube el administrador, un coordinador o el gerente, queda nacional (documento por semana con todas las filas); si la sube un formador, queda en su zona.
 - **Imágenes para WhatsApp HD:** cada imagen sale con 4096 px en su lado más largo (el máximo de WhatsApp HD). Los reportes largos se parten en varias imágenes (parte 1 de N) cortando entre secciones o filas. Se quitó el botón de PDF de los reportes.
 
+## 5j. Novedades v1.13 a v1.15
+
+- **Cierre semanal (piloto de noviembre):** la tienda carga en un solo cierre la venta de la semana (lunes a domingo); reemplaza los diarios de esa semana. Franja del mes: verde con cierre, rojo sin cierre.
+- **Evaluaciones:** el formador corrige a mano cualquier nota (✏️); se muestra solo la nota más alta.
+- **Ranking de asesores** (Análisis de zona › Reportes): del mejor al más crítico con el semáforo de las tiendas, ROI, evaluaciones y crecimiento.
+- **Cargas administrativas:** cada foto se toma con la cámara o se elige de la galería (acta y planilla: PDF o foto). Lista de samples con todo el catálogo (incluye XPAD, XBUDS H5, GT WATCH 5 PRO, HOT 60i, SMART 10, GT 30 y GT 30 Pro).
+- **Central de reportes › Auditoría de cierres:** cierres por tienda frente a los días exigibles, días que faltan, días con competencia cargada, compartidos por WhatsApp o solo guardados; imagen para compartir. **Cierres del día:** elige la fecha, ve quién envió y abre o descarga la imagen del cierre de cada tienda. Un cierre cuenta como compartido cuando se envía con el botón de WhatsApp de la app (no se puede confirmar a qué grupo llegó).
+- **Reportes de venta:** del que más vende al que menos; meta del día por asesor y por referencia (lo que le falta ÷ días que quedan, redondeado hacia arriba), cumplimiento del día y crecimiento contra la semana anterior. Solo salen las referencias con target.
+- **Ficha y tarjeta del asesor:** por referencia (solo con target), meta, vendidas, cumplimiento, proyección, unidades por día para cumplir y crecimiento contra la semana anterior.
+- **Crecimiento vs. semana anterior** (lunes a la fecha contra los mismos días de la semana pasada) en reportes de zona, tiendas, asesores y referencias.
+- **Parcial de venta (tienda):** el asesor escribe lo que lleva por referencia y por marca y la app arma el mensaje del grupo (1, 3 y 5 p. m.) para copiar o enviar por WhatsApp.
+- **Retiro de asesor:** pide el motivo (renuncia voluntaria, finalización de contrato…), queda como novedad en la zona y lo saca de todas las tiendas; sus unidades siguen sumando. Los cambios se ven al instante en las tiendas abiertas.
+- **Usuarios genéricos:** solo el administrador los ve (equipo, auditorías, data plana). **Contraseña de tienda:** en Gestión › Tiendas › 🔑 se ve la actual y se restablece a Infinix2026.
+- **Lectura de la data plana:** el día de cada venta es la fecha de carga en DCR (Upload Date), en todos los cálculos. En Mi central, la tienda usa sus cierres y cada asesor su venta real DCR de la última data plana cargada en la zona.
+
 ## 6. Calculadora (tienda)
 
 El asesor elige su nombre. Su target por referencia sale del target de la tienda dividido entre los asesores y lo puede ajustar a mano; sus unidades llegan de la data de zona (o se escriben). Muestra apertura (KPI), lo ganado y el siguiente bono según el **plan comisional general**, que el Administrador configura en Gestión › Configuración › Plan comisional (valor por referencia y accesorio, apertura y bonos).

@@ -939,6 +939,14 @@ function renderLogin() {
 
 const normDcr = v => String(v || '').trim().toUpperCase().replace(/\s+/g, '');
 // Usuarios base de la semilla con su contraseña ya cifrada
+// Usuarios genéricos (base): solo el administrador ve lo que hacen
+// Contraseña de la tienda visible para los líderes en Gestión › Tiendas (codificada, no en texto plano)
+const STORE_INITIAL_PASS = 'Infinix2026';
+const passEnc = p => { try { return btoa(unescape(encodeURIComponent('ix:' + p))); } catch (e) { return ''; } };
+const passDec = v => { try { const t = decodeURIComponent(escape(atob(v))); return t.startsWith('ix:') ? t.slice(3) : ''; } catch (e) { return ''; } };
+const BASE_USER_IDS = INITIAL_STAFF_SEED.map(u => u.id);
+const isBaseOwner = id => !!id && (BASE_USER_IDS.includes(id) || BASE_USER_IDS.map(x => slug(x)).includes(id));
+const hideBase = () => !State.session || State.session.rol !== 'admin';
 const staffSeedDocs = () => INITIAL_STAFF_SEED.map(u => { const { pass, ...rest } = u; return { ...rest, passHash: pwdHash(pass), base: true, createdAt: 0, updatedAt: 0 }; });
 const zoneRegional = zona => { const z = State.zones.find(x => x.nombre === zona); return z && z.regional ? z.regional : ''; };
 const regionales = () => [...new Set(State.zones.map(z => z.regional).filter(Boolean))].sort();
@@ -1158,7 +1166,7 @@ function openStoreSettings(storeId, opts = {}) {
     $('#sc-advs', m).onclick = e => { const x = e.target.closest('[data-asx]'); if (!x) return; const box = $('#sc-advs', m); if (box.children.length > 1) x.closest('[data-row]').remove(); else $('[data-asn]', box).value = ''; };
     if ($('#sc-pass-reset', m)) $('#sc-pass-reset', m).onclick = async () => {
         if (!await confirmBox('La tienda volverá a entrar con la clave inicial de PDV. ¿Restablecer?', 'Restablecer')) return;
-        await Data.set(COL.stores, st.id, { passHash: null }, true); st.passHash = null; toast('Contraseña restablecida a la clave inicial', 'ok');
+        await Data.set(COL.stores, st.id, { passHash: null, passVer: null }, true); st.passHash = null; st.passVer = null; toast('Contraseña restablecida a la clave inicial', 'ok');
     };
     if ($('#sc-auto', m)) $('#sc-auto', m).onclick = async () => {
         if (!await confirmBox('Se quitan los ajustes manuales y la tienda vuelve a los datos de la carga automática (target, HC, asesores y metas). ¿Continuar?', 'Volver a automático')) return;
@@ -1170,7 +1178,7 @@ function openStoreSettings(storeId, opts = {}) {
         if (storeUser) {            // la tienda solo guarda su contraseña y, el lunes, el HC y el inventario
             const pass = $('#sc-pass', m).value, err = $('#sc-err', m), upd = { updatedAt: Date.now() };
             if (pass && pass.length < 6) { err.textContent = 'La contraseña debe tener al menos 6 caracteres.'; err.hidden = false; return; }
-            if (pass) upd.passHash = pwdHash(pass);
+            if (pass) { upd.passHash = pwdHash(pass); upd.passVer = passEnc(pass); }
             if (mondayOpen) Object.assign(upd, {
                 hc: { ...(st.hc || {}), ...Object.fromEntries(BRANDS.map(b => [b, numf($('#sc-hc-' + b, m).value)])) },
                 inventario: Object.fromEntries(INFINIX_MODELS.map(x => [x.key, int($('#sc-inv-' + x.key, m).value)])),
@@ -1207,7 +1215,7 @@ function openStoreSettings(storeId, opts = {}) {
         upd.targetMes = todayStr().slice(0, 7);                  // target y HC confirmados para este mes (recordatorio del 1 al 5)
         const sumMetas = sum(Object.values(upd.metas));
         if (sumMetas > 0) upd.metaMes = sumMetas;               // las metas por referencia definen el total del mes
-        if (pass) upd.passHash = pwdHash(pass);
+        if (pass) { upd.passHash = pwdHash(pass); upd.passVer = passEnc(pass); }
         if (staffEdit) {
             // Meta por asesor: se conserva el nombre con el que vino del seguimiento; sin valor = reparto del target de la tienda
             const nextMeta = { ...metaAs };
@@ -1442,13 +1450,16 @@ const ReportActions = {
         const files = blobs.map((b, i) => new File([b], names[i], { type: 'image/png' }));
         const saving = this.persist(cfg);                        // Regla de oro: compartir = guardar en Firestore
         const dlAll = async () => { let ok = false; for (let i = 0; i < blobs.length; i++) { ok = await downloadBlob(blobs[i], names[i]) || ok; if (blobs.length > 1) await new Promise(r => setTimeout(r, 400)); } return ok; };
+        let via = '';
         if (navigator.canShare && navigator.canShare({ files })) {
-            try { await navigator.share({ files, title: cfg.title || 'Central de Operaciones' }); }
-            catch (e) { if (e.name !== 'AbortError' && await dlAll()) toast('No se pudo abrir el menú de compartir: la imagen se descargó.', 'warn'); }
+            try { await navigator.share({ files, title: cfg.title || 'Central de Operaciones' }); via = 'whatsapp'; }
+            catch (e) { if (e.name !== 'AbortError' && await dlAll()) { via = 'descarga'; toast('No se pudo abrir el menú de compartir: la imagen se descargó.', 'warn'); } }
         } else if (await dlAll()) {
+            via = 'descarga';
             toast(`Este navegador no comparte archivos directamente: ${blobs.length > 1 ? 'las imágenes se descargaron' : 'la imagen se descargó'} para enviarla por WhatsApp Web.`, 'info', 5200);
         }
         await saving;
+        if (via && cfg.onShared) { try { await cfg.onShared(via); } catch (e) { console.warn(e); } }
     },
     async sharePdf(out, cfg) {
         const name = cfg.filename().replace(/\.png$/i, '') + '.pdf';
@@ -1486,6 +1497,15 @@ const fetchStoreClosures = (storeId, fecha) => Data.list(COL.closures, [['storeM
 const closureInfinix = c => sum(INFINIX_MODELS.map(m => int(c.ventas && c.ventas[m.key])));
 const closureBrand = (c, b) => b === 'INFINIX' ? closureInfinix(c) : int(c.competencia && c.competencia[b]);
 
+// Crecimiento contra la semana anterior: de lunes a la fecha contra los mismos días de la semana pasada.
+// dr = { 'AAAA-MM-DD': uds } o, con key, { 'AAAA-MM-DD': { ref: uds } }
+function wowOf(dr, fecha, key) {
+    const wd = weekDays(fecha), n = (parseD(fecha).getDay() + 6) % 7, val = d => key ? int(((dr || {})[d] || {})[key]) : int((dr || {})[d]);
+    const cur = sum(wd.slice(0, n + 1).map(val)), prev = sum(weekDays(addDays(wd[0], -1)).slice(0, n + 1).map(val));
+    return { cur, prev, pct: prev ? (cur - prev) / prev : (cur ? null : 0) };
+}
+const wowTxt = w => !w ? '—' : w.pct == null ? '▲ nuevo' : `${w.pct > 0.005 ? '▲' : w.pct < -0.005 ? '▼' : '='} ${Math.round(w.pct * 100)}%`;
+const wowCls = w => !w ? '' : w.pct == null || w.pct > 0.005 ? 'up' : w.pct < -0.005 ? 'dn' : 'eq';
 // Días cubiertos por los cierres (un cierre semanal del piloto cubre todos los días de su semana)
 function closureDaysCovered(cs) {
     const set = new Set();

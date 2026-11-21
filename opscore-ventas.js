@@ -34,7 +34,7 @@ registerModule('ventas', (() => {
     const corteOf = () => { const S = zonasF().map(snapOf).filter(Boolean); const up = S.map(s => s.maxUpload || '').sort().pop() || ''; return { up, fecha: up.slice(0, 10) || S.map(s => s.corte || '').sort().pop() || '', hora: up.slice(11, 16), conHora: S.some(s => s.maxUpload), file: (S[0] || {}).fileName || '', owner: (S[0] || {}).ownerName || (S[0] || {}).uploadedBy || '' }; };
     const hasDr = () => storesF().some(st => { const Z = ZoneData.forStore(st.id); return Z && Z.dr; });
     function advisorsF() {
-        return storesF().flatMap(st => activeAdvisors(st).map(a => ({ st, a, nombre: a.nombre, dr: a.dr || {}, lastAt: a.lastAt || '' })));
+        return storesF().flatMap(st => activeAdvisors(st).map(a => ({ st, a, nombre: a.nombre, dr: a.dr || {}, drr: a.drr || {}, lastAt: a.lastAt || '' })));
     }
     const ventaRango = (x, D) => sum(D.map(d => int(x.dr[d])));
     const lastSale = x => Object.keys(x.dr).filter(d => x.dr[d] > 0).sort().pop() || '';
@@ -66,22 +66,42 @@ registerModule('ventas', (() => {
         return Object.values(out).sort((a, b) => b.items.length - a.items.length);
     }
 
+    // ---- Meta del día del asesor (total y por referencia): lo que le falta hasta ayer ÷ días que quedan (incluido hoy),
+    // redondeado hacia arriba (+1 si queda fracción). Solo referencias con meta para el asesor.
+    let advCache = {};
+    function advDiag(st, nombre) { const L = advCache[st.id] = advCache[st.id] || (typeof Advisor !== 'undefined' ? Advisor.forStore(st) : []); return L.find(d => d.id === `${st.id}|${slug(nombre)}`) || L.find(d => sameAdvisor({ nombre: d.nombre }, { nombre })) || null; }
+    function metaDia(x, fecha) {
+        const D = advDiag(x.st, x.nombre); if (!D) return null;
+        const ym = fecha.slice(0, 7), rest = Math.max(1, daysInMonth(ym) - int(fecha.slice(8)) + 1), antes = d => d.slice(0, 7) === ym && d < fecha;
+        const vAntes = sum(Object.entries(x.dr || {}).filter(([d]) => antes(d)).map(([, v]) => int(v)));
+        const tot = D.pacing.meta > 0 ? Math.ceil(Math.max(0, D.pacing.meta - vAntes) / rest) : null, refs = {};
+        (D.inventario.modelos || []).forEach(m => { if (!m.meta) return; const va = sum(Object.entries(x.drr || {}).filter(([d]) => antes(d)).map(([, r]) => int(r[m.key]))); refs[m.key] = Math.ceil(Math.max(0, m.meta - va) / rest); });
+        return { tot, refs, meta: D.pacing.meta, rest };
+    }
+    // Crecimiento contra la semana anterior: lunes a la fecha de esta semana vs. los mismos días de la anterior
+    function wow(dr, fecha, key) {
+        const wd = weekDays(fecha), n = (parseD(fecha).getDay() + 6) % 7, val = d => key ? int(((dr || {})[d] || {})[key]) : int((dr || {})[d]);
+        const cur = sum(wd.slice(0, n + 1).map(val)), prev = sum(weekDays(addDays(wd[0], -1)).slice(0, n + 1).map(val));
+        return { cur, prev, pct: prev ? (cur - prev) / prev : (cur ? null : 0) };
+    }
+
     // ---- Venta por referencia y asesor en el rango, con el inventario de la tienda (último cierre)
     function refsData(D) {
         const dim = daysInMonth(D[D.length - 1].slice(0, 7)), C = corteOf(), day = Math.max(1, int((C.fecha || D[D.length - 1]).slice(8)));
         const groups = storesF().map(st => {
-            const A = activeAdvisors(st).map(a => { const v = {}; let tot = 0; D.forEach(d => Object.entries((a.drr || {})[d] || {}).forEach(([k, q]) => { v[k] = (v[k] || 0) + q; tot += q; })); return { nombre: a.nombre, v, tot, ds: typeof DayStatus !== 'undefined' ? DayStatus.ofAdvisor(st, a.nombre, D[D.length - 1]) : null }; }).sort((a, b) => b.tot - a.tot);
+            const A = activeAdvisors(st).map(a => { const v = {}; let tot = 0; D.forEach(d => Object.entries((a.drr || {})[d] || {}).forEach(([k, q]) => { v[k] = (v[k] || 0) + q; tot += q; })); const x = { st, nombre: a.nombre, dr: a.dr || {}, drr: a.drr || {} }; return { nombre: a.nombre, v, tot, md: metaDia(x, D[D.length - 1]), w: wow(a.dr, D[D.length - 1]), ds: typeof DayStatus !== 'undefined' ? DayStatus.ofAdvisor(st, a.nombre, D[D.length - 1]) : null }; }).sort((a, b) => b.tot - a.tot);
             const venta = {}; A.forEach(a => Object.entries(a.v).forEach(([k, q]) => { venta[k] = (venta[k] || 0) + q; }));
             const Z = ZoneData.forStore(st.id);
             return { st, A, venta, inv: st.inventario || {}, mes: (Z && Z.ventas) || {}, tot: sum(Object.values(venta)) };
         }).filter(g => g.A.length).sort((a, b) => a.st.tienda.localeCompare(b.st.tienda, 'es'));
-        const keys = INFINIX_MODELS.filter(m => groups.some(g => int(g.venta[m.key]) || int(g.inv[m.key]) || int(g.mes[m.key]))).map(m => m.key);
+        const keys = INFINIX_MODELS.filter(m => groups.some(g => int((g.st.metas || {})[m.key]) > 0)).map(m => m.key);      // solo referencias con target
         const resumen = keys.map(k => { const inv = sum(groups.map(g => int(g.inv[k]))), v = sum(groups.map(g => int(g.venta[k]))), mes = sum(groups.map(g => int(g.mes[k]))), ritmo = mes / day;
             return { k, name: (INFINIX_MODELS.find(m => m.key === k) || {}).name || k, inv, v, mes, dias: inv > 0 && ritmo > 0 ? Math.round(inv / ritmo) : null, sinRotar: groups.filter(g => int(g.inv[k]) > 0 && !int(g.venta[k])).length }; });
         const hasDrr = storesF().some(st => activeAdvisors(st).some(a => a.drr && Object.keys(a.drr).length));
-        const flat = groups.flatMap(g => g.A.map(a => ({ ...a, st: g.st, inv: g.inv }))).sort((a, b) => a.tot - b.tot || a.nombre.localeCompare(b.nombre, 'es'));
+        const flat = groups.flatMap(g => g.A.map(a => ({ ...a, st: g.st, inv: g.inv }))).sort((a, b) => b.tot - a.tot || a.nombre.localeCompare(b.nombre, 'es'));      // del que más vende al que menos
         return { groups, keys, resumen, hasDrr, day, dim, flat, det: refDet };
     }
+    const wowCell = w => !w ? '—' : w.pct == null ? '<i class="pill ok">▲ nuevo</i>' : `<i class="pill ${w.pct > 0.005 ? 'ok' : w.pct < -0.005 ? 'bad' : ''}">${w.pct > 0.005 ? '▲' : w.pct < -0.005 ? '▼' : '='} ${Math.round(w.pct * 100)}% <small>(${w.cur} vs ${w.prev})</small></i>`;
     const refShort = k => ((INFINIX_MODELS.find(m => m.key === k) || {}).name || k).replace(/^Note /i, 'N. ').replace(/ Pro\+$/i, ' P+');
 
     // ---- Plan de acción según quien genera el reporte
@@ -164,6 +184,7 @@ registerModule('ventas', (() => {
         const C = corteOf();
         $('#rv-src').innerHTML = C.fecha ? `Tu data: <b>${esc(C.file || 'data plana')}</b> · último registro <b>${esc(C.fecha)}${C.hora ? ' ' + esc(C.hora) : ''}</b>${C.owner ? ' · cargada por ' + esc(C.owner) : ''}` : 'Aún no hay data plana cargada: cárgala para ver la venta del día.';
         if (!hasDr()) { $('#rv-status').innerHTML = ''; $('#rv-body').innerHTML = '<p class="empty">Esta data no trae la venta por día y hora de carga. Vuelve a cargar la data plana (Shop Sales Query) desde aquí o desde el Análisis de zona.</p>'; return; }
+        advCache = {};
         const S = status(F.hasta);
         $('#rv-status').innerHTML = (C.fecha && F.hasta > C.fecha ? `<div class="ds-nomalla">⚠️ Tu data llega hasta el <b>${esc(C.fecha)}${C.hora ? ' ' + esc(C.hora) : ''}</b>: lo de ${F.hasta === todayStr() ? 'hoy' : 'después'} aún no está cargado. Carga la data plana del momento para ver el corte real.</div>` : '') + statusHTML(S);
         const D = days(F.desde, F.hasta);
@@ -192,11 +213,12 @@ registerModule('ventas', (() => {
         if (!R.hasDrr) return '<p class="empty">Para ver la venta por referencia de cada asesor y día, vuelve a cargar la data plana (desde esta versión se guarda la referencia por día).</p>';
         const cell = (q, inv) => `<td class="${q ? 'g' : int(inv) > 0 ? 'z' : 'n'}">${q || 0}</td>`;
         const tog = `<label class="rv-det"><input type="checkbox" id="rv-refdet" ${refDet ? 'checked' : ''}> Detalle por tienda (gerencia)</label>`;
+        const one = F.desde === F.hasta, cel = (q, md, inv) => `<td class="${md != null && q >= md && md > 0 ? 'g' : q ? 'a' : int(inv) > 0 ? 'z' : 'n'}">${q || 0}</td>`;
         if (!refDet) return `<div class="row between wrap"><h3 class="h3">📱 Venta por referencia · ${esc(rangoTxt())}</h3>${tog}</div>
-            <div class="tbl-scroll"><table class="tbl compact rv-grid rv-ref"><thead><tr><th rowspan="2">Asesor</th>${R.keys.map(k => `<th colspan="2" class="rv-rh">${esc(refShort(k))}</th>`).join('')}<th rowspan="2">Total</th></tr>
-                <tr>${R.keys.map(() => '<th class="rv-sh">Inv</th><th class="rv-sh">Vta</th>').join('')}</tr></thead><tbody>
-            ${R.flat.map(a => `<tr><td class="l"><b>${esc(a.nombre)}</b>${a.ds && a.ds.off ? ' ' + DayStatus.chip(a.ds) : ''}</td>${R.keys.map(k => `<td class="inv">${int(a.inv[k])}</td>${cell(int(a.v[k]), a.inv[k])}`).join('')}<td><b>${a.tot}</b></td></tr>`).join('') || `<tr><td colspan="${R.keys.length * 2 + 2}">Sin asesores en el filtro.</td></tr>`}
-            </tbody></table></div><p class="hint">Inv = inventario de su tienda (último cierre). Vta en rojo = tiene inventario de esa referencia y no la ha vendido en el rango.</p>`;
+            <div class="tbl-scroll"><table class="tbl compact rv-grid rv-ref"><thead><tr><th rowspan="2">Asesor</th>${R.keys.map(k => `<th colspan="3" class="rv-rh">${esc(refShort(k))}</th>`).join('')}<th rowspan="2">Venta</th><th rowspan="2">Meta día</th><th rowspan="2">Cumpl.</th><th rowspan="2">vs sem. ant.</th></tr>
+                <tr>${R.keys.map(() => '<th class="rv-sh">Inv</th><th class="rv-sh">Vta</th><th class="rv-sh">Meta</th>').join('')}</tr></thead><tbody>
+            ${R.flat.map(a => { const md = a.md || { refs: {} }, mt = one ? md.tot : null; return `<tr><td class="l"><b>${esc(a.nombre)}</b>${a.ds && a.ds.off ? ' ' + DayStatus.chip(a.ds) : ''}</td>${R.keys.map(k => `<td class="inv">${int(a.inv[k])}</td>${cel(int(a.v[k]), one ? md.refs[k] : null, a.inv[k])}<td class="mt">${one && md.refs[k] != null ? md.refs[k] : '—'}</td>`).join('')}<td><b>${a.tot}</b></td><td>${mt ?? '—'}</td><td>${mt ? `<i class="pill ${a.tot >= mt ? 'ok' : a.tot ? 'warn' : 'bad'}">${Math.round(a.tot / mt * 100)}%</i>` : '—'}</td><td>${wowCell(a.w)}</td></tr>`; }).join('') || `<tr><td colspan="${R.keys.length * 3 + 5}">Sin asesores en el filtro.</td></tr>`}
+            </tbody></table></div><p class="hint">Inv = inventario de su tienda. Meta = unidades que debe vender hoy de esa referencia para llegar al 100% de su target (lo que le falta ÷ días que quedan, redondeado hacia arriba). ${one ? '' : 'Para ver la meta del día elige un solo día. '}Verde = cumplió la meta del día; rojo = tiene inventario y no la ha vendido. vs sem. ant. = lunes a hoy contra los mismos días de la semana pasada.</p>`;
         return `<div class="row between wrap"><h3 class="h3">📱 Venta por referencia · ${esc(rangoTxt())}</h3><span class="row" style="gap:10px">${tog}<b>${sum(R.groups.map(g => g.tot))} uds · ${R.groups.length} PDV</b></span></div>
             <details class="acc" open><summary><span>📦 Inventario vs. venta por referencia</span></summary>
             <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>Referencia</th><th>Inventario</th><th>Venta rango</th><th>Venta mes</th><th>Días de inventario</th><th>PDV con inventario sin vender</th></tr></thead><tbody>
@@ -210,12 +232,13 @@ registerModule('ventas', (() => {
             <p class="hint">0 en rojo = la tienda tiene inventario de esa referencia y el asesor no la vendió en el rango. Inventario = último cierre de la tienda. Días de inventario = inventario ÷ venta diaria del mes.</p>`;
     }
     function diaHTML(D) {
-        const A = advisorsF().map(x => ({ ...x, v: ventaRango(x, D) })).sort((a, b) => a.v - b.v || a.st.tienda.localeCompare(b.st.tienda, 'es'));
+        const f = D[D.length - 1];
+        const A = advisorsF().map(x => ({ ...x, v: ventaRango(x, D), hoy: int(x.dr[f]), md: metaDia(x, f), w: wow(x.dr, f) })).sort((a, b) => b.v - a.v || b.hoy - a.hoy || a.st.tienda.localeCompare(b.st.tienda, 'es'));
         const cols = D.slice(-14);
         return `<h3 class="h3">📅 Venta por asesor y día · ${esc(rangoTxt())}</h3>${D.length > 14 ? '<p class="hint">Se muestran los últimos 14 días del rango.</p>' : ''}
-            <div class="tbl-scroll"><table class="tbl compact rv-grid"><thead><tr><th>Asesor</th><th>Tienda</th>${cols.map(d => `<th>${DIAS_CORTO[(parseD(d).getDay() + 6) % 7]}<br>${d.slice(8)}</th>`).join('')}<th>Total</th></tr></thead><tbody>
-            ${A.map(x => `<tr><td class="l"><b>${esc(x.nombre)}</b></td><td class="l"><small>${esc(x.st.tienda)}</small></td>${cols.map(d => { const n = int(x.dr[d]), ds = typeof DayStatus !== 'undefined' ? DayStatus.ofAdvisor(x.st, x.nombre, d) : null; return `<td class="${n ? 'g' : ds && ds.off ? 'off' : 'z'}" title="${ds ? esc(ds.label) : ''}">${n || (ds && ds.off ? '—' : 0)}</td>`; }).join('')}<td><b>${x.v}</b></td></tr>`).join('')}
-            </tbody></table></div><p class="hint">0 en rojo = día sin venta · — = compensando o con novedad (malla).</p>`;
+            <div class="tbl-scroll"><table class="tbl compact rv-grid"><thead><tr><th>Asesor</th><th>Tienda</th>${cols.map(d => `<th>${DIAS_CORTO[(parseD(d).getDay() + 6) % 7]}<br>${d.slice(8)}</th>`).join('')}<th>Total</th><th>Meta día ${f.slice(8)}</th><th>Cumpl. día</th><th>vs sem. ant.</th></tr></thead><tbody>
+            ${A.map(x => `<tr><td class="l"><b>${esc(x.nombre)}</b></td><td class="l"><small>${esc(x.st.tienda)}</small></td>${cols.map(d => { const n = int(x.dr[d]), ds = typeof DayStatus !== 'undefined' ? DayStatus.ofAdvisor(x.st, x.nombre, d) : null; return `<td class="${n ? 'g' : ds && ds.off ? 'off' : 'z'}" title="${ds ? esc(ds.label) : ''}">${n || (ds && ds.off ? '—' : 0)}</td>`; }).join('')}<td><b>${x.v}</b></td><td>${x.md && x.md.tot != null ? x.md.tot : '—'}</td><td>${x.md && x.md.tot ? `<i class="pill ${x.hoy >= x.md.tot ? 'ok' : x.hoy ? 'warn' : 'bad'}">${x.hoy}/${x.md.tot} · ${Math.round(x.hoy / x.md.tot * 100)}%</i>` : '—'}</td><td>${wowCell(x.w)}</td></tr>`).join('')}
+            </tbody></table></div><p class="hint">Ordenado del que más vende al que menos. Meta día = lo que le falta para su meta del mes ÷ días que quedan (redondeado hacia arriba). 0 en rojo = día sin venta · — = compensando o con novedad (malla). vs sem. ant. = lunes a la fecha contra los mismos días de la semana pasada.</p>`;
     }
     function imeiHTML(L, D) {
         const n = sum(L.map(g => g.items.length));
@@ -232,7 +255,8 @@ registerModule('ventas', (() => {
         const C = corteOf();
         const lentas = RF.resumen.filter(r => r.inv > 0).sort((a, b) => (b.dias ?? 999) - (a.dias ?? 999)).slice(0, 2);
         const planR = tab === 'refs' && lentas.length ? lentas.map(r => `${r.name}: ${r.inv} uds en inventario y ${r.v} vendidas en el rango${r.sinRotar ? ` (${r.sinRotar} PDV sin venderla)` : ''}. Presión con cada asesor que tiene 0: meta de 1 unidad hoy, demo en mesa y argumento frente a la competencia.`) : [];
-        return { tab, F: { ...F }, D, S, R, I, RF, aviso: C.fecha && F.hasta > C.fecha ? `Data hasta el ${C.fecha}${C.hora ? ' ' + C.hora : ''}` : '', plan: planR.concat(planAccion(me().rol, ctx)).slice(0, 6), zonas: zonasF(), filtro: [F.cadena ? (chainList(scopedStores()).find(c => c.key === F.cadena) || {}).label : '', F.tienda ? storeById(F.tienda).tienda : ''].filter(Boolean).join(' · '), rango: rangoTxt(), dayList: D };
+        const fH = D[D.length - 1], AD = advisorsF().map(x => ({ st: x.st, nombre: x.nombre, dr: x.dr, v: ventaRango(x, D), hoy: int(x.dr[fH]), md: metaDia(x, fH), w: wow(x.dr, fH) })).sort((a, b) => b.v - a.v || b.hoy - a.hoy);
+        return { AD, one: F.desde === F.hasta, tab, F: { ...F }, D, S, R, I, RF, aviso: C.fecha && F.hasta > C.fecha ? `Data hasta el ${C.fecha}${C.hora ? ' ' + C.hora : ''}` : '', plan: planR.concat(planAccion(me().rol, ctx)).slice(0, 6), zonas: zonasF(), filtro: [F.cadena ? (chainList(scopedStores()).find(c => c.key === F.cadena) || {}).label : '', F.tienda ? storeById(F.tienda).tienda : ''].filter(Boolean).join(' · '), rango: rangoTxt(), dayList: D };
     }
     return { render, onData: () => { if (view && view.isConnected && !$('#modal-root').children.length) paint(); } };
 })());
@@ -247,12 +271,12 @@ function buildVentasCanvas(stage, d, autor) {
     if (d.tab === 'cero') body = `<div class="rp-sec">ASESORES EN VENTA 0 · ${esc(d.rango.toUpperCase())} · ${d.R.lista.length} DE ${d.R.total}</div>
         <table class="rp-tbl sp-tbl"><thead><tr><th class="l">ASESOR</th><th class="l">TIENDA</th><th class="l">CADENA</th><th class="c-tot">SIN VENDER</th><th>ÚLTIMA VENTA</th></tr></thead><tbody>${d.R.lista.map(row0).join('') || '<tr><td colspan="5">Todos los asesores tienen venta en el rango 🎉</td></tr>'}</tbody></table>
         ${d.R.novedad.length ? `<p class="rv-note">Sin venta por compensatorio o novedad: ${d.R.novedad.map(x => esc(x.nombre.split(' ').slice(0, 2).join(' '))).join(', ')}.</p>` : ''}`;
-    else if (d.tab === 'refs' && !d.RF.det) { const R = d.RF, nm = k => ((INFINIX_MODELS.find(m => m.key === k) || {}).name || k);
-        body = `<div class="rp-sec">VENTA POR REFERENCIA Y ASESOR · ${esc(d.rango.toUpperCase())}</div>
-        <table class="rp-tbl sp-tbl rv-gridp rv-refp"><thead><tr><th class="l" rowspan="2">ASESOR</th>${R.keys.map(k => `<th colspan="2">${esc(nm(k).toUpperCase())}</th>`).join('')}<th class="c-tot" rowspan="2">TOTAL</th></tr>
-        <tr>${R.keys.map(() => '<th class="sh">INV</th><th class="sh">VTA</th>').join('')}</tr></thead><tbody>
-        ${R.flat.map(a => `<tr><td class="l"><b>${esc(a.nombre.split(' ').slice(0, 3).join(' '))}</b></td>${R.keys.map(k => { const q = int(a.v[k]), iv = int(a.inv[k]); return `<td class="inv">${iv}</td><td class="${q ? 'g' : iv > 0 ? 'r' : ''}"><b>${q}</b></td>`; }).join('')}<td class="c-tot"><b>${a.tot}</b></td></tr>`).join('')}
-        <tr class="tot"><td class="l">TOTAL</td>${R.keys.map(k => `<td class="inv">${sum(R.groups.map(g => int(g.inv[k])))}</td><td><b>${sum(R.flat.map(a => int(a.v[k])))}</b></td>`).join('')}<td class="c-tot"><b>${sum(R.flat.map(a => a.tot))}</b></td></tr></tbody></table>`; }
+    else if (d.tab === 'refs' && !d.RF.det) { const R = d.RF, nm = k => ((INFINIX_MODELS.find(m => m.key === k) || {}).name || k); const wt = w => !w ? dash : w.pct == null ? '▲ nuevo' : `${w.pct > 0.005 ? '▲' : w.pct < -0.005 ? '▼' : '='} ${Math.round(w.pct * 100)}%`, wc = w => !w || w.pct == null ? 'g' : w.pct > 0.005 ? 'g' : w.pct < -0.005 ? 'r' : '';
+        body = `<div class="rp-sec">VENTA POR REFERENCIA Y ASESOR · ${esc(d.rango.toUpperCase())} · DEL QUE MÁS VENDE AL QUE MENOS</div>
+        <table class="rp-tbl sp-tbl rv-gridp rv-refp"><thead><tr><th class="l" rowspan="2">ASESOR</th>${R.keys.map(k => `<th colspan="${d.one ? 3 : 2}">${esc(nm(k).toUpperCase())}</th>`).join('')}<th class="c-tot" rowspan="2">VENTA</th>${d.one ? '<th rowspan="2">META DÍA</th><th class="c-tot" rowspan="2">CUMPL.</th>' : ''}<th rowspan="2">VS SEM. ANT.</th></tr>
+        <tr>${R.keys.map(() => `<th class="sh">INV</th><th class="sh">VTA</th>${d.one ? '<th class="sh">META</th>' : ''}`).join('')}</tr></thead><tbody>
+        ${R.flat.map(a => { const md = a.md || { refs: {} }, mt = md.tot; return `<tr><td class="l"><b>${esc(a.nombre.split(' ').slice(0, 3).join(' '))}</b></td>${R.keys.map(k => { const q = int(a.v[k]), iv = int(a.inv[k]), m = md.refs[k]; return `<td class="inv">${iv}</td><td class="${d.one && m != null && m > 0 && q >= m ? 'g' : q ? 'a' : iv > 0 ? 'r' : ''}"><b>${q}</b></td>${d.one ? `<td class="mt">${m ?? dash}</td>` : ''}`; }).join('')}<td class="c-tot"><b>${a.tot}</b></td>${d.one ? `<td>${mt ?? dash}</td><td class="c-tot ${mt ? (a.tot >= mt ? 'g' : a.tot ? 'a' : 'r') : ''}">${mt ? Math.round(a.tot / mt * 100) + '%' : dash}</td>` : ''}<td class="${wc(a.w)}">${wt(a.w)}</td></tr>`; }).join('')}
+        <tr class="tot"><td class="l">TOTAL</td>${R.keys.map(k => `<td class="inv">${sum(R.groups.map(g => int(g.inv[k])))}</td><td><b>${sum(R.flat.map(a => int(a.v[k])))}</b></td>${d.one ? `<td class="mt">${sum(R.flat.map(a => int((a.md || { refs: {} }).refs[k])))}</td>` : ''}`).join('')}<td class="c-tot"><b>${sum(R.flat.map(a => a.tot))}</b></td>${d.one ? `<td>${sum(R.flat.map(a => int(a.md && a.md.tot)))}</td><td class="c-tot"></td>` : ''}<td></td></tr></tbody></table>`; }
     else if (d.tab === 'refs') { const R = d.RF, nm = k => ((INFINIX_MODELS.find(m => m.key === k) || {}).name || k);
         body = `<div class="rp-sec">INVENTARIO VS. VENTA POR REFERENCIA · ${esc(d.rango.toUpperCase())}</div>
         <table class="rp-tbl sp-tbl"><thead><tr><th class="l">REFERENCIA</th><th>INVENTARIO</th><th class="c-tot">VENTA RANGO</th><th>VENTA MES</th><th>DÍAS DE INVENTARIO</th><th>PDV SIN VENDER</th></tr></thead><tbody>${R.resumen.map(r => `<tr><td class="l"><b>${esc(r.name)}</b></td><td><b>${r.inv}</b></td><td class="c-tot ${r.v ? '' : r.inv ? 'r' : ''}"><b>${r.v}</b></td><td>${r.mes}</td><td class="${r.dias == null ? (r.inv ? 'r' : '') : r.dias > 30 ? 'r' : r.dias > 15 ? 'a' : 'g'}">${r.dias == null ? (r.inv ? 'sin rotación' : dash) : r.dias + ' d'}</td><td class="${r.sinRotar ? 'r' : ''}">${r.sinRotar}</td></tr>`).join('')}</tbody></table>
@@ -261,8 +285,8 @@ function buildVentasCanvas(stage, d, autor) {
         <tr class="rv-inv"><td class="l"><b>📦 INVENTARIO</b></td>${R.keys.map(k => `<td><b>${int(g.inv[k])}</b></td>`).join('')}<td class="c-tot"><b>${sum(R.keys.map(k => int(g.inv[k])))}</b></td></tr>
         <tr class="rv-sum"><td class="l"><b>🛒 VENTA TIENDA</b></td>${R.keys.map(k => `<td><b>${int(g.venta[k])}</b></td>`).join('')}<td class="c-tot"><b>${g.tot}</b></td></tr>
         ${g.A.map(a => `<tr><td class="l"><b>${esc(a.nombre)}</b></td>${R.keys.map(k => { const q = int(a.v[k]); return `<td class="${q ? 'g' : int(g.inv[k]) > 0 ? 'r' : ''}">${q}</td>`; }).join('')}<td class="c-tot"><b>${a.tot}</b></td></tr>`).join('')}</tbody></table>`).join('')}`; }
-    else if (d.tab === 'dia') { const A = advisorsAll(d); body = `<div class="rp-sec">VENTA POR ASESOR Y DÍA · ${esc(d.rango.toUpperCase())}</div>
-        <table class="rp-tbl sp-tbl rv-gridp"><thead><tr><th class="l">ASESOR</th><th class="l">TIENDA</th>${cols.map(x => `<th>${x.slice(8)}</th>`).join('')}<th class="c-tot">TOTAL</th></tr></thead><tbody>${A.map(x => `<tr><td class="l"><b>${esc(x.nombre)}</b></td><td class="l small">${esc(x.st.tienda)}</td>${cols.map(c => `<td class="${int(x.dr[c]) ? '' : 'r'}">${int(x.dr[c])}</td>`).join('')}<td class="c-tot"><b>${sum(cols.map(c => int(x.dr[c])))}</b></td></tr>`).join('')}</tbody></table>`; }
+    else if (d.tab === 'dia') { const A = d.AD, f = d.D[d.D.length - 1]; const wt = w => !w ? dash : w.pct == null ? '▲ nuevo' : `${w.pct > 0.005 ? '▲' : w.pct < -0.005 ? '▼' : '='} ${Math.round(w.pct * 100)}%`, wc = w => !w || w.pct == null ? 'g' : w.pct > 0.005 ? 'g' : w.pct < -0.005 ? 'r' : ''; body = `<div class="rp-sec">VENTA POR ASESOR Y DÍA · ${esc(d.rango.toUpperCase())} · DEL QUE MÁS VENDE AL QUE MENOS</div>
+        <table class="rp-tbl sp-tbl rv-gridp"><thead><tr><th class="l">ASESOR</th><th class="l">TIENDA</th>${cols.map(x => `<th>${x.slice(8)}</th>`).join('')}<th class="c-tot">TOTAL</th><th>META DÍA ${f.slice(8)}</th><th class="c-tot">CUMPL. DÍA</th><th>VS SEM. ANT.</th></tr></thead><tbody>${A.map(x => { const mt = x.md && x.md.tot; return `<tr><td class="l"><b>${esc(x.nombre)}</b></td><td class="l small">${esc(x.st.tienda)}</td>${cols.map(c => `<td class="${int(x.dr[c]) ? '' : 'r'}">${int(x.dr[c])}</td>`).join('')}<td class="c-tot"><b>${x.v}</b></td><td>${mt ?? dash}</td><td class="c-tot ${mt ? (x.hoy >= mt ? 'g' : x.hoy ? 'a' : 'r') : ''}">${mt ? `${x.hoy}/${mt} · ${Math.round(x.hoy / mt * 100)}%` : dash}</td><td class="${wc(x.w)}">${wt(x.w)}</td></tr>`; }).join('')}</tbody></table>`; }
     else body = `<div class="rp-sec">IMEI SIN ACTIVAR · ${esc(d.rango.toUpperCase())} · ${sum(d.I.map(g => g.items.length))} IMEI</div>
         <div class="rv-imeip">${d.I.map(g => `<div><div class="rv-ih"><b>${esc(g.nombre)}</b><small>${esc(g.st.tienda)}</small><em>${g.items.length}</em></div><table><tbody>${g.items.map(r => `<tr><td>${esc(r.imei || dash)}</td><td>${esc(r.ref || '')}</td><td>${esc((r.f || '').slice(5))}</td></tr>`).join('')}</tbody></table></div>`).join('') || '<p>Sin IMEI inactivos en el rango.</p>'}</div>`;
     const el = document.createElement('div'); el.className = 'rp sp rv-rep';

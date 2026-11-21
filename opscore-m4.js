@@ -65,7 +65,7 @@ registerModule('m4', (() => {
         }
         $('#f-tienda').innerHTML = '<option value="">Todas</option>' + base.filter(s => !Fx.cadena || chainKey(s) === Fx.cadena).map(s => `<option value="${esc(s.id)}">${esc(s.tienda)}</option>`).join('');
         if ($('#f-user')) {
-            const team = State.staff.filter(u => ['supervisor', 'formador', 'coordinador'].includes(u.rol) && inScope(u.zona) && (!Fx.regional || zoneRegional(u.zona) === Fx.regional || u.regional === Fx.regional) && (!Fx.zona || u.zona === Fx.zona));
+            const team = State.staff.filter(u => ['supervisor', 'formador', 'coordinador'].includes(u.rol) && !(hideBase() && u.base) && inScope(u.zona) && (!Fx.regional || zoneRegional(u.zona) === Fx.regional || u.regional === Fx.regional) && (!Fx.zona || u.zona === Fx.zona));
             $('#f-user').innerHTML = '<option value="">Todo el equipo</option>' + team.sort((a, b) => a.nombre.localeCompare(b.nombre, 'es')).map(u => `<option value="${esc(u.id)}">${esc(u.nombre)} · ${ROLES[u.rol].label}</option>`).join('');
         }
     }
@@ -97,8 +97,8 @@ registerModule('m4', (() => {
 
         // Equipo: usuarios vigentes + autores de registros (aunque ya hayan sido retirados)
         const teamMap = {};
-        State.staff.filter(u => ['supervisor', 'formador', 'coordinador'].includes(u.rol)).forEach(u => { teamMap[u.id] = { id: u.id, nombre: u.nombre, rol: u.rol, zona: u.zona, activo: true }; });
-        pl.concat(vi).forEach(d => { if (d.userId && !teamMap[d.userId]) teamMap[d.userId] = { id: d.userId, nombre: d.nombre + (State.staff.some(u => u.id === d.userId) ? '' : ' (retirado)'), rol: d.rol, zona: d.zona, activo: false }; });
+        State.staff.filter(u => ['supervisor', 'formador', 'coordinador'].includes(u.rol) && !(hideBase() && u.base)).forEach(u => { teamMap[u.id] = { id: u.id, nombre: u.nombre, rol: u.rol, zona: u.zona, activo: true }; });
+        pl.concat(vi).forEach(d => { if (hideBase() && isBaseOwner(d.userId)) return; if (d.userId && !teamMap[d.userId]) teamMap[d.userId] = { id: d.userId, nombre: d.nombre + (State.staff.some(u => u.id === d.userId) ? '' : ' (retirado)'), rol: d.rol, zona: d.zona, activo: false }; });
         let team = Object.values(teamMap).filter(u => inScope(u.zona) && (!f.regional || zoneRegional(u.zona) === f.regional) && (!f.zona || u.zona === f.zona));
         if (isOwn()) team = team.filter(u => u.id === s.userId);
         if (f.user) team = team.filter(u => u.id === f.user);
@@ -138,7 +138,14 @@ registerModule('m4', (() => {
                 acc: sum(cs.map(c => sum(Object.values(c.accesorios || {}).map(int)))),
                 inv, invTotal: sum(INFINIX_MODELS.map(m => int(inv[m.key]))),
                 dcr: !!rg, dcrVentas: rg ? rg.ventas : null, corteDCR: dcr ? dcr.corte : '', sem: dcr ? dcr.sem || {} : {},
-                lastFecha: last ? last.fecha : null, expected: expectedDays(f.from, f.to, STORE_DAYS, closureDaysCovered(cs).has(today0))
+                lastFecha: last ? (last.semana ? last.semana.hasta : last.fecha) : null, expected: expectedDays(f.from, f.to, STORE_DAYS, closureDaysCovered(cs).has(today0)),
+                ...(() => {      // auditoría: días sin cierre y días con la venta de la competencia cargada
+                    const cov = closureDaysCovered(cs), comp = closureDaysCovered(cs.filter(c => sum(Object.values(c.competencia || {}).map(int)) > 0));
+                    const end = toEff < today0 ? toEff : (cov.has(today0) ? today0 : addDays(today0, -1)), faltan = [];
+                    for (let d = f.from; d <= end; d = addDays(d, 1)) if (STORE_DAYS.includes(parseD(d).getDay()) && !cov.has(d)) faltan.push(d);
+                    const dias = [...cov].filter(d => d >= f.from && d <= f.to);
+                    return { faltan, diasCubiertos: dias.length, diasComp: dias.filter(d => comp.has(d)).length, semanales: cs.filter(c => c.semana).length, compartidos: cs.filter(c => c.enviado && c.enviado.via === 'whatsapp').length, soloGuardados: cs.filter(c => !c.enviado).length };
+                })()
             };
         });
         rows.forEach(r => { r.efect = r.expected > 0 ? Math.min(1, r.cierres / r.expected) : null; });
@@ -223,6 +230,7 @@ registerModule('m4', (() => {
     const pill = r => r == null ? '<i class="pill">—</i>' : `<i class="pill ${semaforo(r).cls}">${Math.round(r * 100)}%</i>`;
     // Cumplimiento del mes: muestra el avance real y lo colorea según la proyección al cierre
     const pillCumpl = (real, proj) => real == null ? '<i class="pill">—</i>' : `<i class="pill ${semaforo(proj == null ? real : proj).cls}">${Math.round(real * 100)}%</i>`;
+    const auditRows = a => a.rows.slice().sort((x, y) => y.faltan.length - x.faltan.length || (x.efect ?? 0) - (y.efect ?? 0) || x.st.tienda.localeCompare(y.st.tienda, 'es'));
     function paint() {
         const a = agg, S = a.sum, out = $('#m4-out');
         Charts.destroyAll('view');
@@ -290,12 +298,28 @@ registerModule('m4', (() => {
         ${a.zones.length > 1 ? `<section class="card"><h3 class="h3">Consolidado por zona${a.regionals.length > 1 ? '' : (a.regionals[0] ? ` <small class="mute">regional ${esc(a.regionals[0].regional)}</small>` : '')}</h3><div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>Zona</th>${a.regionals.length > 1 ? '<th>Regional</th>' : ''}<th>Tiendas</th><th>HC</th><th>Venta Infinix</th><th>Share</th><th>Cumpl.</th><th>ROI</th><th>ROI proy.</th><th>Disciplina</th></tr></thead><tbody>
             ${a.zones.map(z => `<tr><td class="l"><b>${esc(z.zona)}</b></td>${a.regionals.length > 1 ? `<td><small>${esc(z.regional)}</small></td>` : ''}<td>${z.reportan}/${z.tiendas}</td><td>${z.hc}</td><td>${z.inf}</td><td>${Math.round(z.share * 100)}%</td><td>${pillCumpl(z.cumpl, z.meta > 0 ? z.proj / z.meta : null)}</td><td><b>${z.roi == null ? '—' : fmt1(z.roi)}</b></td><td>${z.roiProj == null ? '—' : fmt1(z.roiProj)}</td><td>${pill(z.efect)}</td></tr>`).join('')}</tbody></table></div></section>` : ''}
 
-        <section class="card">
-            <h3 class="h3">Auditoría de disciplina operativa · cierres diarios</h3>
-            <p class="mute">Cierres enviados frente a los días exigibles del rango (hoy cuenta cuando llega el cierre de la noche). Quién envió y quién no.</p>
-            <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>Tienda</th><th>Zona</th><th>Cierres</th><th>Efectividad</th><th>Último cierre</th><th>Stock Infinix</th></tr></thead><tbody>
-            ${a.rows.slice().sort((x, y) => (x.efect ?? 0) - (y.efect ?? 0)).map(r => `<tr><td class="l">${storeLogo(r.st, 'xs')} <b>${esc(r.st.tienda)}</b></td><td>${esc(r.st.zona || '')}</td><td>${r.cierres}/${r.expected}</td><td>${pill(r.efect)}</td><td>${r.lastFecha || '<span class="err-t">No ha enviado</span>'}</td><td>${r.invTotal}</td></tr>`).join('')}
+        <section class="card" id="m4-audit">
+            <div class="row between wrap" style="gap:8px"><h3 class="h3">🧾 Auditoría de cierres de los PDV</h3><label class="rv-det"><input type="checkbox" id="m4-aud-falta"> Solo los que deben cierres</label></div>
+            <p class="mute">Del ${esc(Fx.from)} al ${esc(Fx.to)}: cuántos cierres lleva cada tienda frente a los días exigibles (hoy cuenta cuando llega el cierre de la noche), qué días faltan y si cargó la venta de la competencia. El cierre semanal del piloto cubre todos los días de su semana.</p>
+            <div class="zg-kpis" style="grid-template-columns:repeat(4,1fr);margin:8px 0">
+                <div class="hl"><span>Tiendas al día</span><b>${a.rows.filter(r => !r.faltan.length).length}<small>/${a.rows.length}</small></b><em>sin cierres pendientes</em></div>
+                <div><span>Cierres</span><b>${sum(a.rows.map(r => r.cierres))}<small>/${sum(a.rows.map(r => r.expected))}</small></b><em>${pill(sum(a.rows.map(r => r.expected)) ? sum(a.rows.map(r => r.cierres)) / sum(a.rows.map(r => r.expected)) : null)} de efectividad</em></div>
+                <div><span>Días que faltan</span><b class="${sum(a.rows.map(r => r.faltan.length)) ? 'r' : 'g'}">${sum(a.rows.map(r => r.faltan.length))}</b><em>en ${a.rows.filter(r => r.faltan.length).length} tiendas</em></div>
+                <div><span>Con competencia</span><b>${sum(a.rows.map(r => r.diasCubiertos)) ? Math.round(sum(a.rows.map(r => r.diasComp)) / sum(a.rows.map(r => r.diasCubiertos)) * 100) + '%' : '—'}</b><em>de los días reportados</em></div>
+            </div>
+            <div class="tbl-scroll"><table class="tbl compact" id="m4-aud-t"><thead><tr><th>Tienda</th><th>Zona</th><th>Cierres</th><th>Efectividad</th><th>Días que faltan</th><th>Competencia</th><th>Compartidos</th><th>Último cierre</th></tr></thead><tbody>
+            ${auditRows(a).map(r => `<tr data-falta="${r.faltan.length ? 1 : 0}"><td class="l">${storeLogo(r.st, 'xs')} <b>${esc(r.st.tienda)}</b></td><td>${esc(r.st.zona || '')}</td><td><b>${r.cierres}</b>/${r.expected}${r.semanales ? ` <small class="mute">(${r.semanales} sem.)</small>` : ''}</td><td>${pill(r.efect)}</td>
+                <td class="l">${r.faltan.length ? `<div class="aud-days">${r.faltan.slice(0, 31).map(d => `<i>${int(d.slice(8))}</i>`).join('')}</div>` : '<i class="pill ok">Al día</i>'}</td>
+                <td>${r.diasCubiertos ? `<i class="pill ${r.diasComp >= r.diasCubiertos ? 'ok' : r.diasComp ? 'warn' : 'bad'}">${r.diasComp}/${r.diasCubiertos} días</i>` : '—'}</td>
+                <td>${r.cierres ? `<i class="pill ${r.soloGuardados ? 'warn' : 'ok'}" title="Compartidos por el menú del teléfono (WhatsApp) / solo guardados">📲 ${r.compartidos} · 💾 ${r.soloGuardados}</i>` : '—'}</td>
+                <td>${r.lastFecha || '<span class="err-t">No ha enviado</span>'}</td></tr>`).join('')}
             </tbody></table></div>
+            <div class="actions" style="margin-top:10px"><button class="btn btn-ghost" data-act="preview">👁️ Vista previa</button><button class="btn btn-wa" data-act="share">📲 WhatsApp</button><button class="btn btn-primary" data-act="save">⬇️ Descargar</button></div>
+        </section>
+        <section class="card" id="m4-dia">
+            <div class="row between wrap" style="gap:8px"><h3 class="h3">📅 Cierres del día por PDV</h3><input type="date" class="input" id="m4-dia-f" value="${esc(Fx.to > todayStr() ? todayStr() : Fx.to)}" max="${todayStr()}"></div>
+            <p class="mute">Elige el día: quién envió el cierre, si lo compartió por WhatsApp o solo lo guardó, y abre o descarga la imagen del cierre de cada tienda.</p>
+            <div id="m4-dia-out"></div>
         </section>
 
         <section class="card">
@@ -305,6 +329,10 @@ registerModule('m4', (() => {
             </tbody></table></div>
         </section>`;
 
+        // Auditoría: filtro, imagen y cierres del día
+        const fa = $('#m4-aud-falta'); if (fa) fa.onchange = () => $$('#m4-aud-t tbody tr').forEach(tr => { tr.hidden = fa.checked && tr.dataset.falta !== '1'; });
+        ReportActions.bind($('#m4-audit'), { title: 'Auditoría de cierres · Central de Operaciones', noStore: true, filename: () => `Auditoria_cierres_${slug(scopeTitle())}_${Fx.from}_${Fx.to}.png`, build: stage => buildAuditCanvas(stage, { rows: auditRows(agg).filter(r => !(fa && fa.checked) || r.faltan.length), titulo: scopeTitle(), from: Fx.from, to: Fx.to, autor: me() }) });
+        const df = $('#m4-dia-f'); if (df) { df.onchange = () => paintDia(df.value); paintDia(df.value); }
         if (S.totStore && typeof Chart !== 'undefined') {
             const b = a.brandTot.filter(x => x.v > 0);
             Charts.add(new Chart($('#m4-brands'), {
@@ -524,6 +552,26 @@ registerModule('m4', (() => {
         finally { busy(btn, false); btn.innerHTML = '⬇️ Descargar Informe Gerencial (.xlsx)'; }
     }
 
+    // Cierres de un día: estado por tienda y la imagen del cierre (se rearma con lo guardado)
+    async function paintDia(fecha) {
+        const box = $('#m4-dia-out'); if (!box || !agg) return;
+        box.innerHTML = '<p class="hint">Buscando cierres…</p>';
+        const sts = agg.rows.map(r => r.st), ids = new Set(sts.map(s => s.id));
+        let cl = await Data.list(COL.closures, [['fecha', '>=', addDays(fecha, -6)], ['fecha', '<=', addDays(fecha, 6)]]).catch(() => []);
+        cl = cl.filter(c => ids.has(c.storeId));
+        const of = st => cl.find(c => c.storeId === st.id && (c.fecha === fecha || (c.semana && fecha >= c.semana.desde && fecha <= c.semana.hasta)));
+        const L = sts.map(st => ({ st, c: of(st) })).sort((x, y) => (x.c ? 1 : 0) - (y.c ? 1 : 0) || x.st.tienda.localeCompare(y.st.tienda, 'es'));
+        const n = L.filter(x => x.c).length, wa = L.filter(x => x.c && x.c.enviado && x.c.enviado.via === 'whatsapp').length;
+        box.innerHTML = `<div class="row wrap" style="gap:8px;margin:6px 0"><i class="pill ${n === L.length ? 'ok' : 'warn'}">${n}/${L.length} con cierre</i><i class="pill ok">📲 ${wa} compartidos</i><i class="pill warn">💾 ${n - wa} solo guardados</i><i class="pill bad">${L.length - n} sin cierre</i></div>
+            <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>PDV</th><th>Estado</th><th>Infinix</th><th>Total tienda</th><th>Competencia</th><th>Asesor(es)</th><th></th></tr></thead><tbody>
+            ${L.map(x => { const c = x.c, comp = c ? sum(Object.values(c.competencia || {}).map(int)) : 0; return `<tr><td class="l">${storeLogo(x.st, 'xs')} <b>${esc(x.st.tienda)}</b></td>
+                <td>${!c ? '<i class="pill bad">Sin cierre</i>' : c.enviado && c.enviado.via === 'whatsapp' ? `<i class="pill ok">📲 Compartido ${c.enviado.at ? new Date(c.enviado.at).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }) : ''}</i>` : '<i class="pill warn">💾 Solo guardado</i>'}${c && c.semana ? ' <small class="mute">semanal</small>' : ''}</td>
+                <td>${c ? int(c.totalInfinix) : '—'}</td><td>${c ? int(c.totalTienda) : '—'}</td><td>${c ? (comp ? `<i class="pill ok">${comp} uds</i>` : '<i class="pill bad">sin cargar</i>') : '—'}</td><td class="l"><small>${c ? esc((c.asesores || []).join(', ')) : ''}</small></td>
+                <td>${c ? `<button class="btn btn-ghost sm" data-vc="${esc(c.id)}">👁️ Ver</button> <button class="btn btn-ghost sm" data-dc="${esc(c.id)}">⬇️</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>`;
+        const make = async id => { const c = cl.find(x => x.id === id), st = storeById(c.storeId); const cs = await fetchStoreClosures(st.id, c.fecha); return ReportActions.make({ build: stage => buildClosureCanvas(stage, st, computeStore(st, cs.some(x => x.id === c.id) ? cs : cs.concat(c), c.fecha), c) }); };
+        $$('[data-vc]', box).forEach(b => b.onclick = async () => { busy(b, true); try { const c = cl.find(x => x.id === b.dataset.vc); ReportActions.preview(await make(b.dataset.vc), { title: 'Cierre', filename: () => `Cierre_${slug(storeById(c.storeId).tienda)}_${c.fecha}.png` }); } finally { busy(b, false); } });
+        $$('[data-dc]', box).forEach(b => b.onclick = async () => { busy(b, true); try { const c = cl.find(x => x.id === b.dataset.dc), out = await make(b.dataset.dc); await downloadBlob(out.full ? out.full[0] : out.blob, `Cierre_${slug(storeById(c.storeId).tienda)}_${c.fecha}.png`); } finally { busy(b, false); } });
+    }
     return { render, onData: () => { if ($('#f-tienda')) fillDependents(); } };
 })());
 
@@ -569,4 +617,30 @@ function buildM4Visual(stage, a, scope, autor) {
     if (stK.length) Charts.ring($('#gv-st', el), stK.map(([k]) => st[k]), stK.map(x => x[2]), { cutout: '68%', gap: true });
     if (comp) Charts.ring($('#gv-br', el), brands.map(x => x.v), brands.map(x => BRAND_COLORS[x.brand] || '#94A3B8'), { cutout: '68%', gap: true });
     return el;
+}
+
+
+// ---------- Lienzo · auditoría de cierres ----------
+function buildAuditCanvas(stage, d) {
+    const R = d.rows, dash = '—', exp = sum(R.map(r => r.expected)), cie = sum(R.map(r => r.cierres)), pc = v => v == null ? dash : Math.round(v * 100) + '%';
+    const el = document.createElement('div'); el.className = 'rp sp aud';
+    el.innerHTML = `<div class="rp-bar"></div>
+    <header class="rp-head"><img class="rp-logo" src="${LOGO_INFINIX}" alt="Infinix">
+        <div class="rp-head-mid"><div class="rp-kicker">AUDITORÍA DE CIERRES DE VENTA</div><div class="rp-title">${esc(d.titulo.toUpperCase())}</div><div class="rp-sub">Del ${esc(fechaLarga(d.from))} al ${esc(fechaLarga(d.to))} · ${R.length} PDV</div></div>
+        <div class="pl-who"><b>${esc(d.autor.nombre)}</b><small>${ROLES[d.autor.rol] ? ROLES[d.autor.rol].label : ''}</small></div></header>
+    <div class="sp-band">
+        <div class="hero ${exp && cie / exp >= .95 ? '' : 'r'}"><span>EFECTIVIDAD DE CIERRES</span><b>${exp ? pc(cie / exp) : dash}</b><em>${cie} de ${exp} cierres exigibles</em></div>
+        <div><span>Tiendas al día</span><b>${R.filter(r => !r.faltan.length).length}<small style="font-size:20px">/${R.length}</small></b><em>sin días pendientes</em></div>
+        <div class="${sum(R.map(r => r.faltan.length)) ? 'bad' : 'ok'}"><span>Días que faltan</span><b>${sum(R.map(r => r.faltan.length))}</b><em>en ${R.filter(r => r.faltan.length).length} tiendas</em></div>
+        <div><span>Con competencia</span><b>${sum(R.map(r => r.diasCubiertos)) ? pc(sum(R.map(r => r.diasComp)) / sum(R.map(r => r.diasCubiertos))) : dash}</b><em>de los días reportados</em></div>
+        <div><span>Compartidos</span><b>${sum(R.map(r => r.compartidos))}</b><em>por WhatsApp</em></div>
+        <div><span>Solo guardados</span><b class="a">${sum(R.map(r => r.soloGuardados))}</b><em>no se compartieron</em></div>
+    </div>
+    <div class="rp-sec">CIERRES POR PUNTO DE VENTA · PRIMERO LOS QUE DEBEN</div>
+    <table class="rp-tbl sp-tbl"><thead><tr><th class="l">PUNTO DE VENTA</th><th>CIERRES</th><th class="c-tot">EFECTIVIDAD</th><th class="l">DÍAS QUE FALTAN</th><th>COMPETENCIA</th><th>COMPARTIDOS</th><th>ÚLTIMO CIERRE</th></tr></thead><tbody>
+    ${R.map(r => `<tr><td class="l"><div class="sp-pdv">${storeLogo(r.st, 'xs')}<b>${esc(r.st.tienda)}</b></div></td><td><b>${r.cierres}</b>/${r.expected}</td><td class="c-tot ${r.efect == null ? '' : r.efect >= .95 ? 'g' : r.efect >= .7 ? 'a' : 'r'}">${pc(r.efect)}</td>
+        <td class="l">${r.faltan.length ? `<div class="aud-days">${r.faltan.map(x => `<i>${int(x.slice(8))}</i>`).join('')}</div>` : '<b class="g">Al día</b>'}</td>
+        <td class="${r.diasCubiertos && r.diasComp < r.diasCubiertos ? 'a' : ''}">${r.diasCubiertos ? `${r.diasComp}/${r.diasCubiertos}` : dash}</td><td>${r.cierres ? `📲 ${r.compartidos} · 💾 ${r.soloGuardados}` : dash}</td><td>${esc(r.lastFecha || 'Sin cierres')}</td></tr>`).join('')}</tbody></table>
+    <footer class="rp-foot"><span>Días exigibles: del inicio del rango a ayer (hoy cuenta cuando llega el cierre). Competencia: días reportados con la venta de las otras marcas cargada. Compartidos: cierres enviados por el menú de compartir del teléfono (WhatsApp); solo guardados: se registraron sin compartir.</span><b>Infinix · Central de Operaciones</b></footer><div class="rp-bar"></div>`;
+    stage.appendChild(el); return el;
 }

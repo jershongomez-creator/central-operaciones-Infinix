@@ -87,8 +87,9 @@ const Advisor = (() => {
             else if (i >= invMin && isF && v <= ventaBaja) { estado = 'impulsar'; label = 'Rezago · impulsar'; }
             else if (v > 0) { estado = 'rotando'; label = 'Rotando'; }
             else { estado = 'bajo'; label = 'Stock bajo'; }
-            return { key: m.key, name: m.name, foco: isF, meta: int(T.porRef[m.key]), vendidas: v, inv: i, estado, label };
-        });
+            const mt = int(T.porRef[m.key]);
+            return { key: m.key, name: m.name, foco: isF, meta: mt, vendidas: v, inv: i, estado, label, proy: Math.round(v / day * dim), diaria: mt ? Math.ceil(Math.max(0, mt - v) / Math.max(1, left)) : null, w: wowOf(adv.drr, corte, m.key) };
+        }).sort((a, b) => b.vendidas - a.vendidas || b.meta - a.meta);
         const rezagos = modelos.filter(m => m.foco && (m.estado === 'rezago' || m.estado === 'impulsar')).sort((a, b) => b.inv - a.inv);
         const rezagosOtros = modelos.filter(m => !m.foco && m.estado === 'rezago' && m.inv > invMin).sort((a, b) => b.inv - a.inv);
         const stockFoco = sum(rezagos.map(m => m.inv));
@@ -167,7 +168,7 @@ const Advisor = (() => {
             id: `${st.id}|${slug(adv.nombre)}`, storeId: st.id, nombre: adv.nombre, cedula: adv.cedula || '',
             pdv: { tienda: st.tienda, ciudad: st.ciudad || '', cadena: chainGroup(st).label, zona: st.zona || '', regional: zoneRegional(st.zona) || '', logoKey: normLogoKey(st.logoKey) },
             corte, day, dim, left, sinData: !Z, metaSrc: T.src,
-            pacing: { meta, venta, cumpl, esperado, indice, proy, proyCumpl, brechaUds, brechaEsperada, ritmoReq, ritmoActual: +(venta / day).toFixed(1), deberiaLlevar: Math.round(meta * esperado), comisionJuego: null },
+            wow: wowOf(adv.dr, corte), pacing: { meta, venta, cumpl, esperado, indice, proy, proyCumpl, brechaUds, brechaEsperada, ritmoReq, ritmoActual: +(venta / day).toFixed(1), deberiaLlevar: Math.round(meta * esperado), comisionJuego: null },
             comision, evSemanas, mejoras, otras: adv.otras || [], apoyo: (st.asesoresApoyo || []).some(n => adv.alias.some(a => sameAdvisor({ nombre: n }, { nombre: a }))),
             inventario: { total: sum(modelos.map(m => m.inv)), modelos, estrella, oportunidad, rezagos, stockFoco },
             evaluacion: ev,
@@ -439,11 +440,11 @@ function advisorFichaHTML(D) {
     </div>
     <div class="fa-pace">
         <div class="fa-bar"><div class="fa-fill ${cumCls}" style="width:${fill}%"></div>${pa.meta ? `<div class="fa-mark" style="left:${mark}%"><b>esperado ${pc(pa.esperado)}</b></div>` : ''}</div>
-        <div class="fa-pace-t">Ritmo: lleva <b>${pa.ritmoActual}</b> uds/día${pa.meta ? ` y necesita <b>${pa.ritmoReq}</b>` : ''}${pa.meta ? ` · brecha vs. ritmo esperado <b>${pa.brechaEsperada} uds</b>` : ''}${D.comision && D.comision.hoy.next ? ` · le faltan <b>${D.comision.hoy.falta}</b> uds para ${esc(D.comision.hoy.next.label)}` : ''}</div>
+        <div class="fa-pace-t">Ritmo: lleva <b>${pa.ritmoActual}</b> uds/día${pa.meta ? ` y necesita <b>${Math.ceil(pa.ritmoReq)}</b>` : ''} · semana <b class="w-${wowCls(D.wow)}">${wowTxt(D.wow)}</b> vs. la anterior${pa.meta ? ` · brecha vs. ritmo esperado <b>${pa.brechaEsperada} uds</b>` : ''}${D.comision && D.comision.hoy.next ? ` · le faltan <b>${D.comision.hoy.falta}</b> uds para ${esc(D.comision.hoy.next.label)}` : ''}</div>
     </div>
     <div class="fa-sec">📦 MODELO POR MODELO EN SU PDV</div>
-    <table class="fa-tbl"><thead><tr><th class="l">Referencia</th><th>Vendidas</th><th>Inventario en PDV</th><th class="l">Estado</th></tr></thead><tbody>
-        ${I.modelos.map(m => `<tr class="${m.estado}"><td class="l"><b>${esc(m.name)}</b>${m.foco ? ' <i class="fa-foco">★ foco</i>' : ''}</td><td><b>${m.vendidas}</b>${m.meta ? `<small> de ${m.meta}</small>` : ''}</td><td><b>${m.inv}</b></td><td class="l">${pill(m)}</td></tr>`).join('')}
+    <table class="fa-tbl"><thead><tr><th class="l">Referencia</th><th>Meta</th><th>Vendidas</th><th>Cumpl.</th><th>Proy.</th><th>Uds/día para la meta</th><th>vs sem. ant.</th><th>Inventario en PDV</th><th class="l">Estado</th></tr></thead><tbody>
+        ${I.modelos.filter(m => m.meta > 0).map(m => `<tr class="${m.estado}"><td class="l"><b>${esc(m.name)}</b>${m.foco ? ' <i class="fa-foco">★ foco</i>' : ''}</td><td>${m.meta}</td><td><b>${m.vendidas}</b></td><td>${Math.round(m.vendidas / m.meta * 100)}%</td><td>${m.proy}</td><td><b class="fa-dia">${m.diaria}</b></td><td class="w-${wowCls(m.w)}">${wowTxt(m.w)}</td><td><b>${m.inv}</b></td><td class="l">${pill(m)}</td></tr>`).join('') || '<tr><td colspan="9">Sin referencias con meta.</td></tr>'}
     </tbody></table>
     <div class="fa-chips">
         <div class="fa-chip good"><span>⭐ Producto estrella</span><b>${I.estrella ? `${esc(I.estrella.name)} · ${I.estrella.vendidas} uds` : 'Sin ventas aún'}</b></div>
@@ -493,7 +494,7 @@ function advisorCardHTML(D, uid) {
     const evChip = x => x.estado === 'ok' ? `<div class="ac-w ${x.nota != null && x.nota < (State.radar.notaMin || 80) ? 'low' : 'ok'}"><b>${x.w}</b><span>${x.nota == null ? 'Realizada' : x.nota}</span><small>${x.nota == null ? '' : x.nota >= (State.radar.notaMin || 80) ? 'Aprobada' : 'Por mejorar'}</small></div>`
         : x.estado === 'no' ? `<div class="ac-w no"><b>${x.w}</b><span>✗</span><small>No realizada</small></div>` : `<div class="ac-w"><b>${x.w}</b><span>⏳</span><small>Sin calificar</small></div>`;
     const estado = m => m.estado === 'rotando' ? '<i class="fa-st rotando">Vendiendo</i>' : m.estado === 'rezago' || m.estado === 'impulsar' ? '<i class="fa-st rezago">¡Muévelo!</i>' : m.estado === 'sinstock' ? '<i class="fa-st">Sin stock</i>' : '<i class="fa-st">Poco stock</i>';
-    const rows = I.modelos.filter(m => m.meta || m.vendidas || m.inv);
+    const rows = I.modelos.filter(m => m.meta > 0);       // solo referencias con target para el asesor, de la más vendida a la menos
     return `
     <div class="fa-head">
         <div class="fa-who">
@@ -512,7 +513,7 @@ function advisorCardHTML(D, uid) {
     </div>
     <div class="fa-pace">
         <div class="fa-bar"><div class="fa-fill ${cumCls}" style="width:${fill}%"></div>${pa.meta ? `<div class="fa-mark" style="left:${mark}%"><b>a hoy ${pc(pa.esperado)}</b></div>` : ''}</div>
-        <div class="fa-pace-t">Ritmo: llevas <b>${pa.ritmoActual}</b> uds por día${pa.meta && pa.brechaUds ? ` y necesitas <b>${pa.ritmoReq}</b> por día para cumplir tu meta` : ''}.</div>
+        <div class="fa-pace-t">Ritmo: llevas <b>${pa.ritmoActual}</b> uds por día${pa.meta && pa.brechaUds ? ` y necesitas <b>${Math.ceil(pa.ritmoReq)}</b> por día para cumplir tu meta` : ''}. Esta semana: <b class="w-${wowCls(D.wow)}">${wowTxt(D.wow)}</b> vs. la semana pasada (${D.wow ? D.wow.cur + ' vs ' + D.wow.prev : ''}).</div>
     </div>
     <div class="ac-two">
         <div class="ac-box">
@@ -534,8 +535,8 @@ function advisorCardHTML(D, uid) {
         </div>
     </div>
     <div class="fa-sec">📦 TUS REFERENCIAS · LO QUE VENDES Y LO QUE HAY EN TU TIENDA</div>
-    <table class="fa-tbl"><thead><tr><th class="l">Referencia</th><th>Tu meta</th><th>Vendidas</th><th>Cumpl.</th><th>En tienda</th><th class="l">Estado</th></tr></thead><tbody>
-        ${rows.map(m => `<tr class="${m.estado}"><td class="l"><b>${esc(m.name)}</b>${m.foco ? ' <i class="fa-foco">★ foco</i>' : ''}</td><td>${m.meta || dash}</td><td><b>${m.vendidas}</b></td><td>${m.meta ? Math.round(m.vendidas / m.meta * 100) + '%' : dash}</td><td><b>${m.inv}</b></td><td class="l">${estado(m)}</td></tr>`).join('') || `<tr><td colspan="6">Aún no hay data de referencias.</td></tr>`}
+    <table class="fa-tbl"><thead><tr><th class="l">Referencia</th><th>Tu meta</th><th>Vendidas</th><th>Cumpl.</th><th>Proyección</th><th>Vende por día</th><th>vs sem. ant.</th><th>En tienda</th><th class="l">Estado</th></tr></thead><tbody>
+        ${rows.map(m => `<tr class="${m.estado}"><td class="l"><b>${esc(m.name)}</b>${m.foco ? ' <i class="fa-foco">★ foco</i>' : ''}</td><td>${m.meta}</td><td><b>${m.vendidas}</b></td><td>${Math.round(m.vendidas / m.meta * 100)}%</td><td>${m.proy}</td><td><b class="fa-dia">${m.diaria}</b></td><td class="w-${wowCls(m.w)}">${wowTxt(m.w)}</td><td><b>${m.inv}</b></td><td class="l">${estado(m)}</td></tr>`).join('') || `<tr><td colspan="9">Aún no hay data de referencias con meta.</td></tr>`}
     </tbody></table>
     <div class="fa-chips">
         <div class="fa-chip good"><span>⭐ Tu producto estrella</span><b>${I.estrella ? `${esc(I.estrella.name)} · ${I.estrella.vendidas} uds` : 'Aún sin ventas'}</b></div>
@@ -560,8 +561,8 @@ function advisorSalesHTML(D) {
         <div class="fa-kpi"><span>Ritmo</span><b>${pa.ritmoActual}<small>/día</small></b><em>${pa.meta && pa.brechaUds ? `necesita ${pa.ritmoReq}/día` : ''}</em></div>
     </div>
     <div class="fa-pace"><div class="fa-bar"><div class="fa-fill ${cumCls}" style="width:${fill}%"></div>${pa.meta ? `<div class="fa-mark" style="left:${mark}%"><b>a hoy ${pc(pa.esperado)}</b></div>` : ''}</div></div>
-    <table class="fa-tbl"><thead><tr><th class="l">Referencia</th><th>Meta</th><th>Vendidas</th><th>Cumpl.</th><th>Inventario</th></tr></thead><tbody>
-        ${I.modelos.filter(m => m.meta || m.vendidas || m.inv).map(m => `<tr class="${m.estado}"><td class="l"><b>${esc(m.name)}</b></td><td>${m.meta || dash}</td><td><b>${m.vendidas}</b></td><td>${m.meta ? Math.round(m.vendidas / m.meta * 100) + '%' : dash}</td><td>${m.inv}</td></tr>`).join('')}
+    <table class="fa-tbl"><thead><tr><th class="l">Referencia</th><th>Meta</th><th>Vendidas</th><th>Cumpl.</th><th>Proy.</th><th>Uds/día</th><th>vs sem. ant.</th><th>Inventario</th></tr></thead><tbody>
+        ${I.modelos.filter(m => m.meta > 0).map(m => `<tr class="${m.estado}"><td class="l"><b>${esc(m.name)}</b></td><td>${m.meta}</td><td><b>${m.vendidas}</b></td><td>${Math.round(m.vendidas / m.meta * 100)}%</td><td>${m.proy}</td><td><b class="fa-dia">${m.diaria}</b></td><td class="w-${wowCls(m.w)}">${wowTxt(m.w)}</td><td>${m.inv}</td></tr>`).join('')}
     </tbody></table>`;
 }
 const drawAdvisorRing = (root, D, uid) => { const c = $('#' + uid, root); if (!c) return; const W = D.evSemanas || []; Charts.ring(c, [W.filter(x => x.estado === 'ok').length, W.filter(x => x.estado === 'no').length, W.filter(x => x.estado === 'sin').length], ['#16A34A', '#DC2626', '#CBD5E1'], { cutout: '70%', gap: true, scope: root.closest('.modal') ? 'modal' : 'stage' }); };

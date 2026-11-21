@@ -158,7 +158,11 @@ const ZoneData = (() => {
         parsed.rows.forEach(r => {
             const get = role => map[role] === undefined ? '' : String(r[map[role]] ?? '').trim();
             if (map.brand !== undefined && get('brand') && !/INFINIX/i.test(get('brand'))) { tot.rowsOtherBrand++; return; }
-            const d = normDate(get('date'));
+            // Día de la venta = fecha de CARGA en DCR (Upload Date) cuando la data la trae: lo cargado después de las 7 p.m.
+            // el sistema le pone la fecha del día siguiente, pero se vendió el día en que se cargó. Todo (mes, semana, día,
+            // referencia y asesor) se cuenta con ese día real; si la data no trae fecha de carga, se usa la fecha de venta.
+            const dVenta = normDate(get('date')), udEarly = map.uploadDate !== undefined ? normDate(get('uploadDate')) : '';
+            const d = udEarly || dVenta;
             if (d) { if (month && d.slice(0, 7) !== month) { tot.rowsOtherMonth++; return; } if (d > tot.maxDate) tot.maxDate = d; tot.dayRows[d] = (tot.dayRows[d] || 0) + 1; }
             if ((map.channel !== undefined && /^IR\b/i.test(get('channel'))) || (map.chain !== undefined && get('chain') && !OFFICIAL_ALIAS.test(norm(get('chain'))))) { tot.rowsNoOficial++; return; }
             const sid = get('storeId'), name = get('store'); if (!name && !sid) return;
@@ -263,8 +267,12 @@ const ZoneData = (() => {
     async function pick(zona, month) {
         const mine = ownerKey() ? await Data.get(COL.zoneData, ownId(zona, month)).catch(() => null) : null;
         if (mine) return mine;
-        const all = (await Data.list(COL.zoneData, [['zona', '==', zona], ['month', '==', month]]).catch(() => [])).filter(d => !d.demo && d.stores);
-        return all.sort((a, b) => ((b.corte || '') + (b.updatedAt || 0)).localeCompare((a.corte || '') + (a.updatedAt || 0)))[0] || null;
+        // Sin data propia (o la tienda): la data plana más reciente de la zona, cargada por cualquier coordinador, supervisor
+        // o formador (la de último corte por fecha y hora de carga). Los usuarios genéricos solo cuentan para el administrador.
+        const admin = State.session && State.session.rol === 'admin';
+        const all = (await Data.list(COL.zoneData, [['zona', '==', zona], ['month', '==', month]]).catch(() => [])).filter(d => !d.demo && d.stores && (admin || !isBaseOwner(d.owner)));
+        const k = d => (d.maxUpload || ((d.corte || '') + ' 00:00')) + '|' + String(d.updatedAt || 0).padStart(15, '0');
+        return all.sort((a, b) => k(b).localeCompare(k(a)))[0] || null;
     }
     // Carga los snapshots guardados de una lista de zonas para el mes
     async function loadMany(zonas, month) {
@@ -580,13 +588,13 @@ registerModule('zona', (() => {
 
         <div class="zpanel" data-zp="tiendas" ${ztab === 'tiendas' ? '' : 'hidden'}>
             <details class="card acc" open><summary><span>🏆 Ranking de PDV · cumplimiento, proyección, ROI y referencia rezagada</span></summary>
-                <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>#</th><th>PDV</th>${multi ? '<th>Zona</th>' : ''}<th>Estado</th><th>Target</th><th>Venta</th><th>Proy.</th><th>Cumpl.</th><th>ROI</th><th>Ref. rezagada</th></tr></thead><tbody>
-                ${an.ranking.map((r, i) => `<tr><td>${i + 1}</td><td class="l"><div class="row" style="gap:6px;flex-wrap:nowrap">${storeLogo(r.st, 'xs')}<b>${esc(r.st.tienda)}</b></div><small class="mute">${r.asesores.map(a => `${esc(a.nombre.split(' ')[0])} ${a.total}`).join(' · ') || 'sin asesores en la data'}</small></td>${multi ? `<td><small>${esc(r.zona)}</small></td>` : ''}<td>${stTag(r.status)}</td><td>${r.meta || '—'}</td><td><b>${r.venta}</b></td><td>${r.proj}</td><td>${pill(r.cumplProj)}</td><td>${fmt1(r.roi)}</td><td><small>${r.rezagadas.map(x => esc(x.name)).join(', ')}</small></td></tr>`).join('')}
+                <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>#</th><th>PDV</th>${multi ? '<th>Zona</th>' : ''}<th>Estado</th><th>Target</th><th>Venta</th><th>Proy.</th><th>Cumpl.</th><th>ROI</th><th>vs sem. ant.</th><th>Ref. rezagada</th></tr></thead><tbody>
+                ${an.ranking.map((r, i) => `<tr><td>${i + 1}</td><td class="l"><div class="row" style="gap:6px;flex-wrap:nowrap">${storeLogo(r.st, 'xs')}<b>${esc(r.st.tienda)}</b></div><small class="mute">${r.asesores.map(a => `${esc(a.nombre.split(' ')[0])} ${a.total}`).join(' · ') || 'sin asesores en la data'}</small></td>${multi ? `<td><small>${esc(r.zona)}</small></td>` : ''}<td>${stTag(r.status)}</td><td>${r.meta || '—'}</td><td><b>${r.venta}</b></td><td>${r.proj}</td><td>${pill(r.cumplProj)}</td><td>${fmt1(r.roi)}</td><td class="w-${wowCls(wowOf((ZoneData.forStore(r.st.id) || {}).dr, an.corte))}">${wowTxt(wowOf((ZoneData.forStore(r.st.id) || {}).dr, an.corte))}</td><td><small>${r.rezagadas.map(x => esc(x.name)).join(', ')}</small></td></tr>`).join('')}
                 </tbody></table></div></details>
             <details class="card acc"><summary><span>📊 Cumplimiento proyectado por PDV (gráfica)</span></summary><div class="chart-box" style="height:${Math.min(900, Math.max(220, an.rows.length * 24))}px"><canvas id="z-bars"></canvas></div></details>
             <details class="card acc"><summary><span>📦 Referencias de ${esc(viewLabel())} · venta vs. target</span></summary>
                 <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>Referencia</th><th>Target</th><th>Venta</th><th>Proy.</th><th>Cumpl.</th><th>Share</th></tr></thead><tbody>
-                ${an.refsZona.map(r => `<tr><td class="l"><b>${esc(r.name)}</b></td><td>${r.meta || '—'}</td><td><b>${r.venta}</b></td><td>${r.proj}</td><td>${pill(r.cumpl)}</td><td>${r.share}%</td></tr>`).join('')}
+                ${an.refsZona.filter(r => r.meta > 0).map(r => `<tr><td class="l"><b>${esc(r.name)}</b></td><td>${r.meta || '—'}</td><td><b>${r.venta}</b></td><td>${r.proj}</td><td>${pill(r.cumpl)}</td><td>${r.share}%</td></tr>`).join('')}
                 </tbody></table></div></details>
             <div id="z-adm"></div>
         </div>
@@ -931,6 +939,10 @@ function buildZoneCanvas(stage, d) {
     const pct = v => v == null ? dash : Math.round(v * 100) + '%';
     // Con muchas tiendas (vista regional o nacional) el ranking muestra las 20 mejores y las 20 más críticas
     const rankRows = an.ranking.length > 44 ? an.ranking.slice(0, 20).concat(an.ranking.slice(-20)) : an.ranking;
+    // Crecimiento contra la semana anterior (lunes a la fecha del corte vs. los mismos días de la semana pasada)
+    const drOf = st => (ZoneData.forStore(st.id) || {}).dr || {}, wS = st => wowOf(drOf(st), an.corte);
+    const drZ = {}; an.rows.forEach(r => Object.entries(drOf(r.st)).forEach(([k, v]) => { drZ[k] = (drZ[k] || 0) + int(v); }));
+    const wZ = wowOf(drZ, an.corte), wcell = w => `<td class="w-${wowCls(w)}">${wowTxt(w)}</td>`;
     const el = document.createElement('div');
     el.className = 'rp rp-m1 rp-zona';
     el.innerHTML = `
@@ -955,7 +967,8 @@ function buildZoneCanvas(stage, d) {
                     <div><span>Venta</span><b>${S.venta}</b></div>
                     <div><span>Target</span><b>${S.meta || dash}</b></div>
                     <div><span>Proyección cierre</span><b style="color:${sem.color}">${S.proj} · ${pct(S.cumplProj)}</b></div>
-                    <div><span>Faltan</span><b>${S.faltan} · ${S.ritmoReq}/día</b></div>
+                    <div><span>Faltan</span><b>${S.faltan} · ${Math.ceil(S.ritmoReq)}/día</b></div>
+                    <div><span>vs semana ant.</span><b class="w-${wowCls(wZ)}">${wowTxt(wZ)}</b></div>
                     <i class="pill big ${sem.cls}">● ${sem.label}</i>
                 </div>
             </div>
@@ -974,7 +987,7 @@ function buildZoneCanvas(stage, d) {
         </div>
         <div class="dcard">
             <div class="dcard-t">TOP REFERENCIAS</div>
-            <div class="brank">${an.refsZona.slice(0, 5).map((r, i) => `<div><b>#${i + 1}</b><i class="dot" style="background:${THEME.green}"></i><span>${esc(r.name)}</span><div class="brank-bar"><div style="width:${an.refsZona[0].venta ? Math.round(r.venta / an.refsZona[0].venta * 100) : 0}%;background:${THEME.green}"></div></div><em>${r.venta} · ${pct(r.cumpl)}</em></div>`).join('')}</div>
+            <div class="brank">${an.refsZona.filter(r => r.meta > 0).slice(0, 5).map((r, i) => `<div><b>#${i + 1}</b><i class="dot" style="background:${THEME.green}"></i><span>${esc(r.name)}</span><div class="brank-bar"><div style="width:${an.refsZona[0].venta ? Math.round(r.venta / an.refsZona[0].venta * 100) : 0}%;background:${THEME.green}"></div></div><em>${r.venta} · ${pct(r.cumpl)}</em></div>`).join('')}</div>
         </div>
     </section>
 
@@ -983,17 +996,17 @@ function buildZoneCanvas(stage, d) {
         ${an.zonasRes.map(z => `<tr><td class="l"><b>${esc(z.zona)}</b></td><td>${z.tiendas}</td><td>${z.conVenta}</td><td>${z.hc}</td><td>${z.meta || dash}</td><td><b>${z.venta}</b></td><td class="c-tot ${cls(z.cumpl)}">${pct(z.cumpl)}</td><td>${z.proj}</td><td class="c-tot ${cls(z.cumplProj)}">${pct(z.cumplProj)}</td><td>${z.roi == null ? dash : fmt1(z.roi)}</td><td class="${z.critico ? 'r' : ''}">${z.critico}</td></tr>`).join('')}
     </tbody></table>` : ''}
     <div class="rp-sec">RANKING DE PDV · VENTA REAL FRENTE AL TARGET${rankRows.length < an.ranking.length ? ` · ${rankRows.length} DE ${an.ranking.length} PDV (MEJORES Y MÁS CRÍTICOS)` : ''}</div>
-    <table class="rp-tbl"><thead><tr><th class="l">#</th><th class="l">PUNTO DE VENTA</th>${an.multiZona ? '<th class="l">ZONA</th>' : ''}<th>ESTADO</th><th>HC</th><th>TARGET</th><th>VENTA</th><th>CUMPL.</th><th>PROY.</th><th>% PROY.</th><th>ROI</th><th>ROI PROY.</th><th class="l">ASESORES</th><th class="l">REF. REZAGADA</th><th class="l">FOCO</th></tr></thead><tbody>
-        ${rankRows.map(r => `<tr><td class="l">${an.ranking.indexOf(r) + 1}</td><td class="l">${esc(r.st.tienda)}</td>${an.multiZona ? `<td class="l small">${esc(r.zona)}</td>` : ''}<td><i class="ztag" style="background:${STAT[r.status][1]}">${STAT[r.status][0]}</i></td><td>${r.hc}</td><td>${r.meta || dash}</td><td><b>${r.venta}</b></td><td class="c-tot ${cls(r.cumpl)}">${pct(r.cumpl)}</td><td>${r.proj}</td><td class="c-tot ${cls(r.cumplProj)}">${pct(r.cumplProj)}</td><td>${fmt1(r.roi)}</td><td class="roi">${fmt1(r.roiProj)}</td><td class="l small z-adv">${r.asesores.map(a => `${esc(a.nombre.split(' ').slice(0, 2).join(' '))} <b>${a.total}</b>`).join('<br>') || dash}</td><td class="l small">${r.rezagadas[0] ? `${esc(r.rezagadas[0].name)} ${r.rezagadas[0].venta}/${r.rezagadas[0].meta}` : dash}</td><td class="l small">${esc(r.foco.name)}</td></tr>`).join('')}
-        <tr class="tot"><td class="l" colspan="${an.multiZona ? 3 : 2}">TOTAL</td><td></td><td>${S.hc}</td><td>${S.meta || dash}</td><td>${S.venta}</td><td class="c-tot ${cls(S.cumpl)}">${pct(S.cumpl)}</td><td>${S.proj}</td><td class="c-tot ${cls(S.cumplProj)}">${pct(S.cumplProj)}</td><td>${S.roi == null ? dash : fmt1(S.roi)}</td><td class="roi">${S.roiProj == null ? dash : fmt1(S.roiProj)}</td><td colspan="3"></td></tr>
+    <table class="rp-tbl"><thead><tr><th class="l">#</th><th class="l">PUNTO DE VENTA</th>${an.multiZona ? '<th class="l">ZONA</th>' : ''}<th>ESTADO</th><th>HC</th><th>TARGET</th><th>VENTA</th><th>CUMPL.</th><th>PROY.</th><th>% PROY.</th><th>ROI</th><th>ROI PROY.</th><th>VS SEM. ANT.</th><th class="l">ASESORES</th><th class="l">REF. REZAGADA</th><th class="l">FOCO</th></tr></thead><tbody>
+        ${rankRows.map(r => `<tr><td class="l">${an.ranking.indexOf(r) + 1}</td><td class="l">${esc(r.st.tienda)}</td>${an.multiZona ? `<td class="l small">${esc(r.zona)}</td>` : ''}<td><i class="ztag" style="background:${STAT[r.status][1]}">${STAT[r.status][0]}</i></td><td>${r.hc}</td><td>${r.meta || dash}</td><td><b>${r.venta}</b></td><td class="c-tot ${cls(r.cumpl)}">${pct(r.cumpl)}</td><td>${r.proj}</td><td class="c-tot ${cls(r.cumplProj)}">${pct(r.cumplProj)}</td><td>${fmt1(r.roi)}</td><td class="roi">${fmt1(r.roiProj)}</td>${wcell(wS(r.st))}<td class="l small z-adv">${r.asesores.map(a => `${esc(a.nombre.split(' ').slice(0, 2).join(' '))} <b>${a.total}</b>`).join('<br>') || dash}</td><td class="l small">${r.rezagadas[0] ? `${esc(r.rezagadas[0].name)} ${r.rezagadas[0].venta}/${r.rezagadas[0].meta}` : dash}</td><td class="l small">${esc(r.foco.name)}</td></tr>`).join('')}
+        <tr class="tot"><td class="l" colspan="${an.multiZona ? 3 : 2}">TOTAL</td><td></td><td>${S.hc}</td><td>${S.meta || dash}</td><td>${S.venta}</td><td class="c-tot ${cls(S.cumpl)}">${pct(S.cumpl)}</td><td>${S.proj}</td><td class="c-tot ${cls(S.cumplProj)}">${pct(S.cumplProj)}</td><td>${S.roi == null ? dash : fmt1(S.roi)}</td><td class="roi">${S.roiProj == null ? dash : fmt1(S.roiProj)}</td>${wcell(wZ)}<td colspan="3"></td></tr>
     </tbody></table>
 
-    <div class="rp-sec">REFERENCIAS INFINIX EN LA ZONA</div>
-    <table class="rp-tbl"><thead><tr><th class="l">REFERENCIA</th>${an.refsZona.map(r => `<th>${esc(r.name)}</th>`).join('')}<th class="c-tot">TOTAL</th></tr></thead><tbody>
-        <tr><td class="l">Target</td>${an.refsZona.map(r => `<td>${r.meta || dash}</td>`).join('')}<td class="c-tot">${S.meta || dash}</td></tr>
-        <tr><td class="l">Venta</td>${an.refsZona.map(r => `<td><b>${r.venta}</b></td>`).join('')}<td class="c-tot">${S.venta}</td></tr>
-        <tr><td class="l">Cumplimiento</td>${an.refsZona.map(r => `<td class="c-tot ${cls(r.cumpl)}">${pct(r.cumpl)}</td>`).join('')}<td class="c-tot ${cls(S.cumpl)}">${pct(S.cumpl)}</td></tr>
-        <tr><td class="l">Share de la venta</td>${an.refsZona.map(r => `<td>${r.share}%</td>`).join('')}<td class="c-tot">100%</td></tr>
+    <div class="rp-sec">REFERENCIAS INFINIX EN LA ZONA · DE LA MÁS VENDIDA A LA MENOS</div>
+    <table class="rp-tbl"><thead><tr><th class="l">REFERENCIA</th>${an.refsZona.filter(r => r.meta > 0).map(r => `<th>${esc(r.name)}</th>`).join('')}<th class="c-tot">TOTAL</th></tr></thead><tbody>
+        <tr><td class="l">Target</td>${an.refsZona.filter(r => r.meta > 0).map(r => `<td>${r.meta || dash}</td>`).join('')}<td class="c-tot">${S.meta || dash}</td></tr>
+        <tr><td class="l">Venta</td>${an.refsZona.filter(r => r.meta > 0).map(r => `<td><b>${r.venta}</b></td>`).join('')}<td class="c-tot">${S.venta}</td></tr>
+        <tr><td class="l">Cumplimiento</td>${an.refsZona.filter(r => r.meta > 0).map(r => `<td class="c-tot ${cls(r.cumpl)}">${pct(r.cumpl)}</td>`).join('')}<td class="c-tot ${cls(S.cumpl)}">${pct(S.cumpl)}</td></tr>
+        <tr><td class="l">Share de la venta</td>${an.refsZona.filter(r => r.meta > 0).map(r => `<td>${r.share}%</td>`).join('')}<td class="c-tot">100%</td></tr>
     </tbody></table>
 
     <div class="v-two">
@@ -1051,14 +1064,14 @@ function buildAdvRankCanvas(stage, d) {
     </div>
     <div class="ark-dist">${ks.map(k => `<div style="flex:${RK.count[k]};background:${ADV_ST[k][1]}"><b>${RK.count[k]}</b> ${ADV_ST[k][0]}</div>`).join('')}</div>
     <div class="rp-sec">ASESORES DEL MEJOR AL MÁS CRÍTICO</div>
-    <table class="rp-tbl sp-tbl ark-tbl"><thead><tr><th class="l">#</th><th class="l">ASESOR</th><th class="l">PUNTO DE VENTA</th><th>ESTADO</th><th>META</th><th>VENTA</th><th>CUMPL.</th><th>PROY.</th><th>% PROYECCIÓN</th><th>ROI</th><th>ROI PROY.</th><th class="l">EVALUACIONES</th><th>PROM.</th></tr></thead><tbody>
+    <table class="rp-tbl sp-tbl ark-tbl"><thead><tr><th class="l">#</th><th class="l">ASESOR</th><th class="l">PUNTO DE VENTA</th><th>ESTADO</th><th>META</th><th>VENTA</th><th>CUMPL.</th><th>PROY.</th><th>% PROYECCIÓN</th><th>ROI</th><th>ROI PROY.</th><th>VS SEM. ANT.</th><th class="l">EVALUACIONES</th><th>PROM.</th></tr></thead><tbody>
     ${L.map((x, i) => { const p = x.d.pacing; return `<tr><td class="l">${i + 1}</td><td class="l"><b>${esc(x.d.nombre.split(' ').slice(0, 3).join(' '))}</b></td><td class="l small"><div class="sp-pdv">${chainLogo(x.d.pdv.logoKey, x.d.pdv.cadena, 'xs')}<span>${esc(x.d.pdv.tienda)}</span></div></td>
         <td><i class="ztag" style="background:${ADV_ST[x.status][1]}">${ADV_ST[x.status][0]}</i></td><td>${p.meta || dash}</td><td><b>${p.venta}</b></td><td class="c-tot ${cls(p.cumpl)}">${pc(p.cumpl)}</td><td>${Math.round(p.proy || 0)}</td>
         <td><div class="ark-bar"><i style="width:${Math.min(100, Math.round((x.pc || 0) * 100))}%;background:${ADV_ST[x.status][1]}"></i><b>${pc(x.pc)}</b></div></td>
-        <td>${p.venta}</td><td class="roi"><b>${Math.round(p.proy || 0)}</b></td>
+        <td>${p.venta}</td><td class="roi"><b>${Math.round(p.proy || 0)}</b></td><td class="w-${wowCls(x.d.wow)}">${wowTxt(x.d.wow)}</td>
         <td class="l"><div class="ark-ev">${(x.d.evSemanas || []).filter(e => e.estado !== 'sin').map(e => `<i class="${e.estado === 'ok' ? (e.nota == null || e.nota >= 80 ? 'g' : e.nota >= 70 ? 'a' : 'r') : 'x'}">${e.w.slice(1)}<b>${e.estado === 'ok' ? (e.nota == null ? '✓' : e.nota) : '✕'}</b></i>`).join('') || dash}</div></td>
         <td><b>${x.prom ?? dash}</b></td></tr>`; }).join('')}
-    <tr class="tot"><td class="l" colspan="4">TOTAL · ${L.length} ASESORES</td><td>${metaT || dash}</td><td>${ventaT}</td><td class="c-tot ${metaT ? cls(ventaT / metaT) : ''}">${metaT ? pc(ventaT / metaT) : dash}</td><td>${proyT}</td><td class="c-tot">${metaT ? pc(proyT / metaT) : dash}</td><td>${ventaT}</td><td class="roi">${proyT}</td><td class="l">${evT ? `${evH}/${evT}` : ''}</td><td>${proms.length ? Math.round(sum(proms) / proms.length) : ''}</td></tr>
+    <tr class="tot"><td class="l" colspan="4">TOTAL · ${L.length} ASESORES</td><td>${metaT || dash}</td><td>${ventaT}</td><td class="c-tot ${metaT ? cls(ventaT / metaT) : ''}">${metaT ? pc(ventaT / metaT) : dash}</td><td>${proyT}</td><td class="c-tot">${metaT ? pc(proyT / metaT) : dash}</td><td>${ventaT}</td><td class="roi">${proyT}</td><td></td><td class="l">${evT ? `${evH}/${evT}` : ''}</td><td>${proms.length ? Math.round(sum(proms) / proms.length) : ''}</td></tr>
     </tbody></table>
     <footer class="rp-foot"><span>Estado por proyección frente a la meta del asesor: en meta ≥100%, bien ≥85%, en riesgo ≥70%, crítico &lt;70%. Proyección = venta ÷ días transcurridos × días del mes. ROI del asesor = sus unidades (1 promotor); ROI proyectado = unidades proyectadas al cierre. Evaluaciones: nota de cada semana cargada (✕ = no la presentó).</span><b>Infinix · Central de Operaciones</b></footer><div class="rp-bar"></div>`;
     stage.appendChild(el); return el;

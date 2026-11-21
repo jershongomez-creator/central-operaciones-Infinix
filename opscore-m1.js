@@ -93,7 +93,9 @@ registerModule('m1', (() => {
             validate: () => !$$('#m1-asesores input:checked').length ? 'Marca al menos un asesor que reporta.' : (modo === 'dia' && weeklyCovering(fecha) ? `Este día ya está dentro del cierre semanal del ${weeklyCovering(fecha).semana.desde.slice(8)} al ${weeklyCovering(fecha).semana.hasta.slice(8)}: edítalo en "Cierre semanal".` : null),
             filename: () => `Cierre_${slug(currentStore().tienda)}_${modo === 'semana' && per ? per.desde + '_a_' + per.hasta : fecha}.png`,
             build: stage => buildClosureCanvas(stage, currentStore(), computeStore(currentStore(), merged(), fecha), collect()),
-            persist
+            persist,
+            // Marca que el cierre se compartió (menú de compartir del teléfono: WhatsApp) y no solo se guardó
+            onShared: async via => { const id = collect().id, env = { via, at: Date.now() }; const c = closures.find(x => x.id === id); if (c) c.enviado = env; await Data.set(COL.closures, id, { enviado: env }, true); }
         });
         if (!pilotOn()) load();
     }
@@ -218,6 +220,7 @@ registerModule('m1', (() => {
             metas: st.metas || {}, metasComp: st.metasComp || {}, metasAcc: st.metasAcc || {},
             hc: st.hc || {}, metaMes: storeMetaMes(st),
             totalInfinix, totalTienda: totalInfinix + sum(Object.values(competencia)),
+            enviado: ((closures.find(c => c.id === `${st.id}_${fecha}`) || {}).enviado) || null,
             ...(modo === 'semana' && per ? { semana: { desde: per.desde, hasta: per.hasta, dias: Math.round((parseD(per.hasta) - parseD(per.desde)) / 864e5) + 1 } } : {}),
             updatedAt: Date.now()
         };
@@ -244,7 +247,13 @@ registerModule('m1', (() => {
         return (await Promise.all(saving))[0];
     }
 
-    return { render };
+    // Cambios hechos por el supervisor, formador o coordinador (retiros, traslados) se ven al instante en la tienda
+    const onData = part => {
+        const box = $('#m1-asesores'), st = currentStore(); if (!part.stores || !box || !st) return;
+        const on = new Set($$('input:checked', box).map(i => i.value));
+        box.innerHTML = (st.asesores || []).map((a, i) => `<label class="chip"><input type="checkbox" value="${esc(a)}" ${on.size ? (on.has(a) ? 'checked' : '') : (i === 0 ? 'checked' : '')}><span>${esc(a)}</span></label>`).join('') || '<span class="mute">Configura los asesores en ⚙️ Ajustes de tienda.</span>';
+    };
+    return { render, onData };
 })());
 
 // ----------------------------------------------------------------------------

@@ -191,7 +191,8 @@ registerModule('adm', (() => {
     }
     const of = (tipo, period) => docs.filter(d => d.tipo === tipo && (!period || d.period === period));
     const thumb = (d, del = true) => `<div class="adm-th">${d.pdf ? `<div data-view="${esc(d.id)}">${admPdfTile(d)}</div>` : `<img src="${d.img}" alt="" data-view="${esc(d.id)}">`}${d.imei ? `<small>${esc(d.ref || '')}<br><b>${esc(d.imei)}</b></small>` : d.nota ? `<small>${esc(d.nota)}</small>` : ''}${del ? `<button class="adm-del" data-del="${esc(d.id)}" title="Quitar">✕</button>` : ''}</div>`;
-    const upBtn = (label, attrs, horizontal, pdf) => `<label class="btn btn-primary sm adm-up">${pdf ? '📄' : '📷'} ${label}<input type="file" accept="${pdf ? 'application/pdf,image/*' : 'image/*'}" ${horizontal || pdf ? '' : 'capture="environment"'} ${attrs} hidden></label>`;
+    // Dos formas de subir: tomar la foto con la cámara o elegirla de la galería / archivos (PDF en acta y planilla)
+    const upBtn = (label, attrs, horizontal, pdf) => `<span class="adm-ups"><label class="btn btn-primary sm adm-up">📷 ${label}<input type="file" accept="image/*" capture="environment" ${attrs} hidden></label><label class="btn btn-ghost sm adm-up">${pdf ? '📄 PDF o galería' : '🖼️ Galería'}<input type="file" accept="${pdf ? 'application/pdf,image/*' : 'image/*'}" ${attrs} hidden></label></span>`;
 
     function paint() {
         const s = st(), S = admStatus({ ...s, adm: { ...(s.adm || {}), [ym]: summaryNow() } }, ym), meses = [admYm(), addDays(admYm() + '-01', -1).slice(0, 7)];
@@ -212,7 +213,7 @@ registerModule('adm', (() => {
 
         <section class="card"><h3 class="h3">📱 Samples <small class="mute">${samples.length} de ${ADM.MAX_SAMPLES} · foto del equipo en exhibición con su IMEI</small></h3>
             <div class="adm-grid">${samples.map(d => thumb(d)).join('') || '<p class="empty sm">Aún no cargas samples.</p>'}</div>
-            ${nextS ? `<div class="adm-form"><input class="input" id="adm-ref" list="adm-refs" placeholder="Referencia (ej. HOT 60 Pro+)"><datalist id="adm-refs">${refs.map(r => `<option value="${esc(r)}">`).join('')}</datalist>
+            ${nextS ? `<div class="adm-form"><select class="input" id="adm-ref"><option value="">Referencia del sample…</option>${CATALOGO_INFINIX.map(r => `<option>${esc(r)}</option>`).join('')}</select>
                 <input class="input num" id="adm-imei" inputmode="numeric" maxlength="15" placeholder="IMEI (15 dígitos)">${upBtn('Foto del sample', `data-up="sample" data-slot="${nextS}"`)}</div>` : '<p class="hint">Llegaste al máximo de 10 samples. Quita uno para cargar otro.</p>'}</section>
 
         <section class="card"><h3 class="h3">👥 Mesa con los asesores <small class="mute">foto HORIZONTAL de la mesa con todo el equipo</small></h3>

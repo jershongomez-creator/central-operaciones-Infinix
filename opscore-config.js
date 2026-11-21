@@ -3,7 +3,7 @@
 // Todo lo editable por negocio vive en este archivo.
 // ============================================================================
 
-const OPS_VERSION = '1.14.0';
+const OPS_VERSION = '1.15.0';
 const APP_NAME = 'Central de Operaciones';
 
 // --- Firebase: proyecto propio de OpsCore -------------------------------------
@@ -56,7 +56,7 @@ const LOGO_INFINIX = LOGOS.infinix;        // ver opscore-assets.js
 
 // --- Roles (RBAC) ------------------------------------------------------------
 const ROLES = {
-    asesor:      { label: 'Tienda (PDV)',  modules: ['m1', 'central', 'adm', 'calc', 'm5'] },
+    asesor:      { label: 'Tienda (PDV)',  modules: ['m1', 'parcial', 'central', 'adm', 'calc', 'm5'] },
     supervisor:  { label: 'Supervisor',    modules: ['zona', 'ventas', 'm2', 'm3', 'm4', 'm5', 'datos', 'admin'] },      // sin evaluaciones
     formador:    { label: 'Formador',      modules: ['zona', 'ventas', 'evals', 'm2', 'm3', 'm4', 'm5', 'datos', 'admin'] },
     coordinador: { label: 'Coordinador',   modules: ['zona', 'ventas', 'm4', 'evals', 'm5', 'datos', 'admin'] },          // no hace plan ni visita: analiza y consulta reportes
@@ -66,7 +66,7 @@ const ROLES = {
 const STAFF_ROLES = ['supervisor', 'formador', 'coordinador', 'gerente', 'admin'];
 const MODULE_LABELS = {
     m1: 'Cierre diario', m2: 'Plan de trabajo', m3: 'Visita PDV',
-    m4: 'Central de reportes', m5: 'Simulador', admin: 'Gestión', datos: 'Cargar datos', ventas: 'Reportes de venta', zona: 'Análisis de zona', calc: 'Calculadora', evals: 'Evaluaciones', central: 'Mi central', adm: 'Cargas administrativas'
+    m4: 'Central de reportes', m5: 'Simulador', admin: 'Gestión', datos: 'Cargar datos', ventas: 'Reportes de venta', zona: 'Análisis de zona', calc: 'Calculadora', evals: 'Evaluaciones', central: 'Mi central', adm: 'Cargas administrativas', parcial: 'Parcial de venta'
 };
 
 // Claves iniciales (solo su hash SHA-256; el Administrador las cambia en Gestión › Configuración).
@@ -113,6 +113,10 @@ const INFINIX_ACCESSORIES = [
     { key: 'xpad-30e',  name: 'XPAD 30E Tablet' },
     { key: 'gt-5-pro',  name: 'GT 5 PRO Reloj' }
 ];
+
+// Catálogo completo para elegir en listas (samples, exhibición): portafolio vigente, accesorios y referencias anteriores
+// que algunas tiendas aún tienen en sample o inventario. En los reportes solo salen las referencias con target.
+const CATALOGO_INFINIX = INFINIX_MODELS.map(m => m.name).concat(['XPAD 30E', 'XBUDS H5', 'GT WATCH 5 PRO', 'HOT 60i', 'SMART 10', 'GT 30', 'GT 30 Pro']);
 
 // --- Marcas del PDV ----------------------------------------------------------
 const BRANDS = ['INFINIX', 'XIAOMI', 'SAMSUNG', 'MOTOROLA', 'OPPO', 'HONOR', 'REALME', 'TECNO', 'VIVO', 'ZTE', 'APPLE'];
