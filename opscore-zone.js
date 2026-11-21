@@ -264,13 +264,13 @@ const ZoneData = (() => {
         return ops.length ? Data.batch(ops) : { synced: true };
     }
     const save = (snap, meta) => saveAll({ [snap.zona]: snap }, meta);
+    // La data plana de una zona es la ÚLTIMA cargada por cualquiera (coordinador, supervisor, formador o alguien de más arriba):
+    // si Luz la carga a la 1 p. m. y otro a las 10 a. m., todos ven la de la 1. Se compara por la hora de la última venta
+    // cargada en DCR y, si empatan, por la hora en que se subió. Los usuarios genéricos solo cuentan para el admin o para sí mismos.
     async function pick(zona, month) {
-        const mine = ownerKey() ? await Data.get(COL.zoneData, ownId(zona, month)).catch(() => null) : null;
-        if (mine) return mine;
-        // Sin data propia (o la tienda): la data plana más reciente de la zona, cargada por cualquier coordinador, supervisor
-        // o formador (la de último corte por fecha y hora de carga). Los usuarios genéricos solo cuentan para el administrador.
-        const admin = State.session && State.session.rol === 'admin';
-        const all = (await Data.list(COL.zoneData, [['zona', '==', zona], ['month', '==', month]]).catch(() => [])).filter(d => !d.demo && d.stores && (admin || !isBaseOwner(d.owner)));
+        const admin = State.session && State.session.rol === 'admin', mine = ownerKey();
+        const all = (await Data.list(COL.zoneData, [['zona', '==', zona], ['month', '==', month]]).catch(() => [])).filter(d => !d.demo && d.stores && d.kind !== 'real' && (admin || d.owner === mine || !isBaseOwner(d.owner)));
+        if (mine && !all.some(d => d.owner === mine)) { const own = await Data.get(COL.zoneData, ownId(zona, month)).catch(() => null); if (own && own.stores) all.push(own); }
         const k = d => (d.maxUpload || ((d.corte || '') + ' 00:00')) + '|' + String(d.updatedAt || 0).padStart(15, '0');
         return all.sort((a, b) => k(b).localeCompare(k(a)))[0] || null;
     }

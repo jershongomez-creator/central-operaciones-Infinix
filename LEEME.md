@@ -244,6 +244,12 @@ Resultado: quién presentó, quién falta, quién repitió y con qué notas, pro
 - **Cadena en reportes:** Alkosto y Ktronix van juntas como ALKOSTO KTRONIX (filtros, consolidados, share, inventario); cada tienda conserva su logo y nombre.
 - **Central de reportes › Estatus de inventario:** por tienda, cadena o zona, con los filtros de arriba; inventario por referencia con target, venta del mes, días de inventario, quiebres, sobrestock y fecha de actualización; imagen para compartir.
 
+## 5l. Novedades v1.17
+
+- **Central de reportes en pestañas:** 📊 Resumen de venta · 🧾 Cierres de las tiendas (auditoría y cierres del día) · 📦 Inventario (con leyenda de colores y lista de tiendas con quiebre) · 👥 Visitas y planes. Cada pestaña explica en una línea qué muestra.
+- **Data plana:** todos ven la última carga de la zona, la haya hecho quien la haya hecho (coordinador, supervisor, formador o alguien de más arriba); se compara por la hora de la última venta cargada en DCR y luego por la hora de subida.
+- **Lunes en la tienda:** además del HC y el inventario, se editan los targets de la competencia.
+
 ## 6. Calculadora (tienda)
 
 El asesor elige su nombre. Su target por referencia sale del target de la tienda dividido entre los asesores y lo puede ajustar a mano; sus unidades llegan de la data de zona (o se escriben). Muestra apertura (KPI), lo ganado y el siguiente bono según el **plan comisional general**, que el Administrador configura en Gestión › Configuración › Plan comisional (valor por referencia y accesorio, apertura y bonos).

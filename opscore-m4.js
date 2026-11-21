@@ -5,7 +5,7 @@
 // ============================================================================
 
 registerModule('m4', (() => {
-    let Fx = null, agg = null;
+    let Fx = null, agg = null, m4tab = 'resumen';
     const me = () => State.session;
     const isOwn = () => ['supervisor', 'formador'].includes(me().rol);
     const chainKey = st => chainGroup(st).key;        // Alkosto y Ktronix juntas (ALKOSTO KTRONIX)
@@ -236,7 +236,11 @@ registerModule('m4', (() => {
         Charts.destroyAll('view');
         const byRoi = a.rows.slice().sort((x, y) => (y.roi ?? -1) - (x.roi ?? -1));
         const maxRoi = Math.max(1, ...byRoi.map(r => r.roi || 0));
+        const TABS = [['resumen', '📊 Resumen de venta'], ['cierres', '🧾 Cierres de las tiendas'], ['inventario', '📦 Inventario'], ['equipo', '👥 Visitas y planes']];
         out.innerHTML = `
+        <nav class="ztabs m4-tabs" id="m4-tabs">${TABS.map(([k, l]) => `<button class="ztab ${m4tab === k ? 'on' : ''}" data-m4t="${k}">${l}</button>`).join('')}</nav>
+        <div class="zpanel" data-m4p="resumen" ${m4tab === 'resumen' ? '' : 'hidden'}>
+        <p class="hint m4-help">📊 Cómo va la venta en el rango y los filtros elegidos: total, share, estado de las tiendas, ranking, referencias, cadenas y zonas. Toca cada título para abrirlo o cerrarlo.</p>
         <section class="kpi-row six">
             <div class="kpi hl"><span>ROI promedio</span><b>${S.roi == null ? '—' : fmt1(S.roi)}</b><small>Proyectado ${S.roiProj == null ? '—' : fmt1(S.roiProj)}</small></div>
             <div class="kpi"><span>Venta Infinix</span><b>${S.totInf}</b><small>${S.metaFactor === 1 ? 'Meta mes' : 'Meta del rango (cuota semanal = mes ÷ 4)'} ${S.meta || '—'}${S.dcrN ? ' · data DCR' : ''}</small></div>
@@ -279,25 +283,26 @@ registerModule('m4', (() => {
         </div>
 
         <div class="grid2">
-            <section class="card">
-                    <h3 class="h3">Referencias Infinix <small class="mute">venta vs. target del rango</small></h3>
+            <details class="card acc" open><summary><span>📱 Referencias Infinix · venta vs. target del rango</span></summary>
                     <table class="tbl compact"><thead><tr><th>Referencia</th><th>Target</th><th>Venta</th><th>Cumpl.</th></tr></thead><tbody>
                     ${a.models.map(m => `<tr><td class="l"><b>${esc(m.name)}</b><div class="mini-bar"><div style="width:${a.models[0].v ? m.v / a.models[0].v * 100 : 0}%"></div></div></td><td>${m.meta || '—'}</td><td><b>${m.v}</b></td><td>${pill(m.cumpl)}</td></tr>`).join('')}
                     </tbody></table>
-            </section>
-            <section class="card">
-                    <h3 class="h3">Cumplimiento por cadena</h3>
+            </details>
+            <details class="card acc" open><summary><span>🔗 Cumplimiento por cadena</span></summary>
                     <table class="tbl compact"><thead><tr><th>Cadena</th><th>Tiendas</th><th>Target</th><th>Venta</th><th>Cumpl.</th><th>ROI</th></tr></thead><tbody>
                     ${a.chains.map(c => `<tr><td class="l">${chainGroupLogo(c.key, 'xs')} <b>${esc(c.name)}</b></td><td>${c.tiendas}</td><td>${c.meta || '—'}</td><td><b>${c.inf}</b></td><td>${pillCumpl(c.cumpl, c.cumplProj)}</td><td>${c.roi == null ? '—' : fmt1(c.roi)}</td></tr>`).join('') || '<tr><td colspan="6">Sin tiendas.</td></tr>'}
                     </tbody></table>
-            </section>
+            </details>
         </div>
 
-        ${a.regionals.length > 1 ? `<section class="card"><h3 class="h3">Consolidado por regional</h3><div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>Regional</th><th>Zonas</th><th>Tiendas</th><th>HC</th><th>Venta Infinix</th><th>Share</th><th>Cumpl.</th><th>ROI</th><th>ROI proy.</th><th>Disciplina</th></tr></thead><tbody>
-            ${a.regionals.map(r => `<tr><td class="l"><b>${esc(r.regional)}</b></td><td>${r.zonas}</td><td>${r.reportan}/${r.tiendas}</td><td>${r.hc}</td><td>${r.inf}</td><td>${Math.round(r.share * 100)}%</td><td>${pillCumpl(r.cumpl, r.meta > 0 ? r.proj / r.meta : null)}</td><td><b>${r.roi == null ? '—' : fmt1(r.roi)}</b></td><td>${r.roiProj == null ? '—' : fmt1(r.roiProj)}</td><td>${pill(r.efect)}</td></tr>`).join('')}</tbody></table></div></section>` : ''}
-        ${a.zones.length > 1 ? `<section class="card"><h3 class="h3">Consolidado por zona${a.regionals.length > 1 ? '' : (a.regionals[0] ? ` <small class="mute">regional ${esc(a.regionals[0].regional)}</small>` : '')}</h3><div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>Zona</th>${a.regionals.length > 1 ? '<th>Regional</th>' : ''}<th>Tiendas</th><th>HC</th><th>Venta Infinix</th><th>Share</th><th>Cumpl.</th><th>ROI</th><th>ROI proy.</th><th>Disciplina</th></tr></thead><tbody>
-            ${a.zones.map(z => `<tr><td class="l"><b>${esc(z.zona)}</b></td>${a.regionals.length > 1 ? `<td><small>${esc(z.regional)}</small></td>` : ''}<td>${z.reportan}/${z.tiendas}</td><td>${z.hc}</td><td>${z.inf}</td><td>${Math.round(z.share * 100)}%</td><td>${pillCumpl(z.cumpl, z.meta > 0 ? z.proj / z.meta : null)}</td><td><b>${z.roi == null ? '—' : fmt1(z.roi)}</b></td><td>${z.roiProj == null ? '—' : fmt1(z.roiProj)}</td><td>${pill(z.efect)}</td></tr>`).join('')}</tbody></table></div></section>` : ''}
+        ${a.regionals.length > 1 ? `<details class="card acc"><summary><span>🗺️ Consolidado por regional</span></summary><div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>Regional</th><th>Zonas</th><th>Tiendas</th><th>HC</th><th>Venta Infinix</th><th>Share</th><th>Cumpl.</th><th>ROI</th><th>ROI proy.</th><th>Disciplina</th></tr></thead><tbody>
+            ${a.regionals.map(r => `<tr><td class="l"><b>${esc(r.regional)}</b></td><td>${r.zonas}</td><td>${r.reportan}/${r.tiendas}</td><td>${r.hc}</td><td>${r.inf}</td><td>${Math.round(r.share * 100)}%</td><td>${pillCumpl(r.cumpl, r.meta > 0 ? r.proj / r.meta : null)}</td><td><b>${r.roi == null ? '—' : fmt1(r.roi)}</b></td><td>${r.roiProj == null ? '—' : fmt1(r.roiProj)}</td><td>${pill(r.efect)}</td></tr>`).join('')}</tbody></table></div></details>` : ''}
+        ${a.zones.length > 1 ? `<details class="card acc"><summary><span>📍 Consolidado por zona${a.regionals.length > 1 ? '' : (a.regionals[0] ? ` <small class="mute">regional ${esc(a.regionals[0].regional)}</small>` : '')}</span></summary><div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>Zona</th>${a.regionals.length > 1 ? '<th>Regional</th>' : ''}<th>Tiendas</th><th>HC</th><th>Venta Infinix</th><th>Share</th><th>Cumpl.</th><th>ROI</th><th>ROI proy.</th><th>Disciplina</th></tr></thead><tbody>
+            ${a.zones.map(z => `<tr><td class="l"><b>${esc(z.zona)}</b></td>${a.regionals.length > 1 ? `<td><small>${esc(z.regional)}</small></td>` : ''}<td>${z.reportan}/${z.tiendas}</td><td>${z.hc}</td><td>${z.inf}</td><td>${Math.round(z.share * 100)}%</td><td>${pillCumpl(z.cumpl, z.meta > 0 ? z.proj / z.meta : null)}</td><td><b>${z.roi == null ? '—' : fmt1(z.roi)}</b></td><td>${z.roiProj == null ? '—' : fmt1(z.roiProj)}</td><td>${pill(z.efect)}</td></tr>`).join('')}</tbody></table></div></details>` : ''}
 
+        </div>
+        <div class="zpanel" data-m4p="cierres" ${m4tab === 'cierres' ? '' : 'hidden'}>
+        <p class="hint m4-help">🧾 <b>Paso 1:</b> mira quién debe cierres y qué días le faltan. <b>Paso 2:</b> elige un día abajo para ver qué tiendas enviaron, si lo compartieron por WhatsApp y abrir la imagen de su cierre.</p>
         <section class="card" id="m4-audit">
             <div class="row between wrap" style="gap:8px"><h3 class="h3">🧾 Auditoría de cierres de los PDV</h3><label class="rv-det"><input type="checkbox" id="m4-aud-falta"> Solo los que deben cierres</label></div>
             <p class="mute">Del ${esc(Fx.from)} al ${esc(Fx.to)}: cuántos cierres lleva cada tienda frente a los días exigibles (hoy cuenta cuando llega el cierre de la noche), qué días faltan y si cargó la venta de la competencia. El cierre semanal del piloto cubre todos los días de su semana.</p>
@@ -316,24 +321,32 @@ registerModule('m4', (() => {
             </tbody></table></div>
             <div class="actions" style="margin-top:10px"><button class="btn btn-ghost" data-act="preview">👁️ Vista previa</button><button class="btn btn-wa" data-act="share">📲 WhatsApp</button><button class="btn btn-primary" data-act="save">⬇️ Descargar</button></div>
         </section>
-        <section class="card" id="m4-inv">
-            <div class="row between wrap" style="gap:8px"><h3 class="h3">📦 Estatus de inventario</h3><div class="seg sm">${[['tienda', 'Por tienda'], ['cadena', 'Por cadena'], ['zona', 'Por zona']].map(([k, l]) => `<button class="seg-btn ${invNivel === k ? 'active' : ''}" data-invn="${k}">${l}</button>`).join('')}</div></div>
-            <p class="mute">Inventario de cada tienda al último cierre (el lunes se carga y cada venta del cierre lo descuenta; se corrige cuando llega mercancía). Usa los filtros de arriba para ver una cadena, zona o tienda. Días de inventario = inventario ÷ venta diaria del mes (DCR).</p>
-            <div id="m4-inv-out"></div>
-            <div class="actions" style="margin-top:10px"><button class="btn btn-ghost" data-act="preview">👁️ Vista previa</button><button class="btn btn-wa" data-act="share">📲 WhatsApp</button><button class="btn btn-primary" data-act="save">⬇️ Descargar</button></div>
-        </section>
         <section class="card" id="m4-dia">
             <div class="row between wrap" style="gap:8px"><h3 class="h3">📅 Cierres del día por PDV</h3><input type="date" class="input" id="m4-dia-f" value="${esc(Fx.to > todayStr() ? todayStr() : Fx.to)}" max="${todayStr()}"></div>
             <p class="mute">Elige el día: quién envió el cierre, si lo compartió por WhatsApp o solo lo guardó, y abre o descarga la imagen del cierre de cada tienda.</p>
             <div id="m4-dia-out"></div>
         </section>
 
+        </div>
+        <div class="zpanel" data-m4p="inventario" ${m4tab === 'inventario' ? '' : 'hidden'}>
+        <p class="hint m4-help">📦 Inventario que tiene cada tienda hoy y para cuántos días le alcanza. Elige <b>por tienda, por cadena o por zona</b>; con los filtros de arriba ves una sola cadena, zona o tienda.</p>
+        <section class="card" id="m4-inv">
+            <div class="row between wrap" style="gap:8px"><h3 class="h3">📦 Estatus de inventario</h3><div class="seg sm">${[['tienda', 'Por tienda'], ['cadena', 'Por cadena'], ['zona', 'Por zona']].map(([k, l]) => `<button class="seg-btn ${invNivel === k ? 'active' : ''}" data-invn="${k}">${l}</button>`).join('')}</div></div>
+            <p class="mute">Inventario de cada tienda al último cierre (el lunes se carga y cada venta del cierre lo descuenta; se corrige cuando llega mercancía). Usa los filtros de arriba para ver una cadena, zona o tienda. Días de inventario = inventario ÷ venta diaria del mes (DCR).</p>
+            <div id="m4-inv-out"></div>
+            <div class="actions" style="margin-top:10px"><button class="btn btn-ghost" data-act="preview">👁️ Vista previa</button><button class="btn btn-wa" data-act="share">📲 WhatsApp</button><button class="btn btn-primary" data-act="save">⬇️ Descargar</button></div>
+        </section>
+        </div>
+        <div class="zpanel" data-m4p="equipo" ${m4tab === 'equipo' ? '' : 'hidden'}>
+        <p class="hint m4-help">👥 Lo que hace el equipo en el rango: visitas, tiendas distintas visitadas, planes de la mañana y cierres de la noche.</p>
         <section class="card">
             <h3 class="h3">Auditoría de visitas y planes de trabajo</h3>
             <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>Integrante</th><th>Rol</th><th>Visitas</th><th>PDV distintos</th><th>Cobertura</th><th>Prom./día</th><th>Planes</th><th>Cierres act.</th><th>Cierre vs plan</th></tr></thead><tbody>
             ${a.staff.map(x => `<tr><td class="l"><b>${esc(x.u.nombre)}</b><br><small class="mute">${esc(x.u.zona || '')}</small></td><td>${ROLES[x.u.rol] ? ROLES[x.u.rol].label : esc(x.u.rol)}</td><td>${x.visitas}</td><td>${x.pdv}/${x.zoneStores}</td><td>${pill(x.cobertura)}</td><td>${fmt1(x.prom)}</td><td>${x.planes}</td><td>${x.cierresAct}</td><td>${pill(x.cierreVsPlan)}</td></tr>`).join('') || '<tr><td colspan="9">Sin integrantes en el filtro.</td></tr>'}
             </tbody></table></div>
-        </section>`;
+        </section>
+        </div>`;
+        $$('[data-m4t]', out).forEach(b => b.onclick = () => { m4tab = b.dataset.m4t; $$('[data-m4t]', out).forEach(x => x.classList.toggle('on', x === b)); $$('[data-m4p]', out).forEach(p => { p.hidden = p.dataset.m4p !== m4tab; }); });
 
         // Auditoría: filtro, imagen y cierres del día
         const fa = $('#m4-aud-falta'); if (fa) fa.onchange = () => $$('#m4-aud-t tbody tr').forEach(tr => { tr.hidden = fa.checked && tr.dataset.falta !== '1'; });
@@ -580,7 +593,8 @@ registerModule('m4', (() => {
         const dias = (inv, vm, day) => vm > 0 ? Math.round(inv / (vm / day)) : (inv > 0 ? null : 0);
         const rows = Object.values(G).map(g => { const ti = sum(keys.map(r => g.inv[r])), tv = sum(keys.map(r => g.vm[r])); return { ...g, ti, tv, dias: dias(ti, tv, g.day), quiebres: g.q, sobre: keys.filter(r => g.inv[r] > 0 && (dias(g.inv[r], g.vm[r], g.day) == null || dias(g.inv[r], g.vm[r], g.day) > 30)).length, dr: k => dias(g.inv[k], g.vm[k], g.day) }; }).sort((a, b) => b.ti - a.ti);
         const ti = sum(rows.map(r => r.ti)), tv = sum(rows.map(r => r.tv)), day = S[0] ? S[0].day : 1;
-        return { keys, rows, ti, tv, dias: dias(ti, tv, day), quiebresPdv: S.filter(x => keys.some(r => x.meta[r] > 0 && !x.inv[r])).length, viejos: S.filter(x => x.viejo).length, pdv: S.length,
+        const quiebreList = S.map(x => ({ st: x.st, refs: keys.filter(k => x.meta[k] > 0 && !x.inv[k]).map(k => (INFINIX_MODELS.find(m => m.key === k) || {}).name) })).filter(x => x.refs.length).sort((a, b) => b.refs.length - a.refs.length);
+        return { quiebreList, keys, rows, ti, tv, dias: dias(ti, tv, day), quiebresPdv: S.filter(x => keys.some(r => x.meta[r] > 0 && !x.inv[r])).length, viejos: S.filter(x => x.viejo).length, pdv: S.length,
             porRef: keys.map(k => ({ k, name: (INFINIX_MODELS.find(m => m.key === k) || {}).name, inv: sum(S.map(x => x.inv[k])), vm: sum(S.map(x => x.vm[k])), sin: S.filter(x => x.meta[k] > 0 && !x.inv[k]).length, dias: dias(sum(S.map(x => x.inv[k])), sum(S.map(x => x.vm[k])), day) })).sort((a, b) => b.vm - a.vm) };
     }
     const invCls = d => d == null ? 'inv-x' : d === 0 ? 'inv-0' : d > 30 ? 'inv-hi' : d < 7 ? 'inv-lo' : 'inv-ok';
@@ -593,10 +607,12 @@ registerModule('m4', (() => {
                 <div><span>Días de inventario</span><b>${I.dias ?? '—'}</b><em>al ritmo del mes</em></div>
                 <div><span>PDV con quiebre</span><b class="${I.quiebresPdv ? 'r' : 'g'}">${I.quiebresPdv}</b><em>referencia con meta en 0</em></div>
                 <div><span>Sin actualizar</span><b class="${I.viejos ? 'a' : 'g'}">${I.viejos}</b><em>PDV con inventario de hace +7 días</em></div></div>
+            <div class="inv-leg"><span class="inv-0">0 · Quiebre (sin unidades)</span><span class="inv-lo">Menos de 7 días</span><span class="inv-ok">7 a 30 días · bien</span><span class="inv-hi">Más de 30 días o sin venta · sobrestock</span></div>
+            ${I.quiebreList.length ? `<details class="acc inv-q" open><summary><span>⚠️ Tiendas con quiebre (${I.quiebreList.length}): referencias con target y 0 unidades</span></summary><div class="ds-list">${I.quiebreList.map(x => `<div class="ds-row"><span>${storeLogo(x.st, 'xs')} <b>${esc(x.st.tienda)}</b></span><em class="rv-dias r">${x.refs.map(esc).join(', ')}</em></div>`).join('')}</div></details>` : '<p class="hint">✅ Ninguna tienda tiene quiebre en referencias con target.</p>'}
             <div class="tbl-scroll"><table class="tbl compact inv-tbl"><thead><tr><th class="l">${invNivel === 'tienda' ? 'PDV' : invNivel === 'cadena' ? 'Cadena' : 'Zona'}</th>${I.keys.map(k => `<th>${esc(nm(k))}</th>`).join('')}<th>Total</th><th>Días inv.</th><th title="Tienda × referencia con meta en 0">Quiebres</th><th>Sobrestock</th><th>${invNivel === 'tienda' ? 'Actualizado' : 'PDV'}</th></tr></thead><tbody>
             ${I.rows.map(r => `<tr><td class="l">${invNivel === 'tienda' ? storeLogo(r.st, 'xs') + ' ' : invNivel === 'cadena' ? chainGroupLogo(r.k, 'xs') + ' ' : ''}<b>${esc(r.nombre)}</b></td>${I.keys.map(k => `<td class="${!r.inv[k] && !r.meta[k] ? '' : invCls(r.dr(k))}" title="${r.vm[k]} vendidas en el mes">${r.inv[k]}</td>`).join('')}<td><b>${r.ti}</b></td><td>${r.dias ?? '—'}</td><td>${r.quiebres ? `<i class="pill bad">${r.quiebres}</i>` : '0'}</td><td>${r.sobre ? `<i class="pill warn">${r.sobre}</i>` : '0'}</td><td>${invNivel === 'tienda' ? (r.act ? `<small class="${r.viejos ? 'r' : ''}">${esc(r.act.slice(5))}</small>` : '<small class="r">sin dato</small>') : r.n + (r.viejos ? ` <small class="r">(${r.viejos} viejos)</small>` : '')}</td></tr>`).join('') || '<tr><td colspan="9">Sin tiendas en el filtro.</td></tr>'}
             <tr class="tot"><td class="l">TOTAL</td>${I.keys.map(k => `<td>${(I.porRef.find(x => x.k === k) || {}).inv || 0}</td>`).join('')}<td><b>${I.ti}</b></td><td>${I.dias ?? '—'}</td><td></td><td></td><td>${I.pdv}</td></tr></tbody></table></div>
-            <p class="hint">Color por días de inventario de la referencia: rojo = en 0 (quiebre), ámbar claro = menos de 7 días, verde = 7 a 30 días, morado = más de 30 días o sin venta (sobrestock). Solo referencias con target.</p>`;
+            <p class="hint">Cada número es el inventario de esa referencia; el color dice para cuántos días alcanza al ritmo de venta del mes. Solo referencias con target.</p>`;
     }
     // Cierres de un día: estado por tienda y la imagen del cierre (se rearma con lo guardado)
     async function paintDia(fecha) {
@@ -712,7 +728,9 @@ function buildInvCanvas(stage, d) {
     <div class="rp-sec">POR REFERENCIA · DE LA MÁS VENDIDA A LA MENOS</div>
     <table class="rp-tbl sp-tbl"><thead><tr><th class="l">REFERENCIA</th><th>INVENTARIO</th><th>VENTA MES</th><th class="c-tot">DÍAS DE INVENTARIO</th><th>PDV EN QUIEBRE</th></tr></thead><tbody>
     ${I.porRef.map(r => `<tr><td class="l"><b>${esc(r.name)}</b></td><td><b>${r.inv}</b></td><td>${r.vm}</td><td class="c-tot ${cls(r.dias)}">${r.dias ?? 'sin venta'}</td><td class="${r.sin ? 'r' : ''}">${r.sin}</td></tr>`).join('')}</tbody></table>
+    ${I.quiebreList.length ? `<div class="rp-sec">TIENDAS CON QUIEBRE · REFERENCIAS CON TARGET EN 0</div><div class="invq rp-pad">${I.quiebreList.map(x => `<div><div class="sp-pdv">${storeLogo(x.st, 'xs')}<b>${esc(x.st.tienda)}</b></div><span>${x.refs.map(esc).join(' · ')}</span></div>`).join('')}</div>` : ''}
     <div class="rp-sec">INVENTARIO ${niv}</div>
+    <div class="inv-leg rp-pad"><span class="inv-0">0 · Quiebre</span><span class="inv-lo">Menos de 7 días</span><span class="inv-ok">7 a 30 días · bien</span><span class="inv-hi">Más de 30 días o sin venta · sobrestock</span></div>
     <table class="rp-tbl sp-tbl inv-tbl"><thead><tr><th class="l">${d.nivel === 'tienda' ? 'PUNTO DE VENTA' : d.nivel === 'cadena' ? 'CADENA' : 'ZONA'}</th>${I.keys.map(k => `<th>${esc(nm(k).toUpperCase())}</th>`).join('')}<th class="c-tot">TOTAL</th><th>DÍAS</th><th>QUIEBRES</th><th>${d.nivel === 'tienda' ? 'ACTUALIZADO' : 'PDV'}</th></tr></thead><tbody>
     ${I.rows.map(r => `<tr><td class="l"><div class="sp-pdv">${d.nivel === 'tienda' ? storeLogo(r.st, 'xs') : d.nivel === 'cadena' ? chainGroupLogo(r.k, 'xs') : ''}<b>${esc(r.nombre)}</b></div></td>${I.keys.map(k => `<td class="${!r.inv[k] && !r.meta[k] ? '' : cls(r.dr(k))}">${r.inv[k]}</td>`).join('')}<td class="c-tot"><b>${r.ti}</b></td><td>${r.dias ?? dash}</td><td class="${r.quiebres ? 'r' : ''}">${r.quiebres}</td><td>${d.nivel === 'tienda' ? (r.act ? esc(r.act.slice(5)) : 'sin dato') : r.n}</td></tr>`).join('')}</tbody></table>
     <footer class="rp-foot"><span>Inventario = último cierre de la tienda (se carga el lunes y cada venta del cierre lo descuenta). Días = inventario ÷ venta diaria del mes (DCR). Rojo: en 0 · ámbar: menos de 7 días · verde: 7 a 30 · morado: más de 30 o sin venta. Solo referencias con target.</span><b>Infinix · Central de Operaciones</b></footer><div class="rp-bar"></div>`;

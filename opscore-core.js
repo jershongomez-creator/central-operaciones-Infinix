@@ -1114,7 +1114,7 @@ function openStoreSettings(storeId, opts = {}) {
         <h3 class="modal-title">${opts.onboarding ? 'Configuración inicial de la tienda' : 'Ajustes de tienda'}</h3>
         <p class="mute">${esc(st.tienda)} · ${esc(st.ciudad || '')}. ${opts.onboarding ? 'Se hace una sola vez; después el reporte abre listo para llenar.' : ''}</p>
         ${manualTxt}
-        ${storeUser ? `<div class="manual-note ${mondayOpen ? 'ok' : ''}">${mondayOpen ? '📅 <b>Hoy es lunes:</b> actualiza el <b>HC</b> y el <b>inventario</b> de tu tienda (puntos 3, 4 y 5) y guarda. Se puede una sola vez por semana.' : `🔒 Target, HC y asesores los ajusta el coordinador. El HC y el inventario se actualizan los lunes${st.lunesEdit ? ` (último: ${esc(fechaLarga(st.lunesEdit))})` : ''}.`}</div>` : ''}
+        ${storeUser ? `<div class="manual-note ${mondayOpen ? 'ok' : ''}">${mondayOpen ? '📅 <b>Hoy es lunes:</b> actualiza el <b>HC</b>, los <b>targets de la competencia</b> y el <b>inventario</b> de tu tienda y guarda. Se puede una sola vez por semana.' : `🔒 Target, HC y asesores los ajusta el coordinador. El HC y el inventario se actualizan los lunes${st.lunesEdit ? ` (último: ${esc(fechaLarga(st.lunesEdit))})` : ''}.`}</div>` : ''}
 
         <h4 class="sec">1 · Cadena comercial</h4>
         <div class="row">
@@ -1166,7 +1166,7 @@ function openStoreSettings(storeId, opts = {}) {
 
     if (storeUser) {
         $$('input, select, textarea, #sc-add, [data-asx]', m).forEach(el => { if (el.id !== 'sc-pass' && !el.closest('.modal-x')) { el.disabled = true; } });
-        if (mondayOpen) $$('[id^="sc-hc-"], [id^="sc-inv-"], [id^="sc-iacc-"]', m).forEach(el => { el.disabled = false; });
+        if (mondayOpen) $$('[id^="sc-hc-"], [id^="sc-inv-"], [id^="sc-iacc-"], [id^="sc-mc-"]', m).forEach(el => { el.disabled = false; });
         $$('[data-eye]', m).forEach(el => { el.disabled = false; });
     }
     const chainPrev = () => {
@@ -1195,6 +1195,7 @@ function openStoreSettings(storeId, opts = {}) {
             const pass = $('#sc-pass', m).value, err = $('#sc-err', m), upd = { updatedAt: Date.now() };
             if (pass && pass.length < 6) { err.textContent = 'La contraseña debe tener al menos 6 caracteres.'; err.hidden = false; return; }
             if (pass) { upd.passHash = pwdHash(pass); upd.passVer = passEnc(pass); }
+            if (mondayOpen) upd.metasComp = Object.fromEntries(BRANDS.filter(b => b !== 'INFINIX').map(b => [b, int(($('#sc-mc-' + b, m) || {}).value)]));
             if (mondayOpen) Object.assign(upd, {
                 hc: { ...(st.hc || {}), ...Object.fromEntries(BRANDS.map(b => [b, numf($('#sc-hc-' + b, m).value)])) },
                 inventario: Object.fromEntries(INFINIX_MODELS.map(x => [x.key, int($('#sc-inv-' + x.key, m).value)])),
@@ -1203,7 +1204,7 @@ function openStoreSettings(storeId, opts = {}) {
             });
             if (Object.keys(upd).length === 1) { closeModal(m); return; }
             await Data.set(COL.stores, st.id, upd, true); Object.assign(st, upd); closeModal(m);
-            toast(mondayOpen ? 'HC e inventario actualizados. El próximo cambio se habilita el lunes.' : 'Contraseña actualizada', 'ok', 5000);
+            toast(mondayOpen ? 'HC, targets de la competencia e inventario actualizados. El próximo cambio se habilita el lunes.' : 'Contraseña actualizada', 'ok', 5000);
             renderHeader(); if (State.tab) navigate(State.tab); return;
         }
         const rows = $$('#sc-advs [data-row]', m).map(r => ({ n: $('[data-asn]', r).value.trim().replace(/\s+/g, ' '), meta: staffEdit ? $('[data-asm]', r).value.trim() : '' })).filter(x => x.n);
