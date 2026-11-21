@@ -10,11 +10,19 @@ registerModule('m1', (() => {
     // de la semana y cubre todos sus días. Al guardarlo reemplaza los cierres diarios que hubiera en esa semana.
     let modo = 'dia', per = null, wkCur = null, wkDaily = [];
     const pilotOn = d => WEEKLY_PILOT_MONTHS.includes((d || todayStr()).slice(0, 7));
-    // Semanas del mes (lunes a domingo, recortadas al mes) hasta hoy
+    // Semanas del mes (lunes a domingo, recortadas al mes) que YA TERMINARON: la semana en curso se carga día a día
+    const weekEndOf = d => { const e = weekDays(d)[6], me = d.slice(0, 8) + pad2(daysInMonth(d.slice(0, 7))); return e < me ? e : me; };
     function pilotWeeks(ym) {
-        const last = Math.min(daysInMonth(ym), ym === todayStr().slice(0, 7) ? int(todayStr().slice(8)) : 31), out = [];
-        for (let i = 1; i <= last; i++) { const d = `${ym}-${pad2(i)}`, wd = weekDays(d), k = wd[0]; let w = out.find(x => x.k === k); if (!w) { w = { k, desde: d, hasta: d }; out.push(w); } w.hasta = d; }
-        return out.map(w => ({ ...w, enCurso: w.hasta === todayStr() && weekDays(w.hasta)[6] !== w.hasta, label: `${int(w.desde.slice(8))}${w.desde !== w.hasta ? ' al ' + int(w.hasta.slice(8)) : ''} de ${MESES[+ym.slice(5) - 1]}` }));
+        const out = [];
+        for (let i = 1; i <= daysInMonth(ym); i++) { const d = `${ym}-${pad2(i)}`, k = weekDays(d)[0]; let w = out.find(x => x.k === k); if (!w) { w = { k, desde: d, hasta: d }; out.push(w); } w.hasta = d; }
+        return out.filter(w => w.hasta < todayStr()).map(w => ({ ...w, label: `${int(w.desde.slice(8))}${w.desde !== w.hasta ? ' al ' + int(w.hasta.slice(8)) : ''} de ${MESES[+ym.slice(5) - 1]}` }));
+    }
+    // Pasa un cierre semanal a cierre diario de su último día (no se pierde nada: luego se corrige día a día)
+    async function splitWeekly(c) {
+        const { semana, ...rest } = c; const doc = { ...rest, fecha: semana.hasta, updatedAt: Date.now() };
+        await Data.set(COL.closures, c.id, doc, false);
+        closures = closures.filter(x => x.id !== c.id).concat(doc);
+        return doc;
     }
     const weekOf = d => pilotWeeks(d.slice(0, 7)).find(w => d >= w.desde && d <= w.hasta) || null;
     const weeklyCovering = d => closures.find(c => c.semana && d >= c.semana.desde && d <= c.semana.hasta) || null;
@@ -37,10 +45,11 @@ registerModule('m1', (() => {
             </div>
             ${pilotOn() ? `<div class="m1-mode"><div class="seg sm"><button type="button" class="seg-btn" data-modo="dia">📅 Cierre diario</button><button type="button" class="seg-btn" data-modo="semana">🗓️ Cierre semanal (piloto)</button></div>
                 <span id="m1-wkbox" hidden><select class="input" id="m1-wk"></select></span></div>
-                <p class="hint" id="m1-wkhint" hidden>Piloto de ${esc(mesLargo(todayStr().slice(0, 7)))}: carga en un solo cierre toda la venta de la semana (Infinix, accesorios y competencia), con corte el domingo. Si ya había cierres diarios en esa semana, se suman aquí y quedan reemplazados por este.</p>` : ''}
+                <p class="hint" id="m1-wkhint" hidden>Piloto de ${esc(mesLargo(todayStr().slice(0, 7)))}: solo para semanas que ya terminaron, carga en un solo cierre toda la venta de la semana (Infinix, accesorios y competencia). La semana en curso se carga día a día. Si ya había cierres diarios en esa semana, se suman aquí y quedan reemplazados por este.</p>` : ''}
             <div class="m1-days" id="m1-days"></div>
+            <div id="m1-wkwarn"></div>
             <label class="lbl">¿Quién reporta hoy?</label>
-            <div class="chips" id="m1-asesores">${(st.asesores || []).map((a, i) => `<label class="chip"><input type="checkbox" value="${esc(a)}" ${i === 0 ? 'checked' : ''}><span>${esc(a)}</span></label>`).join('') || '<span class="mute">Configura los asesores en ⚙️ Ajustes de tienda.</span>'}</div>
+            <div class="chips" id="m1-asesores">${(st.asesores || []).filter(a => !isBaja(st, a, (st.cedulas || {})[a])).map((a, i) => `<label class="chip"><input type="checkbox" value="${esc(a)}" ${i === 0 ? 'checked' : ''}><span>${esc(a)}</span></label>`).join('') || '<span class="mute">Configura los asesores en ⚙️ Ajustes de tienda.</span>'}</div>
         </section>
 
         <section class="kpi-row" id="m1-kpis"></section>
@@ -108,8 +117,10 @@ registerModule('m1', (() => {
         $$('.m1-vl').forEach(t => { t.textContent = wk ? 'Venta semana' : 'Venta hoy'; });
         if ($('#m1-comp-t')) $('#m1-comp-t').textContent = wk ? '🏬 Ventas de la semana de la competencia' : '🏬 Ventas del día de la competencia';
         if (wk) {
-            const ws = pilotWeeks(fecha.slice(0, 7)); per = weekOf(fecha) || ws[ws.length - 1];
-            $('#m1-wk').innerHTML = ws.map(w => `<option value="${w.desde}" ${per && w.desde === per.desde ? 'selected' : ''}>Semana del ${esc(w.label)}${w.enCurso ? ' (en curso)' : ''}</option>`).join('');
+            const ws = pilotWeeks(fecha.slice(0, 7));
+            if (!ws.length) { toast('Aún no ha terminado ninguna semana del mes: carga el cierre día a día.', 'warn'); return setModo('dia'); }
+            per = weekOf(fecha) || ws[ws.length - 1];
+            $('#m1-wk').innerHTML = ws.map(w => `<option value="${w.desde}" ${per && w.desde === per.desde ? 'selected' : ''}>Semana del ${esc(w.label)}</option>`).join('');
             fecha = per.hasta;
         } else { per = null; fecha = $('#m1-fecha').value || todayStr(); }
         load();
@@ -119,9 +130,12 @@ registerModule('m1', (() => {
         const st = currentStore(); if (!st) return;
         closures = await fetchStoreClosures(st.id, fecha);
         if (!$('#m1-fecha')) return;
+        // Cierres semanales de una semana que aún no termina: quedan como cierre diario del día en que se guardaron
+        const abiertos = closures.filter(c => c.semana && weekEndOf(c.semana.desde) >= todayStr());
+        if (abiertos.length) { for (const c of abiertos) await splitWeekly(c); toast(`El cierre semanal de la semana en curso quedó como cierre del día ${abiertos.map(c => int(c.fecha.slice(8))).join(', ')}. Esta semana se carga día a día: corrige ese día si ahí sumaste la venta de otros días.`, 'warn', 9000); }
+        paintWkWarn();
         if (modo === 'semana' && per) { loadWeek(st); return; }
         const cur = closures.find(c => c.fecha === fecha && !c.semana);
-        if (weeklyCovering(fecha)) toast(`Este día está dentro del cierre semanal del ${weeklyCovering(fecha).semana.desde.slice(8)} al ${weeklyCovering(fecha).semana.hasta.slice(8)}.`, 'info', 4500);
         invTouched = {}; invBase = {};
         // Día sin cierre: el inventario parte del último cierre anterior (llenar el mes día a día) o del inventario vigente
         const prev = cur ? null : closures.filter(c => c.fecha < fecha && c.inventario).sort((a, b) => b.fecha.localeCompare(a.fecha))[0];
@@ -146,6 +160,13 @@ registerModule('m1', (() => {
         recalc(); paintDays();
     }
 
+    // En cierre diario, un día que está dentro de un cierre semanal: se puede separar para editarlo día a día
+    function paintWkWarn() {
+        const box = $('#m1-wkwarn'); if (!box) return;
+        const w = modo === 'dia' ? weeklyCovering(fecha) : null;
+        box.innerHTML = w ? `<div class="ds-nomalla">Este día está dentro del <b>cierre semanal del ${int(w.semana.desde.slice(8))} al ${int(w.semana.hasta.slice(8))}</b>. Para editarlo día a día, sepáralo: la venta de la semana queda en el día ${int(w.semana.hasta.slice(8))} y luego corriges cada día. <button class="btn btn-sm" id="m1-split">✂️ Separar en cierres diarios</button></div>` : '';
+        if (w) $('#m1-split').onclick = async () => { if (!confirm(`La venta de toda la semana quedará en el día ${int(w.semana.hasta.slice(8))}. Luego corrige cada día para no contar doble. ¿Continuar?`)) return; await splitWeekly(w); toast('Semana separada: ya puedes editar cada día', 'ok'); load(); };
+    }
     // Semana del piloto: precarga el semanal ya guardado o la suma de los cierres diarios de esa semana
     function loadWeek(st) {
         wkCur = closures.find(c => c.semana && c.semana.desde === per.desde) || null;
@@ -251,7 +272,7 @@ registerModule('m1', (() => {
     const onData = part => {
         const box = $('#m1-asesores'), st = currentStore(); if (!part.stores || !box || !st) return;
         const on = new Set($$('input:checked', box).map(i => i.value));
-        box.innerHTML = (st.asesores || []).map((a, i) => `<label class="chip"><input type="checkbox" value="${esc(a)}" ${on.size ? (on.has(a) ? 'checked' : '') : (i === 0 ? 'checked' : '')}><span>${esc(a)}</span></label>`).join('') || '<span class="mute">Configura los asesores en ⚙️ Ajustes de tienda.</span>';
+        box.innerHTML = (st.asesores || []).filter(a => !isBaja(st, a, (st.cedulas || {})[a])).map((a, i) => `<label class="chip"><input type="checkbox" value="${esc(a)}" ${on.size ? (on.has(a) ? 'checked' : '') : (i === 0 ? 'checked' : '')}><span>${esc(a)}</span></label>`).join('') || '<span class="mute">Configura los asesores en ⚙️ Ajustes de tienda.</span>';
     };
     return { render, onData };
 })());

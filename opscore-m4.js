@@ -8,7 +8,7 @@ registerModule('m4', (() => {
     let Fx = null, agg = null;
     const me = () => State.session;
     const isOwn = () => ['supervisor', 'formador'].includes(me().rol);
-    const chainKey = st => normLogoKey(st.logoKey);
+    const chainKey = st => chainGroup(st).key;        // Alkosto y Ktronix juntas (ALKOSTO KTRONIX)
 
     function render(view) {
         const t = todayStr();
@@ -60,7 +60,7 @@ registerModule('m4', (() => {
         const base = scopedStores().filter(s => inReg(s) && (!Fx.zona || s.zona === Fx.zona));
         if (!keepChain) {
             const chains = [...new Set(base.map(chainKey))];
-            $('#f-cadena').innerHTML = '<option value="">Todas</option>' + chains.map(k => `<option value="${k}" ${k === Fx.cadena ? 'selected' : ''}>${k === 'otro' ? 'Otras' : CHAINS[k].name}</option>`).join('');
+            $('#f-cadena').innerHTML = '<option value="">Todas</option>' + chains.map(k => `<option value="${k}" ${k === Fx.cadena ? 'selected' : ''}>${chainGroupLabel(k)}</option>`).join('');
             if (!chains.includes(Fx.cadena)) Fx.cadena = '';
         }
         $('#f-tienda').innerHTML = '<option value="">Todas</option>' + base.filter(s => !Fx.cadena || chainKey(s) === Fx.cadena).map(s => `<option value="${esc(s.id)}">${esc(s.tienda)}</option>`).join('');
@@ -201,7 +201,7 @@ registerModule('m4', (() => {
         const models = INFINIX_MODELS.map(m => ({ ...m, v: sum(rows.map(r => r.dcr ? int(r.dcrVentas[m.key]) : sum(closures.filter(c => c.storeId === r.st.id).map(c => int(c.ventas && c.ventas[m.key]))))), meta: Math.round(sum(stores.map(st => int(st.metas && st.metas[m.key]))) * metaFactor) }))
             .map(m => ({ ...m, cumpl: m.meta > 0 ? m.v / m.meta : null })).sort((a, b) => b.v - a.v);
         const chainMap = {};
-        rows.forEach(r => { const k = chainKey(r.st), c = chainMap[k] = chainMap[k] || { key: k, name: k === 'otro' ? 'Otras' : CHAINS[k].name, tiendas: 0, inf: 0, meta: 0, proj: 0, hc: 0 }; c.tiendas++; c.inf += r.inf; c.meta += r.meta; c.proj += r.proj; c.hc += r.hc; });
+        rows.forEach(r => { const k = chainKey(r.st), c = chainMap[k] = chainMap[k] || { key: k, name: chainGroupLabel(k), tiendas: 0, inf: 0, meta: 0, proj: 0, hc: 0 }; c.tiendas++; c.inf += r.inf; c.meta += r.meta; c.proj += r.proj; c.hc += r.hc; });
         const chains = Object.values(chainMap).map(c => ({ ...c, cumpl: c.meta > 0 ? c.inf / c.meta : null, cumplProj: c.meta > 0 ? c.proj / c.meta : null, roi: c.hc > 0 ? c.inf / c.hc : null })).sort((a, b) => b.inf - a.inf);
 
         const hcTot = sum(rows.map(r => r.hc)), projTot = sum(rows.map(r => r.proj));
@@ -288,7 +288,7 @@ registerModule('m4', (() => {
             <section class="card">
                     <h3 class="h3">Cumplimiento por cadena</h3>
                     <table class="tbl compact"><thead><tr><th>Cadena</th><th>Tiendas</th><th>Target</th><th>Venta</th><th>Cumpl.</th><th>ROI</th></tr></thead><tbody>
-                    ${a.chains.map(c => `<tr><td class="l">${chainLogo(c.key, c.name, 'xs')} <b>${esc(c.name)}</b></td><td>${c.tiendas}</td><td>${c.meta || '—'}</td><td><b>${c.inf}</b></td><td>${pillCumpl(c.cumpl, c.cumplProj)}</td><td>${c.roi == null ? '—' : fmt1(c.roi)}</td></tr>`).join('') || '<tr><td colspan="6">Sin tiendas.</td></tr>'}
+                    ${a.chains.map(c => `<tr><td class="l">${chainGroupLogo(c.key, 'xs')} <b>${esc(c.name)}</b></td><td>${c.tiendas}</td><td>${c.meta || '—'}</td><td><b>${c.inf}</b></td><td>${pillCumpl(c.cumpl, c.cumplProj)}</td><td>${c.roi == null ? '—' : fmt1(c.roi)}</td></tr>`).join('') || '<tr><td colspan="6">Sin tiendas.</td></tr>'}
                     </tbody></table>
             </section>
         </div>
@@ -316,6 +316,12 @@ registerModule('m4', (() => {
             </tbody></table></div>
             <div class="actions" style="margin-top:10px"><button class="btn btn-ghost" data-act="preview">👁️ Vista previa</button><button class="btn btn-wa" data-act="share">📲 WhatsApp</button><button class="btn btn-primary" data-act="save">⬇️ Descargar</button></div>
         </section>
+        <section class="card" id="m4-inv">
+            <div class="row between wrap" style="gap:8px"><h3 class="h3">📦 Estatus de inventario</h3><div class="seg sm">${[['tienda', 'Por tienda'], ['cadena', 'Por cadena'], ['zona', 'Por zona']].map(([k, l]) => `<button class="seg-btn ${invNivel === k ? 'active' : ''}" data-invn="${k}">${l}</button>`).join('')}</div></div>
+            <p class="mute">Inventario de cada tienda al último cierre (el lunes se carga y cada venta del cierre lo descuenta; se corrige cuando llega mercancía). Usa los filtros de arriba para ver una cadena, zona o tienda. Días de inventario = inventario ÷ venta diaria del mes (DCR).</p>
+            <div id="m4-inv-out"></div>
+            <div class="actions" style="margin-top:10px"><button class="btn btn-ghost" data-act="preview">👁️ Vista previa</button><button class="btn btn-wa" data-act="share">📲 WhatsApp</button><button class="btn btn-primary" data-act="save">⬇️ Descargar</button></div>
+        </section>
         <section class="card" id="m4-dia">
             <div class="row between wrap" style="gap:8px"><h3 class="h3">📅 Cierres del día por PDV</h3><input type="date" class="input" id="m4-dia-f" value="${esc(Fx.to > todayStr() ? todayStr() : Fx.to)}" max="${todayStr()}"></div>
             <p class="mute">Elige el día: quién envió el cierre, si lo compartió por WhatsApp o solo lo guardó, y abre o descarga la imagen del cierre de cada tienda.</p>
@@ -333,6 +339,9 @@ registerModule('m4', (() => {
         const fa = $('#m4-aud-falta'); if (fa) fa.onchange = () => $$('#m4-aud-t tbody tr').forEach(tr => { tr.hidden = fa.checked && tr.dataset.falta !== '1'; });
         ReportActions.bind($('#m4-audit'), { title: 'Auditoría de cierres · Central de Operaciones', noStore: true, filename: () => `Auditoria_cierres_${slug(scopeTitle())}_${Fx.from}_${Fx.to}.png`, build: stage => buildAuditCanvas(stage, { rows: auditRows(agg).filter(r => !(fa && fa.checked) || r.faltan.length), titulo: scopeTitle(), from: Fx.from, to: Fx.to, autor: me() }) });
         const df = $('#m4-dia-f'); if (df) { df.onchange = () => paintDia(df.value); paintDia(df.value); }
+        paintInv();
+        $$('[data-invn]').forEach(b => b.onclick = () => { invNivel = b.dataset.invn; $$('[data-invn]').forEach(x => x.classList.toggle('active', x === b)); paintInv(); });
+        ReportActions.bind($('#m4-inv'), { title: 'Estatus de inventario · Central de Operaciones', noStore: true, filename: () => `Inventario_${slug(scopeTitle())}_${invNivel}_${todayStr()}.png`, build: stage => buildInvCanvas(stage, { I: invData(), titulo: scopeTitle() + (Fx.cadena ? ' · ' + chainGroupLabel(Fx.cadena) : '') + (Fx.tienda ? ' · ' + (storeById(Fx.tienda) || {}).tienda : ''), nivel: invNivel, autor: me() }) });
         if (S.totStore && typeof Chart !== 'undefined') {
             const b = a.brandTot.filter(x => x.v > 0);
             Charts.add(new Chart($('#m4-brands'), {
@@ -370,7 +379,7 @@ registerModule('m4', (() => {
         c1.font = { bold: true, size: 16, color: { argb: XL.white } }; c1.fill = fill(XL.ink); c1.alignment = { vertical: 'middle', indent: 1 };
         ws.getRow(1).height = 34;
         const c2 = ws.getCell(2, 1);
-        c2.value = `Periodo ${a.f.from} a ${a.f.to} · ${a.f.zona ? 'Zona ' + a.f.zona : a.f.regional ? 'Regional ' + a.f.regional : (isAllZones() ? 'Nacional' : (myRegional() && ['coordinador', 'gerente'].includes(s.rol) ? 'Regional ' + myRegional() : 'Zona ' + (s.zona || '')))}${a.f.cadena ? ' · ' + (a.f.cadena === 'otro' ? 'Otras cadenas' : CHAINS[a.f.cadena].name) : ''} · Generado por ${s.nombre} (${ROLES[s.rol].label}) el ${todayStr()}`;
+        c2.value = `Periodo ${a.f.from} a ${a.f.to} · ${a.f.zona ? 'Zona ' + a.f.zona : a.f.regional ? 'Regional ' + a.f.regional : (isAllZones() ? 'Nacional' : (myRegional() && ['coordinador', 'gerente'].includes(s.rol) ? 'Regional ' + myRegional() : 'Zona ' + (s.zona || '')))}${a.f.cadena ? ' · ' + chainGroupLabel(a.f.cadena) : ''} · Generado por ${s.nombre} (${ROLES[s.rol].label}) el ${todayStr()}`;
         c2.font = { size: 10, color: { argb: XL.white } }; c2.fill = fill(XL.dgreen); c2.alignment = { vertical: 'middle', indent: 1 };
         ws.getRow(2).height = 20;
         ws.views = [{ showGridLines: false }];
@@ -552,6 +561,43 @@ registerModule('m4', (() => {
         finally { busy(btn, false); btn.innerHTML = '⬇️ Descargar Informe Gerencial (.xlsx)'; }
     }
 
+    // ---- Estatus de inventario: por tienda, cadena (Alkosto y Ktronix juntas) o zona
+    let invNivel = 'tienda';
+    function invData() {
+        const sts = agg.rows.map(r => r.st), today = todayStr();
+        const keys = INFINIX_MODELS.filter(m => sts.some(st => int((st.metas || {})[m.key]) > 0)).map(m => m.key);
+        const one = st => {
+            const Z = typeof ZoneData !== 'undefined' ? ZoneData.forStore(st.id) : null, day = Z && Z.corte ? Math.max(1, int(Z.corte.slice(8))) : Math.max(1, int(today.slice(8)) - 1);
+            const inv = Object.fromEntries(keys.map(k => [k, int((st.inventario || {})[k])])), vm = Object.fromEntries(keys.map(k => [k, int(((Z && Z.ventas) || {})[k])])), meta = Object.fromEntries(keys.map(k => [k, int((st.metas || {})[k])]));
+            const act = st.lastClosure && st.lastClosure > (st.invAt || '') ? st.lastClosure : (st.invAt || st.lastClosure || '');
+            return { st, inv, vm, meta, day, act, q: keys.filter(k => meta[k] > 0 && !inv[k]).length, viejo: !act || (parseD(today) - parseD(act)) / 864e5 > 7 };
+        };
+        const S = sts.map(one);
+        const keyOf = x => invNivel === 'tienda' ? x.st.id : invNivel === 'cadena' ? chainGroup(x.st).key : x.st.zona;
+        const nameOf = x => invNivel === 'tienda' ? x.st.tienda : invNivel === 'cadena' ? chainGroup(x.st).label : 'Zona ' + x.st.zona;
+        const G = {};
+        S.forEach(x => { const k = keyOf(x), g = G[k] = G[k] || { k, nombre: nameOf(x), st: x.st, inv: {}, vm: {}, meta: {}, n: 0, day: x.day, viejos: 0, act: x.act }; g.n++; g.q = (g.q || 0) + x.q; if (x.viejo) g.viejos++; keys.forEach(r => { g.inv[r] = (g.inv[r] || 0) + x.inv[r]; g.vm[r] = (g.vm[r] || 0) + x.vm[r]; g.meta[r] = (g.meta[r] || 0) + x.meta[r]; }); if ((x.act || '') < (g.act || '9')) g.act = x.act; });
+        const dias = (inv, vm, day) => vm > 0 ? Math.round(inv / (vm / day)) : (inv > 0 ? null : 0);
+        const rows = Object.values(G).map(g => { const ti = sum(keys.map(r => g.inv[r])), tv = sum(keys.map(r => g.vm[r])); return { ...g, ti, tv, dias: dias(ti, tv, g.day), quiebres: g.q, sobre: keys.filter(r => g.inv[r] > 0 && (dias(g.inv[r], g.vm[r], g.day) == null || dias(g.inv[r], g.vm[r], g.day) > 30)).length, dr: k => dias(g.inv[k], g.vm[k], g.day) }; }).sort((a, b) => b.ti - a.ti);
+        const ti = sum(rows.map(r => r.ti)), tv = sum(rows.map(r => r.tv)), day = S[0] ? S[0].day : 1;
+        return { keys, rows, ti, tv, dias: dias(ti, tv, day), quiebresPdv: S.filter(x => keys.some(r => x.meta[r] > 0 && !x.inv[r])).length, viejos: S.filter(x => x.viejo).length, pdv: S.length,
+            porRef: keys.map(k => ({ k, name: (INFINIX_MODELS.find(m => m.key === k) || {}).name, inv: sum(S.map(x => x.inv[k])), vm: sum(S.map(x => x.vm[k])), sin: S.filter(x => x.meta[k] > 0 && !x.inv[k]).length, dias: dias(sum(S.map(x => x.inv[k])), sum(S.map(x => x.vm[k])), day) })).sort((a, b) => b.vm - a.vm) };
+    }
+    const invCls = d => d == null ? 'inv-x' : d === 0 ? 'inv-0' : d > 30 ? 'inv-hi' : d < 7 ? 'inv-lo' : 'inv-ok';
+    function paintInv() {
+        const box = $('#m4-inv-out'); if (!box || !agg) return;
+        const I = invData(), nm = k => (INFINIX_MODELS.find(m => m.key === k) || {}).name || k;
+        box.innerHTML = `<div class="zg-kpis" style="grid-template-columns:repeat(5,1fr);margin:8px 0">
+                <div class="hl"><span>Inventario total</span><b>${I.ti}</b><em>${I.pdv} PDV</em></div>
+                <div><span>Venta del mes</span><b>${I.tv}</b><em>DCR</em></div>
+                <div><span>Días de inventario</span><b>${I.dias ?? '—'}</b><em>al ritmo del mes</em></div>
+                <div><span>PDV con quiebre</span><b class="${I.quiebresPdv ? 'r' : 'g'}">${I.quiebresPdv}</b><em>referencia con meta en 0</em></div>
+                <div><span>Sin actualizar</span><b class="${I.viejos ? 'a' : 'g'}">${I.viejos}</b><em>PDV con inventario de hace +7 días</em></div></div>
+            <div class="tbl-scroll"><table class="tbl compact inv-tbl"><thead><tr><th class="l">${invNivel === 'tienda' ? 'PDV' : invNivel === 'cadena' ? 'Cadena' : 'Zona'}</th>${I.keys.map(k => `<th>${esc(nm(k))}</th>`).join('')}<th>Total</th><th>Días inv.</th><th title="Tienda × referencia con meta en 0">Quiebres</th><th>Sobrestock</th><th>${invNivel === 'tienda' ? 'Actualizado' : 'PDV'}</th></tr></thead><tbody>
+            ${I.rows.map(r => `<tr><td class="l">${invNivel === 'tienda' ? storeLogo(r.st, 'xs') + ' ' : invNivel === 'cadena' ? chainGroupLogo(r.k, 'xs') + ' ' : ''}<b>${esc(r.nombre)}</b></td>${I.keys.map(k => `<td class="${!r.inv[k] && !r.meta[k] ? '' : invCls(r.dr(k))}" title="${r.vm[k]} vendidas en el mes">${r.inv[k]}</td>`).join('')}<td><b>${r.ti}</b></td><td>${r.dias ?? '—'}</td><td>${r.quiebres ? `<i class="pill bad">${r.quiebres}</i>` : '0'}</td><td>${r.sobre ? `<i class="pill warn">${r.sobre}</i>` : '0'}</td><td>${invNivel === 'tienda' ? (r.act ? `<small class="${r.viejos ? 'r' : ''}">${esc(r.act.slice(5))}</small>` : '<small class="r">sin dato</small>') : r.n + (r.viejos ? ` <small class="r">(${r.viejos} viejos)</small>` : '')}</td></tr>`).join('') || '<tr><td colspan="9">Sin tiendas en el filtro.</td></tr>'}
+            <tr class="tot"><td class="l">TOTAL</td>${I.keys.map(k => `<td>${(I.porRef.find(x => x.k === k) || {}).inv || 0}</td>`).join('')}<td><b>${I.ti}</b></td><td>${I.dias ?? '—'}</td><td></td><td></td><td>${I.pdv}</td></tr></tbody></table></div>
+            <p class="hint">Color por días de inventario de la referencia: rojo = en 0 (quiebre), ámbar claro = menos de 7 días, verde = 7 a 30 días, morado = más de 30 días o sin venta (sobrestock). Solo referencias con target.</p>`;
+    }
     // Cierres de un día: estado por tienda y la imagen del cierre (se rearma con lo guardado)
     async function paintDia(fecha) {
         const box = $('#m4-dia-out'); if (!box || !agg) return;
@@ -606,7 +652,7 @@ function buildM4Visual(stage, a, scope, autor) {
     <div class="gv-grid">
         <section class="gv-card"><h4>🏬 Estado de las tiendas</h4><div class="gv-donut">${ringCardHTML('gv-st', 190, S.tiendas, 'tiendas')}<div class="gv-leg">${stK.map(([k, l, c]) => `<div><i style="background:${c}"></i>${l}<b>${st[k]}</b></div>`).join('')}</div></div></section>
         <section class="gv-card"><h4>📊 Participación por marca</h4>${comp ? `<div class="gv-donut">${ringCardHTML('gv-br', 190, pc(S.share), 'Infinix')}<div class="gv-leg">${brands.slice(0, 7).map(x => `<div><i style="background:${BRAND_COLORS[x.brand] || '#94A3B8'}"></i>${esc(x.brand)}<b>${pc(x.share)}</b></div>`).join('')}</div></div>` : `<p class="gv-empty">Aún no hay venta de la competencia registrada (se digita a mano en los cierres diarios).</p>`}</section>
-        <section class="gv-card"><h4>🔗 Cumplimiento proyectado por cadena</h4>${a.chains.map(c => hbar(c.name, c.cumplProj || 0, maxCh, `${pc(c.cumplProj)} <small>${c.inf}/${c.meta || dash}</small>`, col(c.cumplProj), chainLogo(c.key, '', 'xs') + ' ')).join('')}</section>
+        <section class="gv-card"><h4>🔗 Cumplimiento proyectado por cadena</h4>${a.chains.map(c => hbar(c.name, c.cumplProj || 0, maxCh, `${pc(c.cumplProj)} <small>${c.inf}/${c.meta || dash}</small>`, col(c.cumplProj), chainGroupLogo(c.key, 'xs') + ' ')).join('')}</section>
         <section class="gv-card"><h4>📦 Referencias · venta vs. target</h4>${a.models.filter(m => m.v || m.meta).map(m => `<div class="gv-hb"><span>${esc(m.name)}</span><div class="gv-track two"><div style="width:${m.meta / maxM * 100}%;background:#E2E8F0"></div><div style="width:${m.v / maxM * 100}%;background:#00C853"></div></div><b>${m.v} <small>/ ${m.meta || dash}</small></b></div>`).join('')}</section>
         ${a.weekly.length ? `<section class="gv-card"><h4>📅 Venta semanal</h4><div class="gv-cols">${a.weekly.map(w => `<div><b>${w.inf}</b><div class="gv-col" style="height:${Math.max(4, w.inf / maxW * 120)}px"></div><small>W${w.wk}</small></div>`).join('')}</div></section>` : ''}
         ${a.zones.length > 1 ? `<section class="gv-card"><h4>🗺️ Cumplimiento proyectado por zona</h4>${a.zones.map(z => hbar(z.zona, z.meta > 0 ? z.proj / z.meta : 0, Math.max(1, ...a.zones.map(x => x.meta > 0 ? x.proj / x.meta : 0)), pc(z.meta > 0 ? z.proj / z.meta : null), col(z.meta > 0 ? z.proj / z.meta : null))).join('')}</section>` : ''}
@@ -642,5 +688,33 @@ function buildAuditCanvas(stage, d) {
         <td class="l">${r.faltan.length ? `<div class="aud-days">${r.faltan.map(x => `<i>${int(x.slice(8))}</i>`).join('')}</div>` : '<b class="g">Al día</b>'}</td>
         <td class="${r.diasCubiertos && r.diasComp < r.diasCubiertos ? 'a' : ''}">${r.diasCubiertos ? `${r.diasComp}/${r.diasCubiertos}` : dash}</td><td>${r.cierres ? `📲 ${r.compartidos} · 💾 ${r.soloGuardados}` : dash}</td><td>${esc(r.lastFecha || 'Sin cierres')}</td></tr>`).join('')}</tbody></table>
     <footer class="rp-foot"><span>Días exigibles: del inicio del rango a ayer (hoy cuenta cuando llega el cierre). Competencia: días reportados con la venta de las otras marcas cargada. Compartidos: cierres enviados por el menú de compartir del teléfono (WhatsApp); solo guardados: se registraron sin compartir.</span><b>Infinix · Central de Operaciones</b></footer><div class="rp-bar"></div>`;
+    stage.appendChild(el); return el;
+}
+
+
+// ---------- Lienzo · estatus de inventario ----------
+function buildInvCanvas(stage, d) {
+    const I = d.I, dash = '—', nm = k => (INFINIX_MODELS.find(m => m.key === k) || {}).name || k, niv = { tienda: 'POR TIENDA', cadena: 'POR CADENA', zona: 'POR ZONA' }[d.nivel];
+    const cls = v => v == null ? 'inv-x' : v === 0 ? 'inv-0' : v > 30 ? 'inv-hi' : v < 7 ? 'inv-lo' : 'inv-ok';
+    const el = document.createElement('div'); el.className = 'rp sp invr';
+    el.innerHTML = `<div class="rp-bar"></div>
+    <header class="rp-head"><img class="rp-logo" src="${LOGO_INFINIX}" alt="Infinix">
+        <div class="rp-head-mid"><div class="rp-kicker">ESTATUS DE INVENTARIO INFINIX · ${niv}</div><div class="rp-title">${esc(d.titulo.toUpperCase())}</div><div class="rp-sub">${esc(fechaLarga(todayStr()))} · inventario al último cierre de cada tienda · ${I.pdv} PDV</div></div>
+        <div class="pl-who"><b>${esc(d.autor.nombre)}</b><small>${ROLES[d.autor.rol] ? ROLES[d.autor.rol].label : ''}</small></div></header>
+    <div class="sp-band">
+        <div class="hero"><span>INVENTARIO TOTAL</span><b>${I.ti}</b><em>${I.dias != null ? I.dias + ' días al ritmo del mes' : ''}</em></div>
+        <div><span>Venta del mes</span><b>${I.tv}</b><em>DCR</em></div>
+        <div><span>Días de inventario</span><b>${I.dias ?? dash}</b><em>inventario ÷ venta diaria</em></div>
+        <div class="${I.quiebresPdv ? 'bad' : 'ok'}"><span>PDV con quiebre</span><b>${I.quiebresPdv}</b><em>referencia con meta en 0</em></div>
+        <div><span>Refs. en quiebre</span><b>${sum(I.porRef.map(r => r.sin))}</b><em>tienda × referencia</em></div>
+        <div class="${I.viejos ? 'bad' : 'ok'}"><span>Sin actualizar</span><b>${I.viejos}</b><em>inventario de hace +7 días</em></div>
+    </div>
+    <div class="rp-sec">POR REFERENCIA · DE LA MÁS VENDIDA A LA MENOS</div>
+    <table class="rp-tbl sp-tbl"><thead><tr><th class="l">REFERENCIA</th><th>INVENTARIO</th><th>VENTA MES</th><th class="c-tot">DÍAS DE INVENTARIO</th><th>PDV EN QUIEBRE</th></tr></thead><tbody>
+    ${I.porRef.map(r => `<tr><td class="l"><b>${esc(r.name)}</b></td><td><b>${r.inv}</b></td><td>${r.vm}</td><td class="c-tot ${cls(r.dias)}">${r.dias ?? 'sin venta'}</td><td class="${r.sin ? 'r' : ''}">${r.sin}</td></tr>`).join('')}</tbody></table>
+    <div class="rp-sec">INVENTARIO ${niv}</div>
+    <table class="rp-tbl sp-tbl inv-tbl"><thead><tr><th class="l">${d.nivel === 'tienda' ? 'PUNTO DE VENTA' : d.nivel === 'cadena' ? 'CADENA' : 'ZONA'}</th>${I.keys.map(k => `<th>${esc(nm(k).toUpperCase())}</th>`).join('')}<th class="c-tot">TOTAL</th><th>DÍAS</th><th>QUIEBRES</th><th>${d.nivel === 'tienda' ? 'ACTUALIZADO' : 'PDV'}</th></tr></thead><tbody>
+    ${I.rows.map(r => `<tr><td class="l"><div class="sp-pdv">${d.nivel === 'tienda' ? storeLogo(r.st, 'xs') : d.nivel === 'cadena' ? chainGroupLogo(r.k, 'xs') : ''}<b>${esc(r.nombre)}</b></div></td>${I.keys.map(k => `<td class="${!r.inv[k] && !r.meta[k] ? '' : cls(r.dr(k))}">${r.inv[k]}</td>`).join('')}<td class="c-tot"><b>${r.ti}</b></td><td>${r.dias ?? dash}</td><td class="${r.quiebres ? 'r' : ''}">${r.quiebres}</td><td>${d.nivel === 'tienda' ? (r.act ? esc(r.act.slice(5)) : 'sin dato') : r.n}</td></tr>`).join('')}</tbody></table>
+    <footer class="rp-foot"><span>Inventario = último cierre de la tienda (se carga el lunes y cada venta del cierre lo descuenta). Días = inventario ÷ venta diaria del mes (DCR). Rojo: en 0 · ámbar: menos de 7 días · verde: 7 a 30 · morado: más de 30 o sin venta. Solo referencias con target.</span><b>Infinix · Central de Operaciones</b></footer><div class="rp-bar"></div>`;
     stage.appendChild(el); return el;
 }

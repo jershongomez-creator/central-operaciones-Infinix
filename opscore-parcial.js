@@ -17,12 +17,12 @@ registerModule('parcial', (() => {
     function render(v) {
         view = v; const s = st(); if (!s) { v.innerHTML = '<div class="card">Sesión de tienda no válida.</div>'; return; }
         const d = load(); hora = d.hora || horaAuto();
-        const ase = d.asesores || (s.asesores || []);
+        const vig = (s.asesores || []).filter(a => !isBaja(s, a, (s.cedulas || {})[a])), ase = d.asesores || vig;
         v.innerHTML = `<section class="card">
             <div class="row"><span>${storeLogo(s)}</span><div><h2 class="h2">📊 Parcial de venta</h2><p class="mute">${esc(s.tienda)} · escribe lo que llevan vendido hoy y envíalo al grupo. Se guarda para el siguiente parcial.</p></div></div>
             <div class="seg sm wrap" style="margin-top:10px">${PARCIAL_HORAS.map(h => `<button class="seg-btn ${h === hora ? 'active' : ''}" data-h="${esc(h)}">${h === 'Otro' ? 'Otra hora' : '🕐 ' + esc(h)}</button>`).join('')}</div>
             <label class="lbl" style="margin-top:10px">Asesores</label>
-            <div class="chips" id="pc-ase">${(s.asesores || []).map(a => `<label class="chip"><input type="checkbox" value="${esc(a)}" ${ase.includes(a) ? 'checked' : ''}><span>${esc(a)}</span></label>`).join('') || '<span class="mute">Sin asesores configurados.</span>'}</div>
+            <div class="chips" id="pc-ase">${vig.map(a => `<label class="chip"><input type="checkbox" value="${esc(a)}" ${ase.includes(a) ? 'checked' : ''}><span>${esc(a)}</span></label>`).join('') || '<span class="mute">Sin asesores configurados.</span>'}</div>
         </section>
         <div class="grid2">
             <section class="card"><h3 class="h3">💚 Infinix · venta por modelo</h3>

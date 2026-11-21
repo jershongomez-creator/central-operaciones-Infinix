@@ -407,7 +407,13 @@ const inScope = zona => isAllZones() || myZones().includes(zona);
 // ---------- Cadenas de trabajo ----------------------------------------------------
 // La data nacional trae de todo (retail, IR, independientes…). El administrador elige qué cadenas se
 // trabajan; las demás salen de rankings, central, plan y evaluaciones, pero sus ventas quedan guardadas.
-const chainGroup = st => { const k = normLogoKey(st && st.logoKey); return k !== 'otro' ? { key: k, label: CHAINS[k].name.toUpperCase() } : { key: 'x:' + (slug(st && st.cadena) || 'sin_cadena'), label: String((st && st.cadena) || 'SIN CADENA').toUpperCase() }; };
+// Cadena para reportes: Alkosto y Ktronix son la misma cadena (Corbeta) y en los reportes van juntas como ALKOSTO KTRONIX;
+// en el resto de la app (logo, tienda, filtros de datos) cada una conserva su nombre.
+const CHAIN_GROUPS = { alkosto: 'alkosto-ktronix', ktronix: 'alkosto-ktronix' };
+const chainGroupLabel = k => k === 'alkosto-ktronix' ? 'ALKOSTO KTRONIX' : (CHAINS[k] ? CHAINS[k].name.toUpperCase() : String(k).replace(/^x:/, '').toUpperCase());
+const chainGroup = st => { const k = normLogoKey(st && st.logoKey); if (CHAIN_GROUPS[k]) return { key: CHAIN_GROUPS[k], label: chainGroupLabel(CHAIN_GROUPS[k]) }; return k !== 'otro' ? { key: k, label: CHAINS[k].name.toUpperCase() } : { key: 'x:' + (slug(st && st.cadena) || 'sin_cadena'), label: String((st && st.cadena) || 'SIN CADENA').toUpperCase() }; };
+// Logo de una cadena de reporte (Alkosto Ktronix lleva los dos logos)
+const chainGroupLogo = (k, cls) => k === 'alkosto-ktronix' ? `<span class="row" style="gap:3px;flex-wrap:nowrap;display:inline-flex">${chainLogo('alkosto', 'Alkosto', cls)}${chainLogo('ktronix', 'Ktronix', cls)}</span>` : chainLogo(CHAINS[k] ? k : 'otro', chainGroupLabel(k), cls);
 const chainOn = st => !State.cadenas.off.includes(chainGroup(st).key);
 const chainViewOn = st => !State.chainView.includes(chainGroup(st).key);
 const chainViewKey = () => 'opscore_cv_' + ((State.session && (State.session.userId || State.session.storeId)) || 'x');
@@ -472,7 +478,17 @@ const sameAdvisor = (a, b) => {
 };
 // "Mariana Hoyos" y "Mariana Hoyos Sepulveda" (data) son la misma persona al unir la lista de la tienda con la data
 const nameSubset = (a, b) => { const A = advNameKey(a).split('_').filter(Boolean), B = advNameKey(b).split('_').filter(Boolean), [s, l] = A.length <= B.length ? [A, B] : [B, A]; return s.length >= 2 && s.every(x => l.includes(x)); };
-const isBaja = (st, nombre, cedula) => ((st && st.bajas) || []).some(b => sameAdvisor(b, { nombre, cedula }));
+// Retirado: en la tienda o en CUALQUIER tienda (un retiro saca al asesor de todas, también los hechos antes de la v1.15).
+// Si luego se reactiva en una tienda, esa reactivación manda (asesoresReact).
+let _bajasRef = null, _bajasAll = [];
+const allBajas = () => { if (_bajasRef !== State.stores) { _bajasRef = State.stores; _bajasAll = State.stores.flatMap(s => (s.bajas || []).map(b => ({ ...b, sid: s.id, at: b.at || 0 }))); } return _bajasAll; };
+const isBaja = (st, nombre, cedula) => {
+    const p = { nombre, cedula };
+    if (((st && st.bajas) || []).some(b => sameAdvisor(b, p))) return true;
+    const g = allBajas().filter(b => sameAdvisor(b, p)); if (!g.length) return false;
+    const react = ((st && st.reactivados) || []).find(r => sameAdvisor(r, p));
+    return !(react && react.at >= Math.max(...g.map(b => b.at)));
+};
 const isPseudoAdvisor = n => !n || n === 'Sin asesor' || /^Formador/i.test(n) || /^Asesor\s*\d+$/i.test(String(n).trim());     // 'Asesor 1…' = nombres de prueba
 // Todos los asesores conocidos de una tienda (configurados + semilla + data de zona + retirados) con su venta y estado
 function storeAdvisors(st) {

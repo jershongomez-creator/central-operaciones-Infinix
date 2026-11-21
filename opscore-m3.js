@@ -203,7 +203,7 @@ registerModule('m3', (() => {
         <section class="card">
             <div class="row">${storeLogo(st)}<div><b>${esc(st.tienda)}</b><p class="mute">${esc(st.ciudad || '')} · ${F.auto ? (F.fromDCR ? `Venta de la data DCR al ${esc(F.corte)}${F.pano && F.pano.fuente === 'DCR + cierres' ? ' · competencia de los cierres' : ''}` : `Indicadores arrastrados del cierre del ${esc(F.corte)}`) : F.fromDCR ? `Venta del mes tomada de la data DCR (corte ${esc(F.corte)})` : 'La tienda aún no tiene cierres este mes'}</p></div></div>
             <label class="lbl">Promotor(es) en tienda</label>
-            <div class="chips">${[...new Set(activeAdvisors(st).map(a => a.nombre).concat(st.asesores || []))].map(a => `<label class="chip"><input type="checkbox" data-f="prom" value="${esc(a)}" ${F.promotores.includes(a) ? 'checked' : ''}><span>${typeof advisorAvatar === 'function' ? advisorAvatar(st.id, a, 26) + ' ' : ''}${esc(a)}</span></label>`).join('')}</div>
+            <div class="chips">${[...new Set(activeAdvisors(st).map(a => a.nombre).concat((st.asesores || []).filter(a => !isBaja(st, a))))].map(a => `<label class="chip"><input type="checkbox" data-f="prom" value="${esc(a)}" ${F.promotores.includes(a) ? 'checked' : ''}><span>${typeof advisorAvatar === 'function' ? advisorAvatar(st.id, a, 26) + ' ' : ''}${esc(a)}</span></label>`).join('')}</div>
             <input class="input" style="margin-top:8px" data-f="promExtra" value="${esc(F.promExtra)}" placeholder="Otro promotor (opcional)">
             <label class="lbl">Lo de hoy</label>
             <div class="grid-num" style="margin-top:0">

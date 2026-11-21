@@ -406,7 +406,7 @@ registerModule('admin', (() => {
             const st = storeById(b.dataset.sid), adv = st && advByName(st, b.dataset.n); if (!adv) return;
             if (adv.activo) return retireForm(st, adv);
             else {
-                await saveStore(st, { bajas: (st.bajas || []).filter(x => !sameAdvisor(x, adv) && !adv.alias.some(n => sameAdvisor(x, { nombre: n }))), asesores: [...new Set([...assigned(st), adv.nombre])] }, ['asesores']);
+                await saveStore(st, { bajas: (st.bajas || []).filter(x => !sameAdvisor(x, adv) && !adv.alias.some(n => sameAdvisor(x, { nombre: n }))), asesores: [...new Set([...assigned(st), adv.nombre])], reactivados: (st.reactivados || []).filter(r => !sameAdvisor(r, adv)).concat({ nombre: adv.nombre, cedula: adv.cedula || '', at: Date.now(), by: me().nombre }) }, ['asesores']);
                 toast(`${adv.nombre} activo de nuevo`, 'ok');
             }
             return paint();

@@ -1099,7 +1099,7 @@ function buildQuickCanvas(stage, Q, autor) {
     el.className = 'rp fa fa-img qk';
     el.innerHTML = `<div class="rp-bar"></div><div class="fa-pad">
         <div class="fa-head"><div class="fa-who"><div class="fa-kick">${kick} · ${esc(Q.zona.toUpperCase())}</div>
-            <div class="fa-name">${Q.logoKey ? chainLogo(Q.logoKey, '', 'sm') + ' ' : ''}${esc(Q.label)}</div>
+            <div class="fa-name">${Q.logoKey ? (Q.tipo === 'cadena' ? chainGroupLogo(Q.logoKey, 'sm') : chainLogo(Q.logoKey, '', 'sm')) + ' ' : ''}${esc(Q.label)}</div>
             <div class="fa-sub">Corte ${esc(fechaLarga(Q.corte))} · día ${Q.day} de ${Q.dim} · ${R.length} PDV · HC ${fmt1(hc)}</div></div>
             <div class="ac-big ${cls(meta ? cumpl / esp : null)}"><b>${pc(cumpl)}</b><small>de la meta</small></div></div>
         <div class="fa-kpis">

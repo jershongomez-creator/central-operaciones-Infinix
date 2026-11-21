@@ -237,6 +237,13 @@ Resultado: quién presentó, quién falta, quién repitió y con qué notas, pro
 - **Usuarios genéricos:** solo el administrador los ve (equipo, auditorías, data plana). **Contraseña de tienda:** en Gestión › Tiendas › 🔑 se ve la actual y se restablece a Infinix2026.
 - **Lectura de la data plana:** el día de cada venta es la fecha de carga en DCR (Upload Date), en todos los cálculos. En Mi central, la tienda usa sus cierres y cada asesor su venta real DCR de la última data plana cargada en la zona.
 
+## 5k. Novedades v1.16
+
+- **Cierre semanal (piloto):** solo para semanas que ya terminaron; la semana en curso se carga día a día. Un cierre semanal hecho en una semana que no había terminado queda como cierre del día en que se guardó. Un cierre ya hecho se abre eligiendo la fecha y se corrige con "Solo guardar" o se vuelve a generar su imagen. Si un día está dentro de un cierre semanal, "Separar en cierres diarios" lo deja editable día a día.
+- **Retirados:** un asesor retirado en cualquier tienda (también los retirados antes de la v1.15) deja de salir en todas las tiendas, el cierre, el parcial, la calculadora y la visita. Reactivarlo en una tienda lo devuelve en esa tienda.
+- **Cadena en reportes:** Alkosto y Ktronix van juntas como ALKOSTO KTRONIX (filtros, consolidados, share, inventario); cada tienda conserva su logo y nombre.
+- **Central de reportes › Estatus de inventario:** por tienda, cadena o zona, con los filtros de arriba; inventario por referencia con target, venta del mes, días de inventario, quiebres, sobrestock y fecha de actualización; imagen para compartir.
+
 ## 6. Calculadora (tienda)
 
 El asesor elige su nombre. Su target por referencia sale del target de la tienda dividido entre los asesores y lo puede ajustar a mano; sus unidades llegan de la data de zona (o se escriben). Muestra apertura (KPI), lo ganado y el siguiente bono según el **plan comisional general**, que el Administrador configura en Gestión › Configuración › Plan comisional (valor por referencia y accesorio, apertura y bonos).
