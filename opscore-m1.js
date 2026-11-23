@@ -6,9 +6,17 @@
 
 registerModule('m1', (() => {
     let fecha = todayStr(), closures = [], invBase = {}, invTouched = {}, invAccBase = {}, invAccTouched = {};
-    // Piloto (noviembre): cierre semanal. modo 'semana' → per = { desde, hasta }; el cierre se guarda con la fecha de cierre
+    // Cierre semanal (para semanas a las que les faltan 2 o más cierres). modo 'semana' → per = { desde, hasta }; el cierre se guarda con la fecha de cierre
     // de la semana y cubre todos sus días. Al guardarlo reemplaza los cierres diarios que hubiera en esa semana.
-    let modo = 'dia', per = null, wkCur = null, wkDaily = [];
+    let modo = 'dia', per = null, wkCur = null, wkDaily = [], obs = [];
+    // Obsoletas en bodega: se guardan en la tienda al momento (las ve el líder) y viajan con el cierre
+    function paintObs() {
+        const box = $('#m1-obs'); if (!box) return;
+        box.innerHTML = obs.length ? obs.map((o, i) => `<div class="adv-edit"><span class="grow"><b>${esc(o.ref)}</b></span><input class="input num" type="number" min="0" inputmode="numeric" data-ou="${i}" value="${int(o.uds)}" style="width:80px"><button type="button" class="icon-btn" data-ox="${i}" title="Quitar">✕</button></div>`).join('') : '<p class="empty sm">No tienes referencias obsoletas registradas.</p>';
+        const t = $('#m1-tot-obs'); if (t) t.textContent = sum(obs.map(o => int(o.uds))) + ' uds';
+    }
+    let obsT = null;
+    function saveObs() { clearTimeout(obsT); obsT = setTimeout(() => { const st = currentStore(); if (!st) return; st.obsoletas = obs.filter(o => int(o.uds) > 0); Data.set(COL.stores, st.id, { obsoletas: st.obsoletas, updatedAt: Date.now() }, true); }, 700); }
     const pilotOn = d => WEEKLY_PILOT_MONTHS.includes((d || todayStr()).slice(0, 7));
     // Semanas del mes (lunes a domingo, recortadas al mes) que YA TERMINARON: la semana en curso se carga día a día
     const weekEndOf = d => { const e = weekDays(d)[6], me = d.slice(0, 8) + pad2(daysInMonth(d.slice(0, 7))); return e < me ? e : me; };
@@ -25,6 +33,19 @@ registerModule('m1', (() => {
         return doc;
     }
     const weekOf = d => pilotWeeks(d.slice(0, 7)).find(w => d >= w.desde && d <= w.hasta) || null;
+    // Cierre semanal: solo para semanas ya terminadas en las que faltan 2 o más cierres (se perdona 1 día: el descanso del asesor;
+    // ese día se llena a mano en el cierre diario). Si no hay semanas así, el botón de cierre semanal no aparece.
+    const missingOf = w => { const cov = closureDaysCovered(closures), out = []; for (let d = w.desde; d <= w.hasta; d = addDays(d, 1)) if (!cov.has(d)) out.push(d); return out; };
+    const pendWeeks = () => pilotWeeks(fecha.slice(0, 7)).map(w => ({ ...w, falta: missingOf(w) })).filter(w => w.falta.length >= 2);
+    function paintModeBox() {
+        const box = $('#m1-modebox'); if (!box) return false;
+        const P = pendWeeks(), wk = modo === 'semana';
+        if (wk && per && !P.some(w => w.desde === per.desde)) { setModo('dia'); return true; }      // la semana ya quedó completa
+        box.hidden = !P.length && !wk;
+        const pe = $('#m1-wkpend');
+        if (pe) { pe.hidden = wk || !P.length; pe.innerHTML = P.length ? `⚠️ Te faltan cierres de ${P.map(w => `la semana del <b>${esc(w.label)}</b> (${w.falta.length} días)`).join(' y ')}. Usa <b>🗓️ Cierre semanal</b> para cargar la semana completa de una vez.` : ''; }
+        return false;
+    }
     const weeklyCovering = d => closures.find(c => c.semana && d >= c.semana.desde && d <= c.semana.hasta) || null;
 
     const stepper = (id, v, ro) => `<div class="stp"><button type="button" data-d="-1" ${ro ? 'disabled' : ''}>−</button>
@@ -37,15 +58,18 @@ registerModule('m1', (() => {
         fecha = todayStr();
         const hc = st.hc || {}, metas = st.metas || {}, metasAcc = st.metasAcc || {}, metasComp = st.metasComp || {};
         const tgt = v => int(v) ? `<b class="tgt">${int(v)}</b>` : '<span class="mute">—</span>';
+        const refOn = new Set(storeRefs(st).map(m => m.key)), accOn = new Set(storeAccs(st).map(a => a.key));
+        obs = storeObsoletas(st).map(o => ({ ...o }));
         view.innerHTML = `
         <section class="card">
             <div class="row between wrap">
                 <div class="row">${storeLogo(st)}<div><h2 class="h2">Reporte de cierre diario</h2><p class="mute">${esc(st.tienda)} · ${esc(st.ciudad || '')} · Zona ${esc(st.zona || '')}</p></div></div>
                 <label class="field-inline"><span class="lbl">Fecha del cierre</span><span class="row" style="gap:4px"><button type="button" class="icon-btn" id="m1-prev" title="Día anterior">◀</button><input type="date" id="m1-fecha" class="input" value="${fecha}" max="${todayStr()}"><button type="button" class="icon-btn" id="m1-next" title="Día siguiente">▶</button></span></label>
             </div>
-            ${pilotOn() ? `<div class="m1-mode"><div class="seg sm"><button type="button" class="seg-btn" data-modo="dia">📅 Cierre diario</button><button type="button" class="seg-btn" data-modo="semana">🗓️ Cierre semanal (piloto)</button></div>
+            <div class="m1-mode" id="m1-modebox" hidden><div class="seg sm"><button type="button" class="seg-btn" data-modo="dia">📅 Cierre diario</button><button type="button" class="seg-btn" data-modo="semana">🗓️ Cierre semanal</button></div>
                 <span id="m1-wkbox" hidden><select class="input" id="m1-wk"></select></span></div>
-                <p class="hint" id="m1-wkhint" hidden>Piloto de ${esc(mesLargo(todayStr().slice(0, 7)))}: solo para semanas que ya terminaron, carga en un solo cierre toda la venta de la semana (Infinix, accesorios y competencia). La semana en curso se carga día a día. Si ya había cierres diarios en esa semana, se suman aquí y quedan reemplazados por este.</p>` : ''}
+                <p class="hint" id="m1-wkpend" hidden></p>
+                <p class="hint" id="m1-wkhint" hidden>Carga en un solo cierre toda la venta de la semana (Infinix, accesorios y competencia). Solo aparece para semanas que ya terminaron y en las que faltan 2 o más cierres; si ya había cierres diarios en esa semana, se suman aquí y quedan reemplazados por este.</p>
             <div class="m1-days" id="m1-days"></div>
             <div id="m1-wkwarn"></div>
             <label class="lbl">¿Quién reporta hoy?</label>
@@ -57,17 +81,24 @@ registerModule('m1', (() => {
         <details class="card acc" open>
             <summary><span>📱 Infinix · ventas del día e inventario</span><span class="badge" id="m1-tot-inf">0 uds</span></summary>
             <table class="tbl compact"><thead><tr><th>Referencia</th><th>Target</th><th>Inventario</th><th class="m1-vl">Venta hoy</th></tr></thead><tbody>
-                ${INFINIX_MODELS.map(m => `<tr><td><b>${esc(m.name)}</b></td><td class="c">${tgt(metas[m.key])}</td><td><input class="input num" type="number" inputmode="numeric" min="0" id="m1-i-${m.key}" value="0"></td><td>${stepper('m1-v-' + m.key, 0)}</td></tr>`).join('')}
+                ${INFINIX_MODELS.map(m => `<tr data-ref="${m.key}" ${refOn.has(m.key) ? '' : 'hidden'}><td><b>${esc(m.name)}</b></td><td class="c">${tgt(metas[m.key])}</td><td><input class="input num" type="number" inputmode="numeric" min="0" id="m1-i-${m.key}" value="0"></td><td>${stepper('m1-v-' + m.key, 0)}</td></tr>`).join('')}
             </tbody></table>
             <p class="hint">Target y HC se fijan en ⚙️ Ajustes de tienda. El inventario se descuenta solo con cada venta y queda listo para mañana; corrígelo si recibiste mercancía.</p>
         </details>
 
-        <details class="card acc" open>
+        <details class="card acc" open id="m1-accbox" ${accOn.size ? '' : 'hidden'}>
             <summary><span>🎧 Accesorios Infinix (venta independiente)</span><span class="badge" id="m1-tot-acc">0 uds</span></summary>
             <table class="tbl compact"><thead><tr><th>Accesorio</th><th>Target</th><th>Inventario</th><th class="m1-vl">Venta hoy</th></tr></thead><tbody>
-                ${INFINIX_ACCESSORIES.map(a => `<tr><td><b>${esc(a.name)}</b></td><td class="c">${tgt(metasAcc[a.key])}</td><td><input class="input num" type="number" inputmode="numeric" min="0" id="m1-ia-${a.key}" value="0"></td><td>${stepper('m1-a-' + a.key, 0)}</td></tr>`).join('')}
+                ${INFINIX_ACCESSORIES.map(a => `<tr data-acc="${a.key}" ${accOn.has(a.key) ? '' : 'hidden'}><td><b>${esc(a.name)}</b></td><td class="c">${tgt(metasAcc[a.key])}</td><td><input class="input num" type="number" inputmode="numeric" min="0" id="m1-ia-${a.key}" value="0"></td><td>${stepper('m1-a-' + a.key, 0)}</td></tr>`).join('')}
             </tbody></table>
             <p class="hint">No cuentan para el share ni para el ROI de celulares.</p>
+        </details>
+
+        <details class="card acc" id="m1-obsbox">
+            <summary><span>🗃️ Referencias obsoletas en bodega <small class="mute">(sin target)</small></span><span class="badge" id="m1-tot-obs">0 uds</span></summary>
+            <p class="hint">¿Aún tienes equipos que ya no están en el portafolio (SMART 10, NOTE 50 PRO, NOTE 50S, HOT 60 Pro+, GT 30…)? Regístralos aquí con sus unidades: tus líderes lo ven y no necesitas pedir que creen la referencia.</p>
+            <div id="m1-obs"></div>
+            <div class="row" style="gap:6px;margin-top:6px"><input class="input grow" id="m1-on" list="m1-ol" placeholder="Referencia (escríbela)"><datalist id="m1-ol">${REFS_OBSOLETAS.map(r => `<option value="${esc(r)}">`).join('')}</datalist><input class="input num" id="m1-ou" type="number" inputmode="numeric" min="1" placeholder="Uds" style="width:80px"><button type="button" class="btn btn-ghost" id="m1-oadd">➕ Agregar</button></div>
         </details>
 
         <details class="card acc" open>
@@ -92,10 +123,13 @@ registerModule('m1', (() => {
         $('#m1-fecha').onchange = e => { fecha = e.target.value || todayStr(); load(); };
         const go = d => { const f = addDays(fecha, d); if (f > todayStr()) return; fecha = f; $('#m1-fecha').value = f; load(); };
         $('#m1-prev').onclick = () => go(-1); $('#m1-next').onclick = () => go(1);
+        paintObs();
+        $('#m1-obs').addEventListener('input', e => { const i = e.target.dataset.ou; if (i !== undefined) { obs[+i].uds = int(e.target.value); const t = $('#m1-tot-obs'); if (t) t.textContent = sum(obs.map(o => int(o.uds))) + ' uds'; saveObs(); } });
+        $('#m1-obs').addEventListener('click', e => { const i = e.target.dataset.ox; if (i !== undefined) { obs.splice(+i, 1); paintObs(); saveObs(); } });
+        $('#m1-oadd').onclick = () => { const r = ($('#m1-on').value || '').trim().toUpperCase().replace(/\s+/g, ' '), u = int($('#m1-ou').value); if (!r || !u) return toast('Escribe la referencia y cuántas unidades tienes.', 'warn'); const x = obs.find(o => o.ref === r); if (x) x.uds = u; else obs.push({ ref: r, uds: u }); $('#m1-on').value = ''; $('#m1-ou').value = ''; paintObs(); saveObs(); toast('Referencia obsoleta registrada', 'ok', 1800); };
         $('#m1-days').onclick = e => { const b = e.target.closest('[data-day]'); if (!b) return; const d = b.dataset.day; if (modo === 'semana') { const w = weekOf(d); if (w) { per = w; $('#m1-wk').value = w.desde; fecha = w.hasta; load(); } return; } fecha = d; $('#m1-fecha').value = fecha; load(); };
         $$('[data-modo]', view).forEach(b => b.onclick = () => setModo(b.dataset.modo));
-        if ($('#m1-wk')) $('#m1-wk').onchange = e => { per = pilotWeeks(fecha.slice(0, 7)).find(w => w.desde === e.target.value) || per; fecha = per.hasta; load(); };
-        if (pilotOn()) setModo(modo, true);
+        if ($('#m1-wk')) $('#m1-wk').onchange = e => { per = pendWeeks().find(w => w.desde === e.target.value) || per; fecha = per.hasta; load(); };
 
         ReportActions.bind(view, {
             title: 'Reporte diario de ventas',
@@ -106,7 +140,7 @@ registerModule('m1', (() => {
             // Marca que el cierre se compartió (menú de compartir del teléfono: WhatsApp) y no solo se guardó
             onShared: async via => { const id = collect().id, env = { via, at: Date.now() }; const c = closures.find(x => x.id === id); if (c) c.enviado = env; await Data.set(COL.closures, id, { enviado: env }, true); }
         });
-        if (!pilotOn()) load();
+        modo = 'dia'; per = null; load();
     }
     function setModo(m, first) {
         modo = m;
@@ -117,9 +151,9 @@ registerModule('m1', (() => {
         $$('.m1-vl').forEach(t => { t.textContent = wk ? 'Venta semana' : 'Venta hoy'; });
         if ($('#m1-comp-t')) $('#m1-comp-t').textContent = wk ? '🏬 Ventas de la semana de la competencia' : '🏬 Ventas del día de la competencia';
         if (wk) {
-            const ws = pilotWeeks(fecha.slice(0, 7));
-            if (!ws.length) { toast('Aún no ha terminado ninguna semana del mes: carga el cierre día a día.', 'warn'); return setModo('dia'); }
-            per = weekOf(fecha) || ws[ws.length - 1];
+            const ws = pendWeeks();
+            if (!ws.length) { toast('No te faltan semanas completas: carga o corrige el cierre día a día.', 'info'); return setModo('dia'); }
+            per = ws.find(w => fecha >= w.desde && fecha <= w.hasta) || ws[0];
             $('#m1-wk').innerHTML = ws.map(w => `<option value="${w.desde}" ${per && w.desde === per.desde ? 'selected' : ''}>Semana del ${esc(w.label)}</option>`).join('');
             fecha = per.hasta;
         } else { per = null; fecha = $('#m1-fecha').value || todayStr(); }
@@ -133,6 +167,7 @@ registerModule('m1', (() => {
         // Cierres semanales de una semana que aún no termina: quedan como cierre diario del día en que se guardaron
         const abiertos = closures.filter(c => c.semana && weekEndOf(c.semana.desde) >= todayStr());
         if (abiertos.length) { for (const c of abiertos) await splitWeekly(c); toast(`El cierre semanal de la semana en curso quedó como cierre del día ${abiertos.map(c => int(c.fecha.slice(8))).join(', ')}. Esta semana se carga día a día: corrige ese día si ahí sumaste la venta de otros días.`, 'warn', 9000); }
+        if (paintModeBox()) return;
         paintWkWarn();
         if (modo === 'semana' && per) { loadWeek(st); return; }
         const cur = closures.find(c => c.fecha === fecha && !c.semana);
@@ -155,6 +190,8 @@ registerModule('m1', (() => {
             $('#m1-a-' + a.key).value = v; $('#m1-ia-' + a.key).value = inv;
         });
         BRANDS.forEach(b => { if (b !== 'INFINIX') $('#m1-c-' + b).value = cur ? int(cur.competencia && cur.competencia[b]) : 0; });
+        $$('tr[data-ref]').forEach(tr => { if (cur && (int(cur.ventas && cur.ventas[tr.dataset.ref]) > 0)) tr.hidden = false; });
+        if (cur && sum(Object.values(cur.accesorios || {}).map(int)) > 0) { $('#m1-accbox').hidden = false; $$('tr[data-acc]').forEach(tr => { if (int(cur.accesorios[tr.dataset.acc]) > 0) tr.hidden = false; }); }
         if (cur && cur.asesores) $$('#m1-asesores input').forEach(i => { i.checked = cur.asesores.includes(i.value); });
         if (!cur && later && !prev && !weeklyCovering(fecha)) toast('Este día no tiene cierre: revisa el inventario antes de guardar.', 'info', 4000);
         recalc(); paintDays();
@@ -167,7 +204,7 @@ registerModule('m1', (() => {
         box.innerHTML = w ? `<div class="ds-nomalla">Este día está dentro del <b>cierre semanal del ${int(w.semana.desde.slice(8))} al ${int(w.semana.hasta.slice(8))}</b>. Para editarlo día a día, sepáralo: la venta de la semana queda en el día ${int(w.semana.hasta.slice(8))} y luego corriges cada día. <button class="btn btn-sm" id="m1-split">✂️ Separar en cierres diarios</button></div>` : '';
         if (w) $('#m1-split').onclick = async () => { if (!confirm(`La venta de toda la semana quedará en el día ${int(w.semana.hasta.slice(8))}. Luego corrige cada día para no contar doble. ¿Continuar?`)) return; await splitWeekly(w); toast('Semana separada: ya puedes editar cada día', 'ok'); load(); };
     }
-    // Semana del piloto: precarga el semanal ya guardado o la suma de los cierres diarios de esa semana
+    // Semana: precarga el semanal ya guardado o la suma de los cierres diarios de esa semana
     function loadWeek(st) {
         wkCur = closures.find(c => c.semana && c.semana.desde === per.desde) || null;
         wkDaily = closures.filter(c => !c.semana && c.fecha >= per.desde && c.fecha <= per.hasta);
@@ -238,6 +275,7 @@ registerModule('m1', (() => {
             inventario: Object.fromEntries(INFINIX_MODELS.map(m => [m.key, int($('#m1-i-' + m.key).value)])),
             accesorios: Object.fromEntries(INFINIX_ACCESSORIES.map(a => [a.key, int($('#m1-a-' + a.key).value)])),
             invAcc: Object.fromEntries(INFINIX_ACCESSORIES.map(a => [a.key, int($('#m1-ia-' + a.key).value)])),
+            obsoletas: obs.filter(o => int(o.uds) > 0),
             metas: st.metas || {}, metasComp: st.metasComp || {}, metasAcc: st.metasAcc || {},
             hc: st.hc || {}, metaMes: storeMetaMes(st),
             totalInfinix, totalTienda: totalInfinix + sum(Object.values(competencia)),
@@ -256,9 +294,11 @@ registerModule('m1', (() => {
             saving = [Data.batch([{ op: 'set', col: COL.closures, id: doc.id, data: doc, merge: false }].concat(gone.map(c => ({ op: 'del', col: COL.closures, id: c.id }))))];
             closures = closures.filter(c => c.id !== doc.id && !gone.includes(c)).concat(doc);
             wkCur = doc; wkDaily = [];
+            setTimeout(() => { if (paintModeBox()) toast('Semana completa ✔. El cierre semanal se oculta hasta que vuelvan a faltar 2 o más días de una semana.', 'ok', 5000); }, 80);
         } else {
             saving = [Data.set(COL.closures, doc.id, doc, false)];
             closures = closures.filter(c => c.fecha !== fecha).concat(doc);
+            paintModeBox();
         }
         paintDays();
         if (!st.lastClosure || fecha >= st.lastClosure) {      // el inventario vigente es el del último cierre
@@ -325,7 +365,7 @@ function buildClosureCanvas(stage, store, c, closure) {
     <header class="rp-head">
         <img class="rp-logo" src="${LOGO_INFINIX}" alt="Infinix">
         <div class="rp-head-mid">
-            <div class="rp-kicker">${closure.semana ? 'CIERRE SEMANAL DE VENTAS (PILOTO)' : 'REPORTE DIARIO DE VENTAS'}</div>
+            <div class="rp-kicker">${closure.semana ? 'CIERRE SEMANAL DE VENTAS' : 'REPORTE DIARIO DE VENTAS'}</div>
             <div class="rp-title">${esc(store.tienda.toUpperCase())}</div>
             <div class="rp-sub">Zona ${esc(store.zona || dash)} · ${esc(store.ciudad || '')} · Asesor(es): <b>${esc((closure.asesores || []).join(', ') || dash)}</b></div>
             <div class="rp-sub">${closure.semana ? `Venta del <b>${esc(fechaLarga(closure.semana.desde))}</b> al <b>${esc(fechaLarga(closure.semana.hasta))}</b>` : `Cierre: ${esc(fechaLarga(c.fecha))}`} · Semana W${c.wk} · ${esc(mesLargo(c.ym))}</div>

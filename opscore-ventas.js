@@ -131,12 +131,13 @@ registerModule('ventas', (() => {
     // ---- Pantalla
     async function render(v) {
         view = v;
+        const dk = takeDeep('ventas'); if (dk) tab = dk;
         await ZoneData.loadMany(scopedZones(), todayStr().slice(0, 7)).catch(() => { });
         if (!view.isConnected) return;
         const zs = scopedZones();
         v.innerHTML = `
         <section class="card">
-            <div class="row between wrap"><div><h2 class="h2">Reportes de venta</h2><p class="mute" id="rv-src"></p></div><button class="btn btn-dark" id="rv-load">📂 Cargar data plana</button></div>
+            ${hubBack()}<div class="row between wrap"><div><h2 class="h2">Reportes de venta</h2><p class="mute" id="rv-src"></p></div><button class="btn btn-dark" id="rv-load">📂 Cargar data plana</button></div>
             <div class="rv-f">
                 ${zs.length > 1 ? `<label><span class="lbl">Zona</span><select class="input" id="rv-zona"><option value="">Todas (${zs.length})</option>${zs.map(z => `<option ${F.zona === z ? 'selected' : ''}>${esc(z)}</option>`).join('')}</select></label>` : ''}
                 <label><span class="lbl">Cadena</span><select class="input" id="rv-cad"></select></label>

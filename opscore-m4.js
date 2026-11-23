@@ -12,6 +12,7 @@ registerModule('m4', (() => {
 
     function render(view) {
         const t = todayStr();
+        const dk = takeDeep('m4'); if (dk) m4tab = dk;
         Fx = { from: t.slice(0, 8) + '01', to: t, regional: '', zona: '', cadena: '', tienda: '', user: '' };
         const regs = scopedRegionales();
         const weeks = Array.from({ length: 8 }, (_, i) => weekDays(addDays(t, -7 * i)));
@@ -19,7 +20,7 @@ registerModule('m4', (() => {
         const gerencial = ['gerente', 'admin'].includes(me().rol);
         view.innerHTML = `
         <section class="card">
-            <div class="row between wrap">
+            ${hubBack()}<div class="row between wrap">
                 <div><h2 class="h2">${gerencial ? 'Central nacional / regional de consolidados' : 'Central de reportes y consolidado de cierres'}</h2>
                 <p class="mute">${isOwn() ? 'Tu gestión y las tiendas de tu zona.' : me().rol === 'coordinador' ? 'Consolidado de tus supervisores, formadores y tiendas.' : 'Consolidado de coordinadores, supervisores, formadores y tiendas.'}</p></div>
                 <div class="row wrap" style="gap:8px"><button class="btn btn-dark" id="m4-visual">📊 Informe gerencial visual</button><button class="btn btn-primary" id="m4-xlsx">⬇️ Informe Gerencial (.xlsx)</button></div>
@@ -608,6 +609,7 @@ registerModule('m4', (() => {
                 <div><span>PDV con quiebre</span><b class="${I.quiebresPdv ? 'r' : 'g'}">${I.quiebresPdv}</b><em>referencia con meta en 0</em></div>
                 <div><span>Sin actualizar</span><b class="${I.viejos ? 'a' : 'g'}">${I.viejos}</b><em>PDV con inventario de hace +7 días</em></div></div>
             <div class="inv-leg"><span class="inv-0">0 · Quiebre (sin unidades)</span><span class="inv-lo">Menos de 7 días</span><span class="inv-ok">7 a 30 días · bien</span><span class="inv-hi">Más de 30 días o sin venta · sobrestock</span></div>
+            ${(() => { const O = agg.rows.map(r => r.st).map(st => ({ st, o: storeObsoletas(st) })).filter(x => x.o.length); return O.length ? `<details class="acc inv-q"><summary><span>🗃️ Referencias obsoletas en bodega (${O.length} tiendas · ${sum(O.map(x => sum(x.o.map(o => int(o.uds)))))} uds)</span></summary><div class="ds-list">${O.map(x => `<div class="ds-row"><span>${storeLogo(x.st, 'xs')} <b>${esc(x.st.tienda)}</b></span><em class="rv-dias">${x.o.map(o => `${esc(o.ref)} ×${int(o.uds)}`).join(', ')}</em></div>`).join('')}</div></details>` : ''; })()}
             ${I.quiebreList.length ? `<details class="acc inv-q" open><summary><span>⚠️ Tiendas con quiebre (${I.quiebreList.length}): referencias con target y 0 unidades</span></summary><div class="ds-list">${I.quiebreList.map(x => `<div class="ds-row"><span>${storeLogo(x.st, 'xs')} <b>${esc(x.st.tienda)}</b></span><em class="rv-dias r">${x.refs.map(esc).join(', ')}</em></div>`).join('')}</div></details>` : '<p class="hint">✅ Ninguna tienda tiene quiebre en referencias con target.</p>'}
             <div class="tbl-scroll"><table class="tbl compact inv-tbl"><thead><tr><th class="l">${invNivel === 'tienda' ? 'PDV' : invNivel === 'cadena' ? 'Cadena' : 'Zona'}</th>${I.keys.map(k => `<th>${esc(nm(k))}</th>`).join('')}<th>Total</th><th>Días inv.</th><th title="Tienda × referencia con meta en 0">Quiebres</th><th>Sobrestock</th><th>${invNivel === 'tienda' ? 'Actualizado' : 'PDV'}</th></tr></thead><tbody>
             ${I.rows.map(r => `<tr><td class="l">${invNivel === 'tienda' ? storeLogo(r.st, 'xs') + ' ' : invNivel === 'cadena' ? chainGroupLogo(r.k, 'xs') + ' ' : ''}<b>${esc(r.nombre)}</b></td>${I.keys.map(k => `<td class="${!r.inv[k] && !r.meta[k] ? '' : invCls(r.dr(k))}" title="${r.vm[k]} vendidas en el mes">${r.inv[k]}</td>`).join('')}<td><b>${r.ti}</b></td><td>${r.dias ?? '—'}</td><td>${r.quiebres ? `<i class="pill bad">${r.quiebres}</i>` : '0'}</td><td>${r.sobre ? `<i class="pill warn">${r.sobre}</i>` : '0'}</td><td>${invNivel === 'tienda' ? (r.act ? `<small class="${r.viejos ? 'r' : ''}">${esc(r.act.slice(5))}</small>` : '<small class="r">sin dato</small>') : r.n + (r.viejos ? ` <small class="r">(${r.viejos} viejos)</small>` : '')}</td></tr>`).join('') || '<tr><td colspan="9">Sin tiendas en el filtro.</td></tr>'}

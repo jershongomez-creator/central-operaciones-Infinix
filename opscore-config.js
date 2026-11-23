@@ -3,7 +3,7 @@
 // Todo lo editable por negocio vive en este archivo.
 // ============================================================================
 
-const OPS_VERSION = '1.17.0';
+const OPS_VERSION = '1.18.0';
 const APP_NAME = 'Central de Operaciones';
 
 // --- Firebase: proyecto propio de OpsCore -------------------------------------
@@ -56,17 +56,25 @@ const LOGO_INFINIX = LOGOS.infinix;        // ver opscore-assets.js
 
 // --- Roles (RBAC) ------------------------------------------------------------
 const ROLES = {
-    asesor:      { label: 'Tienda (PDV)',  modules: ['m1', 'parcial', 'central', 'adm', 'calc', 'm5'] },
-    supervisor:  { label: 'Supervisor',    modules: ['zona', 'ventas', 'm2', 'm3', 'm4', 'm5', 'datos', 'admin'] },      // sin evaluaciones
-    formador:    { label: 'Formador',      modules: ['zona', 'ventas', 'evals', 'm2', 'm3', 'm4', 'm5', 'datos', 'admin'] },
-    coordinador: { label: 'Coordinador',   modules: ['zona', 'ventas', 'm4', 'evals', 'm5', 'datos', 'admin'] },          // no hace plan ni visita: analiza y consulta reportes
-    gerente:     { label: 'Gerente',       modules: ['m4', 'zona', 'ventas', 'm5', 'datos', 'admin'] },
-    admin:       { label: 'Administrador', modules: ['zona', 'ventas', 'm2', 'm3', 'm4', 'evals', 'm5', 'datos', 'admin'] }
+    asesor:      { label: 'Tienda (PDV)',  modules: ['m1', 'parcial', 'central', 'calc', 'adm', 'm5'] },
+    supervisor:  { label: 'Supervisor',    modules: ['zona', 'reportes', 'm2', 'm3', 'datos', 'ventas', 'm4', 'm5', 'admin'] },      // sin evaluaciones
+    formador:    { label: 'Formador',      modules: ['zona', 'reportes', 'm2', 'm3', 'evals', 'datos', 'ventas', 'm4', 'm5', 'admin'] },
+    coordinador: { label: 'Coordinador',   modules: ['zona', 'reportes', 'evals', 'datos', 'ventas', 'm4', 'm5', 'admin'] },          // no hace plan ni visita: analiza y consulta reportes
+    gerente:     { label: 'Gerente',       modules: ['reportes', 'zona', 'datos', 'ventas', 'm4', 'm5', 'admin'] },
+    admin:       { label: 'Administrador', modules: ['zona', 'reportes', 'm2', 'm3', 'evals', 'datos', 'ventas', 'm4', 'm5', 'admin'] }
 };
+// Menú: "Reportes" reúne todos los reportes; Reportes de venta y Central de reportes se abren desde allí (no ocupan el menú)
+const NAV_HIDDEN = ['ventas', 'm4'];
+const NAV_PARENT = { ventas: 'reportes', m4: 'reportes' };
+const NAV_ICON = { zona: '📍', reportes: '📊', evals: '🎓', m2: '☀️', m3: '🏬', m5: '🧮', datos: '📂', admin: '⚙️', m1: '🧾', parcial: '⏱️', central: '👤', adm: '📁', calc: '💰', ventas: '📈', m4: '🗂️' };
+const NAV_SHORT = { zona: 'Zona', reportes: 'Reportes', evals: 'Evaluaciones', m2: 'Plan', m3: 'Visita', m5: 'Simulador', datos: 'Cargar', admin: 'Gestión', m1: 'Cierre', parcial: 'Parcial', central: 'Mi central', adm: 'Administrativo', calc: 'Calculadora' };
+const NAV_DESC = { zona: 'Radar de asesores y tiendas, share y competencia', reportes: 'Todos los reportes en un solo lugar', evals: 'Notas semanales y quién falta', m2: 'Plan de trabajo del día', m3: 'Visita y auditoría de PDV', m5: 'Simulador de venta y comisión', datos: 'Data plana, malla, targets y novedades', admin: 'Tiendas, asesores, equipo y configuración', m1: 'Cierre del día (y semanal si faltan días)', parcial: 'Parcial de venta para el grupo', central: 'Venta de la tienda y de cada asesor', adm: 'Acta, samples, visibilidad y planilla', calc: 'Cuánto llevas y cuánto ganas' };
+// En el celular, la barra de abajo muestra estas 4 (las demás quedan en "Más")
+const NAV_PRIMARY = { asesor: ['m1', 'parcial', 'central', 'calc'], supervisor: ['zona', 'reportes', 'm2', 'm3'], formador: ['zona', 'reportes', 'm2', 'm3'], coordinador: ['zona', 'reportes', 'evals', 'datos'], gerente: ['reportes', 'zona', 'datos', 'admin'], admin: ['zona', 'reportes', 'm2', 'datos'] };
 const STAFF_ROLES = ['supervisor', 'formador', 'coordinador', 'gerente', 'admin'];
 const MODULE_LABELS = {
     m1: 'Cierre diario', m2: 'Plan de trabajo', m3: 'Visita PDV',
-    m4: 'Central de reportes', m5: 'Simulador', admin: 'Gestión', datos: 'Cargar datos', ventas: 'Reportes de venta', zona: 'Análisis de zona', calc: 'Calculadora', evals: 'Evaluaciones', central: 'Mi central', adm: 'Cargas administrativas', parcial: 'Parcial de venta'
+    m4: 'Central de reportes', m5: 'Simulador', admin: 'Gestión', datos: 'Cargar datos', ventas: 'Reportes de venta', zona: 'Análisis de zona', calc: 'Calculadora', evals: 'Evaluaciones', central: 'Mi central', adm: 'Cargas administrativas', parcial: 'Parcial de venta', reportes: 'Reportes'
 };
 
 // Claves iniciales (solo su hash SHA-256; el Administrador las cambia en Gestión › Configuración).
@@ -116,6 +124,8 @@ const INFINIX_ACCESSORIES = [
 
 // Catálogo completo para elegir en listas (samples, exhibición): portafolio vigente, accesorios y referencias anteriores
 // que algunas tiendas aún tienen en sample o inventario. En los reportes solo salen las referencias con target.
+// Referencias que ya no se venden (sin target). Si la tienda aún tiene unidades, se registran como "referencia obsoleta".
+const REFS_OBSOLETAS = ['SMART 10', 'NOTE 50S', 'NOTE 50 PRO', 'NOTE 50', 'HOT 60 Pro+', 'HOT 60i', 'HOT 50', 'GT 30', 'GT 30 Pro'];
 const CATALOGO_INFINIX = INFINIX_MODELS.map(m => m.name).concat(['XPAD 30E', 'XBUDS H5', 'GT WATCH 5 PRO', 'HOT 60i', 'SMART 10', 'GT 30', 'GT 30 Pro']);
 
 // --- Marcas del PDV ----------------------------------------------------------

@@ -11,7 +11,7 @@ registerModule('parcial', (() => {
     const key = () => `opscore_parcial_${(st() || {}).id}_${todayStr()}`;
     const load = () => { try { return JSON.parse(localStorage.getItem(key())) || {}; } catch (e) { return {}; } };
     const save = d => { try { localStorage.setItem(key(), JSON.stringify(d)); } catch (e) { } };
-    const refs = s => { const L = INFINIX_MODELS.filter(m => int((s.metas || {})[m.key]) > 0); return L.length ? L : INFINIX_MODELS; };
+    const refs = s => storeRefs(s);
     const horaAuto = () => { const h = new Date().getHours(); return h < 14 ? PARCIAL_HORAS[0] : h < 16 ? PARCIAL_HORAS[1] : PARCIAL_HORAS[2]; };
 
     function render(v) {
@@ -30,7 +30,7 @@ registerModule('parcial', (() => {
                 <p class="hint">Total Infinix: <b id="pc-tinf">0</b></p></section>
             <section class="card"><h3 class="h3">📦 Venta por marca · tienda</h3>
                 <table class="tbl compact"><tbody>${BRANDS.map(b => `<tr><td class="l">${PARCIAL_ICO[b] || '⚪'} <b>${b}</b></td><td>${b === 'INFINIX' ? '<b id="pc-binf">0</b> <small class="mute">(suma de los modelos)</small>' : stp('pc-b-' + b, (d.mar || {})[b])}</td></tr>`).join('')}</tbody></table>
-                <p class="hint">Total tienda: <b id="pc-ttot">0</b></p></section>
+                <p class="hint">Participación Infinix al corte: <b id="pc-share">—</b> · Total tienda: <b id="pc-ttot">0</b></p></section>
         </div>
         <section class="card"><h3 class="h3">📝 Mensaje para el grupo</h3>
             <pre class="pc-msg" id="pc-msg"></pre>
@@ -51,17 +51,19 @@ registerModule('parcial', (() => {
         const s = st(), inf = Object.fromEntries(refs(s).map(m => [m.key, int(($('#pc-m-' + m.key) || {}).value)])), mar = Object.fromEntries(BRANDS.filter(b => b !== 'INFINIX').map(b => [b, int(($('#pc-b-' + b) || {}).value)]));
         return { hora, asesores: $$('#pc-ase input:checked').map(i => i.value), inf, mar };
     }
+    // Participación de Infinix en la tienda a la hora del parcial (Infinix ÷ total de la tienda)
+    const share = (inf, tot) => tot ? (Math.round(inf / tot * 1000) / 10).toString().replace('.', ',') + '%' : '—';
     function msg() {
         const s = st(), d = collect(), tInf = sum(Object.values(d.inf)), mar = { INFINIX: tInf, ...d.mar }, f = todayStr();
         const L = [`📊 PARCIAL DE VENTAS – ${d.hora.toUpperCase()}`, '', `📅 Fecha: ${f.slice(8)}/${f.slice(5, 7)}/${f.slice(0, 4)}`, `🏛️ Cadena: ${s.cadena || chainGroup(s).label}`, `📍 Zona: ${ZoneData.titleCase ? ZoneData.titleCase(s.zona || '') : s.zona}`, `🏬 Punto de venta: ${s.tienda}`, `👤 Nombre de los asesores: ${d.asesores.map(n => n.split(' ')[0]).join('- ')}`, '',
             '💚 INFINIX – VENTA POR MODELO', '________________________', ...refs(s).map(m => `📱 ${m.name}: ${d.inf[m.key] || ''}`), `💚 TOTAL INFINIX: ${tInf}`, '',
-            '📦 VENTA POR MARCA – TIENDA', '________________________', ...BRANDS.filter(b => b === 'INFINIX' || mar[b]).map(b => `${PARCIAL_ICO[b] || '⚪'} ${b}: ${mar[b]}`), '', `📈 TOTAL TIENDA: ${sum(Object.values(mar))}`];
+            '📦 VENTA POR MARCA – TIENDA', '________________________', ...BRANDS.filter(b => b === 'INFINIX' || mar[b]).map(b => `${PARCIAL_ICO[b] || '⚪'} ${b}: ${mar[b]}`), '', `🎯 PARTICIPACIÓN INFINIX AL CORTE (${d.hora}): ${share(tInf, sum(Object.values(mar)))}`, `📈 TOTAL TIENDA: ${sum(Object.values(mar))}`];
         return L.join('\n');
     }
     function upd() {
         if (!view || !$('#pc-msg')) return;
         const d = collect(), tInf = sum(Object.values(d.inf));
-        $('#pc-tinf').textContent = tInf; $('#pc-binf').textContent = tInf; $('#pc-ttot').textContent = tInf + sum(Object.values(d.mar));
+        $('#pc-tinf').textContent = tInf; $('#pc-binf').textContent = tInf; $('#pc-ttot').textContent = tInf + sum(Object.values(d.mar)); $('#pc-share').textContent = share(tInf, tInf + sum(Object.values(d.mar)));
         $('#pc-msg').textContent = msg(); save(d);
     }
     return { render };

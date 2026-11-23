@@ -11,13 +11,14 @@ registerModule('admin', (() => {
     const isAdmin = () => me().rol === 'admin';
     // Supervisor y formador: solo Asesores (retirar, reactivar, mover, asignar, agregar, novedades).
     // Coordinador (y gerente): tiendas, asesores, zonas y equipo. Configuración: solo el Administrador.
-    const TABS = () => isAdmin() ? ['tiendas', 'asesores', 'zonas', 'equipo', 'config'] : canTarget() ? ['tiendas', 'asesores', 'zonas', 'equipo'] : ['asesores'];
+    const TABS = () => isAdmin() ? ['tiendas', 'asesores', 'zonas', 'equipo', 'config'] : canTarget() ? ['tiendas', 'asesores', 'zonas', 'equipo'] : ['asesores', 'tiendas'];
     const TAB_LABEL = { tiendas: '🏬 Tiendas', asesores: '🧑‍💼 Asesores', zonas: '🗺️ Zonas', equipo: '👥 Equipo', config: '🔐 Configuración' };
 
     function render(view) {
+        if (!State.adminPend && render.rol !== me().rol) { tab = TABS()[0]; render.rol = me().rol; }
         view.innerHTML = `
         <section class="card">
-            <h2 class="h2">${canTarget() ? 'Gestión de tiendas, asesores y usuarios' : 'Gestión de asesores'}</h2>
+            <h2 class="h2">${canTarget() ? 'Gestión de tiendas, asesores y usuarios' : 'Gestión de tiendas y asesores'}</h2>
             <p class="mute">Todo lo que llega automático con la data también se puede ajustar a mano. Lo ajustado a mano queda marcado con <i class="pill man">✋ manual</i> y las cargas automáticas no lo cambian. Los cambios se ven en toda la app en tiempo real. Alcance: <b>${isAllZones() ? 'nacional' : (myRegional() && ['coordinador', 'gerente'].includes(me().rol) ? 'regional ' + esc(myRegional()) : 'zona ' + esc(me().zona))}</b>.</p>
             <div class="seg" style="margin-top:12px">${TABS().map(t => `<button class="seg-btn" data-t="${t}">${TAB_LABEL[t]}</button>`).join('')}</div>
         </section>
@@ -52,7 +53,8 @@ registerModule('admin', (() => {
         const all = scopedStoresAll().filter(s => !fPend || (chainOn(s) && targetPending(s))).filter(s => !fZona || s.zona === fZona).filter(s => !fQ || slug(s.tienda + ' ' + s.ciudad + ' ' + (s.cadena || '')).includes(slug(fQ)));
         const list = all.sort((a, b) => (a.zona + a.tienda).localeCompare(b.zona + b.tienda, 'es'));
         return `<section class="card">
-            <div class="row between wrap"><h3 class="h3">Puntos de venta (${list.length})</h3><button class="btn btn-primary" data-a="store-new">➕ Nueva tienda</button></div>
+            <div class="row between wrap"><h3 class="h3">Puntos de venta (${list.length})</h3>${canTarget() ? '<button class="btn btn-primary" data-a="store-new">➕ Nueva tienda</button>' : ''}</div>
+            ${canTarget() ? '' : '<p class="hint">Con 📦 eliges qué referencias maneja cada tienda (cierre, parcial y calculadora) y registras las obsoletas que aún tiene en bodega. Target, HC y datos de la tienda los ajusta el coordinador.</p>'}
             <div class="row wrap" style="gap:8px;margin:8px 0 12px">
                 ${zs.length > 1 ? `<select class="input" id="st-fzona"><option value="">Todas las zonas (${zs.length})</option>${zs.map(z => `<option value="${esc(z)}" ${fZona === z ? 'selected' : ''}>${esc(z)}</option>`).join('')}</select>` : ''}
                 <input class="input grow" id="st-fq" placeholder="Buscar tienda, ciudad o cadena…" value="${esc(fQ)}">
@@ -61,8 +63,8 @@ registerModule('admin', (() => {
             <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>Tienda</th><th>Zona</th><th>Ciudad</th><th>Estado</th><th>Target</th><th>HC</th><th>Acciones</th></tr></thead><tbody>
             ${list.map(s => `<tr><td class="l">${storeLogo(s, 'xs')} <b>${esc(s.tienda)}</b><br><small class="mute">${esc(s.cadena || '')}${s.shopId ? ' · ' + esc(s.shopId) : ''}${(s.absorbed || []).length ? ' · incluye ' + s.absorbed.map(x => esc(x.tienda)).join(', ') : ''}</small></td><td>${esc(s.zona || '')}</td><td>${esc(s.ciudad || '')}</td>
                 <td>${s.isConfigured ? '<i class="pill ok">Configurada</i>' : '<i class="pill warn">Pendiente</i>'}${targetPending(s) ? ` <i class="pill warn" title="Aún no se carga el target y HC de este mes">📅 target ${storeTargetMonth(s) ? 'de ' + esc(mesLargo(storeTargetMonth(s)).split(' ')[0]) : 'sin cargar'}</i>` : ''}${(s.manualFields || []).length ? ` <i class="pill man" title="Ajustado a mano${s.manualBy ? ' por ' + esc(s.manualBy) : ''}">✋ manual</i>` : ''}${chainOn(s) ? '' : ' <i class="pill off" title="Su cadena no está en las cadenas de trabajo">fuera de trabajo</i>'}</td><td>${storeMetaMes(s) || '—'}</td><td>${(+(s.hc && s.hc.INFINIX) || 0) ? fmt1(s.hc.INFINIX) : '—'}</td>
-                <td class="acts"><button class="icon-btn" title="Editar nombre, cadena, ciudad y zona" data-a="store-edit" data-id="${esc(s.id)}">✏️</button><button class="icon-btn" title="Asesores, metas, HC, targets, inventario, foco y contraseña" data-a="store-cfg" data-id="${esc(s.id)}">⚙️</button>
-                <button class="icon-btn" title="Contraseña de la tienda" data-a="store-pass" data-id="${esc(s.id)}">🔑</button><button class="icon-btn" title="Inhabilitar" data-a="store-del" data-id="${esc(s.id)}">🚫</button></td></tr>`).join('') || '<tr><td colspan="7">Sin tiendas con ese filtro.</td></tr>'}
+                <td class="acts"><button class="icon-btn" title="Referencias que maneja la tienda y obsoletas en bodega" data-a="store-refs" data-id="${esc(s.id)}">📦</button>${canTarget() ? `<button class="icon-btn" title="Editar nombre, cadena, ciudad y zona" data-a="store-edit" data-id="${esc(s.id)}">✏️</button><button class="icon-btn" title="Asesores, metas, HC, targets, inventario, foco y contraseña" data-a="store-cfg" data-id="${esc(s.id)}">⚙️</button>
+                <button class="icon-btn" title="Contraseña de la tienda" data-a="store-pass" data-id="${esc(s.id)}">🔑</button><button class="icon-btn" title="Inhabilitar" data-a="store-del" data-id="${esc(s.id)}">🚫</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="7">Sin tiendas con ese filtro.</td></tr>'}
             </tbody></table></div>
             ${(() => { const D = (State.storesDeleted || []).filter(s => inScope(s.zona)); return D.length ? `<details class="del-list"><summary>🚫 Tiendas inhabilitadas (${D.length})</summary>
                 <table class="tbl compact"><tbody>${D.map(s => `<tr><td class="l">${storeLogo(s, 'xs')} <b>${esc(s.tienda)}</b> <small class="mute">· ${esc(s.zona || '')}${s.mergedInto && storeById(s.mergedInto) ? ' · target pasado a ' + esc(storeById(s.mergedInto).tienda) : ' · target descontado'}${s.deletedBy ? ' · inhabilitada por ' + esc(s.deletedBy) : ''}${s.deletedAt ? ' el ' + dstr(new Date(s.deletedAt)) : ''}</small></td><td class="acts"><button class="btn btn-ghost sm" data-a="store-restore" data-id="${esc(s.id)}">↺ Restaurar</button></td></tr>`).join('')}</tbody></table></details>` : ''; })()}
@@ -382,6 +384,7 @@ registerModule('admin', (() => {
         const b = e.target.closest('[data-a]'); if (!b) return;
         const a = b.dataset.a, id = b.dataset.id;
         if (!READ_ONLY.includes(a) && !canWrite()) return;
+        if (a === 'store-refs') return openStoreRefs(id);
         if (a === 'cfg-radar') {
             const refs = $$('#rd-foco input:checked').map(i => i.value);
             if (!refs.length) return toast('Marca al menos una referencia foco.', 'warn');

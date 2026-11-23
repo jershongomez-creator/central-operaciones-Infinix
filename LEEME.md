@@ -250,6 +250,17 @@ Resultado: quién presentó, quién falta, quién repitió y con qué notas, pro
 - **Data plana:** todos ven la última carga de la zona, la haya hecho quien la haya hecho (coordinador, supervisor, formador o alguien de más arriba); se compara por la hora de la última venta cargada en DCR y luego por la hora de subida.
 - **Lunes en la tienda:** además del HC y el inventario, se editan los targets de la competencia.
 
+## 5m. Novedades v1.18
+- **Menú pensado para celular**: barra fija abajo con lo más usado y "☰ Más" con el resto. En el computador sigue el menú de arriba.
+- **📊 Reportes**: un solo lugar con todos los reportes, agrupados (venta, asesores, tiendas e inventario, cierres, competencia, equipo) y con buscador. Reportes de venta y Central de reportes se abren desde ahí (botón "← Reportes" para volver).
+- **Análisis de zona**: arriba solo el título, el estado de la data y "📂 Cargar data"; filtros y ajustes en un desplegable. Las pestañas van justo debajo y en el celular se ven todas (3 por fila). Los indicadores quedan dentro de Resumen. Botón flotante "↑ Menú".
+- **Nube**: la data plana se guarda comprimida y en trozos (antes, a fin de mes podía pasar de 1 MB y Firebase la rechazaba: quedaba solo en el equipo que la cargó). La data pesada ya no se copia al almacenamiento del navegador (lo llenaba y la app se quedaba "pensando"). Esperas más largas para internet lento. El estado de carga dice la verdad: ✅ en la nube / ⏳ subiendo / ❌ rechazada.
+- **Relevo de la data plana**: la zona (supervisor, formador, asesores y tiendas) ve la ÚLTIMA cargada por cualquiera de sus líderes o por el coordinador; el coordinador ve la suya si la cargó el mismo día. Llega **en vivo**: si otro líder sube data, a todos se les actualiza sola con un aviso.
+- **Estado de la nube**: tocar el punto de conexión (arriba) muestra qué data se está viendo, quién la cargó y a qué hora, "🔄 Actualizar datos" y "🛠️ Reparar la app" (borra solo las copias de la app; no las contraseñas de Chrome).
+- **Imágenes**: tope de memoria por teléfono (las que salían en blanco o dañadas eran lienzos demasiado grandes); si sale en blanco se repite a menor resolución; nunca se entrega un archivo vacío; si el teléfono no abre WhatsApp por la demora, aparece "📲 Enviar por WhatsApp".
+- **Tienda**: cierre semanal sin "piloto", solo para semanas terminadas a las que les faltan 2 o más cierres (1 día se perdona: el descanso). Parcial con participación de Infinix al corte. Calculadora con "💰 Mi dinero del mes" (ganado, acumulado sin desbloquear en gris, próximo premio y proyección). Mi central: "📵 Mis IMEI sin activar" de cada asesor. Cargas administrativas: referencia del sample y herramienta de visibilidad se escriben o pegan.
+- **Referencias por tienda**: cierre, parcial y calculadora muestran solo las referencias con target (y las que el líder habilite); accesorios solo si tienen target. Referencias obsoletas en bodega (SMART 10, NOTE 50 PRO…) se registran desde el cierre o desde Gestión › Tiendas › 📦 (supervisor, formador y coordinador), y salen en el reporte de inventario.
+
 ## 6. Calculadora (tienda)
 
 El asesor elige su nombre. Su target por referencia sale del target de la tienda dividido entre los asesores y lo puede ajustar a mano; sus unidades llegan de la data de zona (o se escriben). Muestra apertura (KPI), lo ganado y el siguiente bono según el **plan comisional general**, que el Administrador configura en Gestión › Configuración › Plan comisional (valor por referencia y accesorio, apertura y bonos).

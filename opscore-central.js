@@ -82,7 +82,10 @@ registerModule('central', (() => {
             <div id="ct-body"></div>`;
         $('#ct-photos').onclick = () => openAdvisorPhotos(s.id, () => paint());
         $('#ct-pick').addEventListener('click', e => { const b = e.target.closest('[data-ct]'); if (b) { sel = b.dataset.ct; paint(); } });
-        $('#ct-body').addEventListener('click', e => { const b = e.target.closest('[data-ficha]'); if (b) openAdvisorFicha(b.dataset.ficha, 'asesor'); });
+        $('#ct-body').addEventListener('click', e => {
+            const c = e.target.closest('[data-cpy]'); if (c) { const v = c.dataset.cpy; (navigator.clipboard ? navigator.clipboard.writeText(v) : Promise.reject()).then(() => toast('IMEI copiado', 'ok', 1800)).catch(() => toast(v, 'info')); return; }
+            const b = e.target.closest('[data-ficha]'); if (b) openAdvisorFicha(b.dataset.ficha, 'asesor');
+        });
         $('#ct-body').addEventListener('toggle', e => { const d = e.target; if (d.dataset && d.dataset.ctp) openP[d.dataset.ctp] = d.open; }, true);
         paint();
     }
@@ -193,6 +196,15 @@ registerModule('central', (() => {
         ${panel('plan', '📜 Plan de incentivos y términos', planTerminosHTML(true).replace('<details class="acc plan-tc" open>', '<div>').replace('</details>', '</div>').replace(/<summary>.*?<\/summary>/, ''))}`;
     }
 
+    // IMEI sin activar del asesor elegido (de la última data plana DCR de la zona): para hacerles seguimiento
+    function imeiPanel(s, d) {
+        const Z = ZoneData.forStore(s.id) || {}, L = (Z.inact || []).filter(r => sameAdvisor({ nombre: r.a }, { nombre: d.nombre }) || nameSubset(r.a, d.nombre)).sort((a, b) => String(b.f + b.h).localeCompare(String(a.f + a.h)));
+        const body = L.length ? `<div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>Fecha</th><th class="l">Referencia</th><th class="l">IMEI</th></tr></thead><tbody>${L.map(r => `<tr><td>${esc((r.f || '').slice(8))}/${esc((r.f || '').slice(5, 7))}${r.h ? ` <small class="mute">${esc(r.h)}</small>` : ''}</td><td class="l">${esc(r.ref || '')}</td><td class="l"><code>${esc(r.imei || '—')}</code> ${r.imei ? `<button class="icon-btn sm" data-cpy="${esc(r.imei)}" title="Copiar IMEI">📋</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
+            <p class="hint">Ventas cargadas en DCR con el equipo aún sin activar. Pide al cliente que lo encienda con su SIM o guarda la factura como soporte para no perder la venta. Se actualiza con cada data que cargan tus líderes${Z.corte ? ` (corte ${esc(Z.corte.slice(8))}/${esc(Z.corte.slice(5, 7))})` : ''}.</p>`
+            : '<p class="empty">✅ No tienes IMEI sin activar en la última data de la zona.</p>';
+        return panel('imei', `📵 Mis IMEI sin activar <small class="mute">${L.length ? L.length + ' pendiente(s)' : 'ninguno'}</small>`, body, L.length > 0);
+    }
+
     function advHTML(s, D, d, W, curW, day, dim) {
         const pc = Advisor.pc, pa = d.pacing, C = d.comision;
         const A = activeAdvisors(s).find(a => sameAdvisor(a, { nombre: d.nombre })) || { sem: {} };
@@ -212,11 +224,12 @@ registerModule('central', (() => {
             <div class="kpi"><span>Proyección</span><b>${pa.proy}</b><small>${pc(pa.proyCumpl)} de tu meta</small></div>
             <div class="kpi"><span>Siguiente llave</span><b>${C.hoy.next ? C.hoy.falta + ' uds' : '🏆'}</b><small>${C.hoy.next ? `te faltan para ${esc(C.hoy.next.label)}` : 'ROI 3 logrado'}</small></div>
         </section>
+        ${imeiPanel(s, d)}
         ${panel('msem', `📅 Mi venta semana a semana <small class="mute">meta semanal ${pa.meta ? metaSemana(pa.meta) : '—'}</small>`, weekBars(A.sem || {}, W, curW) + weekTable(A.sem || {}, semRefA, W, pa.meta, metaRefA, curW), true)}
         ${panel('vs', '🤝 Yo frente a mis compañeros', [d, ...companeros].map(x => { const sm = (activeAdvisors(s).find(a => sameAdvisor(a, { nombre: x.nombre })) || {}).sem || {}; const mx = Math.max(1, ...D.map(y => y.pacing.venta)); return `<div class="ct-vs ${x.id === d.id ? 'me' : ''}">${advisorAvatar(s.id, x.nombre, 30)}<span>${esc(x.nombre.split(' ').slice(0, 2).join(' '))}</span><div class="gv-track"><div style="width:${x.pacing.venta / mx * 100}%;background:${x.id === d.id ? '#00C853' : '#94A3B8'}"></div></div><b>${x.pacing.venta}</b>${last && prev ? varHTML(varPct(sm[last.w] || 0, sm[prev.w] || 0)) : ''}</div>`; }).join('') + `<p class="hint">Barras: venta del mes · ▲▼: variación de ${last ? last.w : ''} contra ${prev ? prev.w : ''}.</p>`, true)}
         ${panel('tienda', '🏬 Mi tienda esta semana y en el mes', `<div class="ct-capa"><div><small>Tienda ${curW}</small><b>${closuresZ(todayStr().slice(0, 7)).sem[curW] || 0}</b></div><div><small>Meta sem. tienda</small><b>${metaSemana(storeMetaMes(s))}</b></div><div><small>Tienda mes</small><b>${closuresZ(todayStr().slice(0, 7)).total}</b></div><div><small>Meta tienda</small><b>${storeMetaMes(s)}</b></div></div>`)}
         ${panel('mref', '📦 Mis referencias', `<div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>Referencia</th><th>Mi meta</th><th>Vendidas</th><th>Cumpl.</th><th>En tienda</th></tr></thead><tbody>
-            ${d.inventario.modelos.filter(m => m.meta || m.vendidas || m.inv).map(m => `<tr><td class="l"><b>${esc(m.name)}</b></td><td>${m.meta || '—'}</td><td><b>${m.vendidas}</b></td><td>${m.meta ? pc(m.vendidas / m.meta) : '—'}</td><td>${m.inv}</td></tr>`).join('')}
+            ${d.inventario.modelos.filter(m => m.meta > 0).map(m => `<tr><td class="l"><b>${esc(m.name)}</b></td><td>${m.meta || '—'}</td><td><b>${m.vendidas}</b></td><td>${m.meta ? pc(m.vendidas / m.meta) : '—'}</td><td>${m.inv}</td></tr>`).join('')}
             </tbody></table></div><p class="hint">${C.hoy.abierto ? 'La llave (ROI 1) está abierta.' : `Te faltan ${Math.max(0, C.plan.base - pa.venta)} uds para abrir la llave (ROI 1).`} Lo que llevas ganado lo ves en la Calculadora.</p>`)}
         ${(d.mejoras || []).length ? panel('mej', '🚀 Oportunidades de mejora', `<div class="ac-tips"><ul>${d.mejoras.slice(0, 5).map(x => `<li><i>${x.i}</i><span>${x.t}</span></li>`).join('')}</ul></div>`) : ''}
         ${panel('plan', '📜 Plan de incentivos y términos', planTerminosHTML(true).replace('<details class="acc plan-tc" open>', '<div>').replace('</details>', '</div>').replace(/<summary>.*?<\/summary>/, ''))}`;

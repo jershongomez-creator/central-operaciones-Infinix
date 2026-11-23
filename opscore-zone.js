@@ -253,26 +253,85 @@ const ZoneData = (() => {
     // Cada líder ve la última que él cargó; si no ha cargado, la más reciente de la zona. La tienda ve siempre la más reciente.
     const ownerKey = () => { const s = State.session; return s && s.type === 'staff' ? slug(s.userId || s.dcr || s.nombre || 'staff') : ''; };
     const ownId = (zona, month) => snapId(zona, month) + '__u_' + ownerKey();
+    // La data va comprimida y en trozos: un documento de la nube admite máximo 1 MB y la data de una zona a fin de mes
+    // (con días, referencias e IMEI) lo pasaba; la nube la rechazaba y quedaba solo en el equipo que la cargó.
+    const PART = 700000;
+    const b64 = buf => { const u = new Uint8Array(buf); let out = ''; for (let i = 0; i < u.length; i += 0x8000) out += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(out); };
+    const unb64 = str => { const bin = atob(str), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; };
+    async function pack(obj) {
+        const json = JSON.stringify(obj);
+        if (typeof CompressionStream !== 'undefined') { try { const buf = await new Response(new Blob([json]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer(); return { enc: 'gz', data: b64(buf) }; } catch (e) { /* sin compresión */ } }
+        return { enc: 'json', data: json };
+    }
+    async function unpack(enc, data) {
+        if (enc !== 'gz') return JSON.parse(data);
+        if (typeof DecompressionStream === 'undefined') throw new Error('Actualiza Chrome para ver la data de la zona.');
+        return JSON.parse(await new Response(new Blob([unb64(data)]).stream().pipeThrough(new DecompressionStream('gzip'))).text());
+    }
+    const hyd = {};
+    // Encabezado (pequeño) + trozos: se baja solo la data elegida, una vez por versión
+    async function hydrate(h) {
+        if (!h) return null; if (h.stores) return h;
+        const key = h.id + '@' + (h.v || h.updatedAt);
+        if (hyd[key]) return hyd[key];
+        const ps = await Promise.all(Array.from({ length: int(h.parts) }, (_, i) => Data.getRaw(COL.zoneData, `${h.id}__p${i}`)));
+        if (!ps.length || ps.some(p => !p || (h.v && p.v && p.v !== h.v))) return null;     // aún subiendo
+        const body = await unpack(h.enc, ps.map(p => p.d).join(''));
+        return (hyd[key] = { ...h, ...body });
+    }
     async function saveAll(snaps, meta) {
-        const ops = [], s = State.session || {};
+        const ops = [], s = State.session || {}, heads = [];
         State.zoneSnaps = State.zoneSnaps || {};
-        Object.values(snaps).forEach(sn => {
-            if (!Object.keys(sn.stores).length) return;
-            const doc = { ...sn, ...meta, id: ownerKey() ? ownId(sn.zona, sn.month) : snapId(sn.zona, sn.month), owner: ownerKey(), ownerName: s.nombre || '', uploadedBy: s.nombre || meta.uploadedBy || '', updatedAt: Date.now() };
-            State.zoneSnaps[sn.zona] = doc; ops.push({ op: 'set', col: COL.zoneData, id: doc.id, data: doc, merge: false });
-        });
-        return ops.length ? Data.batch(ops) : { synced: true };
+        for (const sn of Object.values(snaps)) {
+            if (!Object.keys(sn.stores || {}).length) continue;
+            const id = ownerKey() ? ownId(sn.zona, sn.month) : snapId(sn.zona, sn.month), now = Date.now();
+            const doc = { ...sn, ...meta, id, owner: ownerKey(), ownerName: s.nombre || '', ownerRol: s.rol || '', uploadedBy: s.nombre || meta.uploadedBy || '', updatedAt: now, v: now };
+            delete doc.parts; delete doc.enc;
+            State.zoneSnaps[sn.zona] = doc;
+            const { stores, unmatchedStores, unmatchedRefs, ...head } = doc;
+            const pk = await pack({ stores, unmatchedStores: unmatchedStores || {}, unmatchedRefs: unmatchedRefs || {} });
+            const parts = []; for (let i = 0; i < pk.data.length; i += PART) parts.push(pk.data.slice(i, i + PART));
+            parts.forEach((d, i) => ops.push({ op: 'set', col: COL.zoneData, id: `${id}__p${i}`, data: { kind: 'zpart', parent: id, i, v: now, enc: pk.enc, d }, merge: false }));
+            ops.push({ op: 'set', col: COL.zoneData, id, data: { ...head, parts: parts.length, enc: pk.enc, storesN: Object.keys(stores).length, total: sum(Object.values(stores).map(x => x.total || 0)) }, merge: false });
+            hyd[id + '@' + now] = doc; heads.push([id, now]);
+        }
+        if (!ops.length) return { synced: true };
+        const r = await Data.batch(ops);
+        r.heads = heads; r.local = !Data.hasCloud();
+        return r;
     }
     const save = (snap, meta) => saveAll({ [snap.zona]: snap }, meta);
-    // La data plana de una zona es la ÚLTIMA cargada por cualquiera (coordinador, supervisor, formador o alguien de más arriba):
-    // si Luz la carga a la 1 p. m. y otro a las 10 a. m., todos ven la de la 1. Se compara por la hora de la última venta
-    // cargada en DCR y, si empatan, por la hora en que se subió. Los usuarios genéricos solo cuentan para el admin o para sí mismos.
-    async function pick(zona, month) {
+    // Confirma que la nube ya tiene la versión subida (cuando el internet está lento la subida termina después)
+    async function confirmCloud(heads, tries = 12) {
+        for (let t = 0; t < tries; t++) {
+            const ok = await Promise.all(heads.map(([id, v]) => Data.serverGet(COL.zoneData, id).then(d => !!d && d.v === v).catch(() => false)));
+            if (ok.every(Boolean)) return true;
+            await new Promise(r => setTimeout(r, 10000));
+        }
+        return false;
+    }
+    // Cuál data ve cada quien (orden de relevo): la ÚLTIMA cargada para la zona por cualquiera de sus líderes (supervisor,
+    // formador), su coordinador o alguien de más arriba. Se compara por la hora de la última venta que trae DCR y, si empata,
+    // por la hora en que se subió. El coordinador (y gerente/admin) ve la suya si la cargó el mismo día que la más nueva.
+    // Los usuarios genéricos solo cuentan para el admin o para sí mismos.
+    const dayOf = t => t ? dstr(new Date(t)) : '';
+    function rank(all) {
         const admin = State.session && State.session.rol === 'admin', mine = ownerKey();
-        const all = (await Data.list(COL.zoneData, [['zona', '==', zona], ['month', '==', month]]).catch(() => [])).filter(d => !d.demo && d.stores && d.kind !== 'real' && (admin || d.owner === mine || !isBaseOwner(d.owner)));
-        if (mine && !all.some(d => d.owner === mine)) { const own = await Data.get(COL.zoneData, ownId(zona, month)).catch(() => null); if (own && own.stores) all.push(own); }
+        const L = all.filter(d => d && !d.demo && (d.stores || d.parts) && d.kind !== 'real' && d.kind !== 'zpart' && (admin || d.owner === mine || !isBaseOwner(d.owner)));
         const k = d => (d.maxUpload || ((d.corte || '') + ' 00:00')) + '|' + String(d.updatedAt || 0).padStart(15, '0');
-        return all.sort((a, b) => k(b).localeCompare(k(a)))[0] || null;
+        L.sort((a, b) => k(b).localeCompare(k(a)));
+        if (mine && State.session && ['coordinador', 'gerente', 'admin'].includes(State.session.rol)) {
+            const i = L.findIndex(d => d.owner === mine);
+            if (i > 0 && dayOf(L[i].updatedAt) === dayOf(L[0].updatedAt)) L.unshift(L.splice(i, 1)[0]);
+        }
+        return L;
+    }
+    async function pick(zona, month, list) {
+        const mine = ownerKey();
+        const all = list || (await Data.list(COL.zoneData, [['zona', '==', zona], ['month', '==', month]]).catch(() => []));
+        if (!list && mine && !all.some(d => d.owner === mine)) { const own = await Data.get(COL.zoneData, ownId(zona, month)).catch(() => null); if (own && (own.stores || own.parts)) all.push(own); }
+        for (const d of rank(all)) { const h = await hydrate(d).catch(e => { console.warn('[Central] data de zona', e.message); return null; }); if (h) return h; }
+        return null;
     }
     // Carga los snapshots guardados de una lista de zonas para el mes
     async function loadMany(zonas, month) {
@@ -284,6 +343,25 @@ const ZoneData = (() => {
         docs.forEach(d => { if (d) foldMerged(d); });
         zonas.forEach((z, i) => { if (docs[i]) State.zoneSnaps[z] = docs[i]; else if (State.zoneSnaps[z] && State.zoneSnaps[z].month !== month) delete State.zoneSnaps[z]; });
         return Object.fromEntries(zonas.map((z, i) => [z, docs[i] || State.zoneSnaps[z] || null]));
+    }
+    // En vivo: cuando cualquiera de la zona (o el coordinador) sube data nueva, todos la reciben sin recargar
+    let unsub = [];
+    function live(zonas, month, onChange) {
+        unsub.forEach(f => f()); unsub = [];
+        zonas = [...new Set(zonas.filter(Boolean))];
+        for (let i = 0; i < zonas.length; i += 10) {
+            const grp = zonas.slice(i, i + 10);
+            unsub.push(Data.watchQuery(COL.zoneData, [['zona', 'in', grp], ['month', '==', month]], async docs => {
+                const changed = [];
+                for (const z of grp) {
+                    const cur = State.zoneSnaps && State.zoneSnaps[z], best = rank(docs.filter(d => d.zona === z))[0];
+                    if (!best || (cur && cur.id === best.id && (cur.updatedAt || 0) >= (best.updatedAt || 0))) continue;
+                    const h = await hydrate(best).catch(() => null); if (!h) continue;
+                    foldMerged(h); State.zoneSnaps[z] = h; changed.push({ doc: h, isNew: !!cur });
+                }
+                if (changed.length && onChange) onChange(changed);
+            }));
+        }
     }
     async function load(zona, month) { if (!zona) return null; const r = await loadMany([zona], month); return r[zona]; }
     const current = () => State.zoneSnaps || {};
@@ -363,7 +441,7 @@ const ZoneData = (() => {
         return { lectura: out, recomendaciones: rec };
     }
 
-    return { readFile, guessMapping, build, merge, analyze, save, saveAll, load, loadMany, current, forStore, norm, PRIORITY, matchModelName, parseAdvisor, matchStore, titleCase, foldMerged };
+    return { readFile, guessMapping, build, merge, analyze, save, saveAll, confirmCloud, live, rank, load, loadMany, current, forStore, norm, PRIORITY, matchModelName, parseAdvisor, matchStore, titleCase, foldMerged };
 })();
 
 // ---------------------------------------------------------------------------
@@ -372,7 +450,7 @@ const ZoneData = (() => {
 registerModule('zona', (() => {
     const me = () => State.session;
     // zonas = alcance del usuario (su zona, su regional o el país); view = '' (todo el alcance) o una zona
-    let zonas = [], view = '', corte = '', parsed = null, map = {}, manualStores = {}, snaps = {}, tot = null, an = null, fileName = '', selected = new Set(), fresh = false;
+    let zonas = [], view = '', corte = '', parsed = null, map = {}, manualStores = {}, snaps = {}, tot = null, an = null, fileName = '', selected = new Set(), fresh = false, saveSt = '';
     let radarSel = new Set(), radarAll = false, radarFilter = 'prio', advSel = new Set(), ztab = 'resumen', planBy = 'asesor', planMore = false;
     const ROLE_LABEL = { storeId: 'ID de tienda (Shop ID)', store: 'Tienda / PDV', advisor: 'Asesor / Promotor', ref: 'Referencia / Modelo', qty: 'Unidades (si no hay, cada fila = 1)', date: 'Fecha', zone: 'Zona', region: 'Regional', brand: 'Marca', category: 'Categoría (celular / accesorio)', position: 'Cargo', city: 'Ciudad', chain: 'Cadena' };
     const STATUS = { meta: ['En meta', 'ok', THEME.green], bien: ['Bien', 'ok', '#16A34A'], riesgo: ['En riesgo', 'warn', THEME.amber], critico: ['Crítico', 'bad', THEME.red], cero: ['Sin venta', 'bad', '#7F1D1D'], sin: ['Sin target', '', THEME.line] };
@@ -387,21 +465,25 @@ registerModule('zona', (() => {
     async function render(v) {
         zonas = scopedZones();
         view = zonas.length === 1 ? zonas[0] : '';
-        corte = addDays(todayStr(), -1); parsed = null; an = null; selected = new Set(); fresh = false;
+        corte = addDays(todayStr(), -1); parsed = null; an = null; selected = new Set(); fresh = false; saveSt = '';
+        const dk = takeDeep('zona'); if (dk) ztab = dk;
         v.innerHTML = `
-        <section class="card">
-            <div class="row between wrap">
-                <div><h2 class="h2">Análisis de zona</h2><p class="mute z-desc">Carga la data plana DCR (Shop Sales Query) o cualquier Excel/CSV de venta: la app toma solo las tiendas de tu alcance (<b>${esc(scopeLabel())}</b>) y las cruza con los targets de cada PDV.</p></div>
+        <section class="card zhead">
+            <div class="zh-top">
+                <div class="grow"><h2 class="h2">Análisis de zona</h2><p class="zh-scope">${esc(scopeLabel())}</p></div>
+                <label class="btn btn-dark zh-load">📂 Cargar data<input type="file" id="z-file" accept=".xlsx,.xls,.csv,.txt" hidden></label>
             </div>
-            <div class="row wrap z-ctrl" style="gap:10px;margin-top:10px;align-items:flex-end">
-                ${zonas.length > 1 ? `<label class="field-inline grow"><span class="lbl">Ámbito</span><select id="z-zona" class="input"><option value="">${esc(scopeLabel())} · ${zonas.length} zonas</option>${zonas.map(z => `<option value="${esc(z)}">${esc(z)}</option>`).join('')}</select></label>` : `<label class="field-inline grow"><span class="lbl">Zona</span><input class="input" value="${esc(zonas[0] || '')}" readonly></label>`}
-                <div class="field-inline grow"><span class="lbl">Asesores</span><button class="input z-adv-btn" id="z-asesor-btn" type="button">👥 Todos los asesores</button></div>
-                <label class="field-inline"><span class="lbl">Fecha de corte de la data</span><input type="date" id="z-corte" class="input" value="${corte}" max="${todayStr()}"></label>
-                <label class="btn btn-dark" style="margin-bottom:2px">📂 Cargar data plana<input type="file" id="z-file" accept=".xlsx,.xls,.csv,.txt" hidden></label>
-                <button class="btn btn-ghost" id="z-chains">🏷️ Cadenas</button>
-                <button class="btn btn-ghost" id="z-config">🎯 Configuración inicial</button>
-            </div>
-            <p class="hint" id="z-status"></p>
+            <p class="hint zh-status" id="z-status"></p>
+            <details class="zh-opts" ${zonas.length > 1 ? '' : ''}><summary>⚙️ Filtros y ajustes <small class="mute">${zonas.length > 1 ? 'ámbito, ' : ''}asesores, fecha de corte, cadenas, configuración</small></summary>
+                <p class="mute z-desc">La data plana DCR (Shop Sales Query) o cualquier Excel/CSV de venta: la app toma solo las tiendas de tu alcance y las cruza con los targets de cada PDV. Todos los líderes de la zona y el coordinador ven la última que se cargue.</p>
+                <div class="row wrap z-ctrl" style="gap:10px;margin-top:6px;align-items:flex-end">
+                    ${zonas.length > 1 ? `<label class="field-inline grow"><span class="lbl">Ámbito</span><select id="z-zona" class="input"><option value="">${esc(scopeLabel())} · ${zonas.length} zonas</option>${zonas.map(z => `<option value="${esc(z)}">${esc(z)}</option>`).join('')}</select></label>` : ''}
+                    <div class="field-inline grow"><span class="lbl">Asesores</span><button class="input z-adv-btn" id="z-asesor-btn" type="button">👥 Todos los asesores</button></div>
+                    <label class="field-inline"><span class="lbl">Fecha de corte de la data</span><input type="date" id="z-corte" class="input" value="${corte}" max="${todayStr()}"></label>
+                    <button class="btn btn-ghost" id="z-chains">🏷️ Cadenas</button>
+                    <button class="btn btn-ghost" id="z-config">🎯 Configuración inicial</button>
+                </div>
+            </details>
         </section>
         <div id="z-map"></div>
         <div id="z-out"></div>`;
@@ -459,7 +541,7 @@ registerModule('zona', (() => {
             if (!fresh) { corte = sn.corte || corte; if ($('#z-corte')) $('#z-corte').value = corte; }
             presel();
             const withData = Object.keys(snaps).filter(z => viewZonas().includes(z)).length;
-            $('#z-status').innerHTML = fresh ? statusFresh() : `Última data guardada: <b>${esc(sn.fileName || 'archivo')}</b> · corte ${esc(sn.corte)} ${sn.seed ? '· venta oficial precargada en la app' : `· cargada por ${esc(sn.uploadedBy || '—')} el ${esc(dstr(new Date(sn.updatedAt || Date.now())))}`} · ${an.sum.venta} uds en ${an.sum.conVenta} PDV con venta${viewZonas().length > 1 ? ` de ${withData} zonas` : ''}. Carga un archivo nuevo para actualizar.`;
+            $('#z-status').innerHTML = fresh ? statusFresh() : `Última data guardada: <b>${esc(sn.fileName || 'archivo')}</b> · corte ${esc(sn.corte)} ${sn.seed ? '· venta oficial precargada en la app' : `· cargada por ${esc(sn.uploadedBy || '—')} el ${esc(dstr(new Date(sn.updatedAt || Date.now())))} a las ${esc(new Date(sn.updatedAt || Date.now()).toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit' }))}`} · ${an.sum.venta} uds en ${an.sum.conVenta} PDV con venta${viewZonas().length > 1 ? ` de ${withData} zonas` : ''}. Carga un archivo nuevo para actualizar.`;
             if (!fresh) $('#z-map').innerHTML = '';
             paintOut();
         } else {
@@ -479,7 +561,8 @@ registerModule('zona', (() => {
         if (tot.rowsOtherBrand) parts.push(`${tot.rowsOtherBrand} de otras marcas`);
         if (tot.rowsOtherMonth) parts.push(`${tot.rowsOtherMonth} de otro mes`);
         if (tot.maxDate) parts.push(`última fecha en la data ${tot.maxDate}`);
-        return parts.join(' · ') + (fresh ? '. <b>Guardando la data…</b>' : '. <b>✅ Data guardada</b>: queda disponible para el radar, las tarjetas de asesor, el plan de trabajo y la calculadora.');
+        const SV = { local: '. <b>💾 Guardada solo en este equipo</b> (la app no tiene conexión con la nube).', saving: '. <b>⏳ Subiendo la data a la nube…</b>', wait: '. <b>⏳ Guardada en este equipo; terminando de subir a la nube.</b> No cierres la app hasta ver ✅.', slow: '. <b>⚠️ La subida va lenta:</b> la data quedó en cola en este equipo y sube sola cuando mejore la señal. No borres los datos de Chrome.', ok: '. <b>✅ Data en la nube:</b> ya la ven todos los líderes y asesores de la zona (y tus otros equipos).' };
+        return parts.join(' · ') + (fresh || !saveSt ? SV.saving : saveSt.startsWith('err:') ? `. <b>❌ La nube no aceptó la data</b> (${esc(saveSt.slice(4))}). Toma captura y avísale al administrador.` : SV[saveSt] || SV.ok);
     }
 
     async function onFile(file) {
@@ -524,7 +607,11 @@ registerModule('zona', (() => {
         Object.entries(r.snaps).forEach(([z, sn]) => { if (Object.keys(sn.stores).length) { snaps[z] = sn; State.zoneSnaps[z] = sn; } });
         fresh = true;
         // La data queda guardada de una vez (no hay que esperar a compartir el reporte): la usan el radar, la tarjeta del asesor, el plan y la calculadora
-        clearTimeout(analyzeNow.t); analyzeNow.t = setTimeout(() => persistSnaps().then(() => { const s = $('#z-status'); if (s && tot) s.innerHTML = statusFresh(); }).catch(() => { }), 600);
+        clearTimeout(analyzeNow.t); analyzeNow.t = setTimeout(() => { saveSt = 'saving'; persistSnaps().then(r => {
+            const paintSt = () => { const s = $('#z-status'); if (s && tot) s.innerHTML = statusFresh(); };
+            saveSt = r.local ? 'local' : r.synced ? 'ok' : r.error ? 'err:' + r.error : 'wait'; paintSt();
+            if (!r.local && !r.synced && !r.error && r.heads) ZoneData.confirmCloud(r.heads).then(ok => { saveSt = ok ? 'ok' : 'slow'; paintSt(); });
+        }).catch(e => { saveSt = 'err:' + (e.message || e); const s = $('#z-status'); if (s && tot) s.innerHTML = statusFresh(); }); }, 600);
         // Tiendas de la data que no cruzaron con ningún PDV del alcance
         const unm = Object.entries(tot.unmatchedStores);
         const u = $('#z-unm');
@@ -547,6 +634,9 @@ registerModule('zona', (() => {
         const tabs = [['resumen', '📋 Resumen'], ['asesores', `👥 Asesores (${radarData.list.length})`], ['tiendas', `🏬 Tiendas (${an.rows.length})`], ['share', '📊 Share real'], ['versus', '⚔️ Infinix vs competencia']].concat(canPlan ? [['plan', '☀️ Plan de trabajo']] : []).concat([['reportes', '📤 Reportes']]);
         if (!tabs.some(x => x[0] === ztab)) ztab = 'resumen';
         out.innerHTML = `
+        <nav class="ztabs" id="z-tabs">${tabs.map(([k, l]) => `<button class="ztab ${ztab === k ? 'on' : ''}" data-ztab="${k}">${l}</button>`).join('')}</nav>
+        <div id="z-adv"></div>
+        <div class="zpanel" data-zp="resumen" ${ztab === 'resumen' ? '' : 'hidden'}>
         <section class="kpi-row six">
             <div class="kpi hl"><span>Venta ${multi ? (view || !isAllZones() ? 'regional' : 'nacional') : 'zona'}</span><b>${S.venta}</b><small>Target ${S.meta || '—'} · ${S.cumpl == null ? 'sin target' : Math.round(S.cumpl * 100) + '%'}</small></div>
             <div class="kpi"><span>Proyección cierre</span><b>${S.proj}</b><small>${S.cumplProj == null ? '—' : Math.round(S.cumplProj * 100) + '% de la meta'}</small></div>
@@ -555,10 +645,6 @@ registerModule('zona', (() => {
             <div class="kpi"><span>Faltan</span><b>${S.faltan}</b><small>${S.ritmoReq} uds/día para cerrar</small></div>
             <div class="kpi"><span>Corte</span><b>${an.day}/${an.dim}</b><small>días del mes · ${esc(an.corte)}</small></div>
         </section>
-        <div id="z-adv"></div>
-        <nav class="ztabs" id="z-tabs">${tabs.map(([k, l]) => `<button class="ztab ${ztab === k ? 'on' : ''}" data-ztab="${k}">${l}</button>`).join('')}</nav>
-
-        <div class="zpanel" data-zp="resumen" ${ztab === 'resumen' ? '' : 'hidden'}>
             ${(() => { if (typeof DayStatus === 'undefined') return ''; const L = DayStatus.zoneDay(an.rows.map(r => r.st)), sinM = DayStatus.noMallaZones([...new Set(an.rows.map(r => r.st.zona))]); return `<section class="card ds-today"><div class="row between wrap"><h3 class="h3">👥 Hoy fuera del PDV y novedades <small class="mute">${L.length ? L.length + ' asesor(es)' : sinM.length ? '' : 'todos en turno'}</small></h3><button class="btn btn-ghost sm" data-nvnew>⚑ Registrar novedad</button></div>
                 ${sinM.length ? `<p class="ds-nomalla">⚠️ Sin información de malla: <b>${sinM.map(esc).join(', ')}</b>. Cárgala en Cargar datos para ver quién compensa.</p>` : ''}
                 ${L.length ? `<div class="ds-list">${L.slice(0, 8).map(x => `<div class="ds-row"><span><b>${esc(x.nombre)}</b> <small class="mute">${esc(x.st.tienda)}</small></span>${DayStatus.chip(x.s)}<button class="nv-dot" title="Novedad" data-nvd="${esc(x.st.id)}|${esc(x.nombre)}">⚑</button></div>`).join('')}</div>${L.length > 8 ? `<p class="hint">y ${L.length - 8} más en Cargar datos.</p>` : ''}` : (sinM.length ? '' : '<p class="hint">Según la malla y las novedades, hoy todos los asesores están en su PDV.</p>')}</section>`; })()}
@@ -925,7 +1011,13 @@ registerModule('zona', (() => {
         };
     }
 
-    return { render };
+    // Llegó data nueva de la zona (otro líder o el coordinador la subió): se repinta sin perder lo que se está cargando
+    function onZoneData() {
+        if (!$('#z-out') || parsed || $('#modal-root').children.length) return;
+        snaps = {}; zonas.forEach(z => { const d = State.zoneSnaps[z]; if (d && d.stores) snaps[z] = d; });
+        tot = null; fresh = false; refresh();
+    }
+    return { render, onZoneData };
 })());
 
 // ----------------------------------------------------------------------------

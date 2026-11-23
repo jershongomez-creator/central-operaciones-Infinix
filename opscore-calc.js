@@ -235,6 +235,7 @@ registerModule('calc', (() => {
         // Asesores: los configurados en la tienda + los que aparecen en la data de zona con otro nombre
         // Solo asesores activos: los retirados siguen en la venta de la tienda pero ya no se reparten target
         const as = activeAdvisors(st).map(a => a.nombre);
+        const refOn = new Set(storeRefs(st).map(m => m.key)), accOn = new Set(storeAccs(st).map(a => a.key));
         asesor = as[0] || '';
         view.innerHTML = `
         <section class="card">
@@ -251,16 +252,17 @@ registerModule('calc', (() => {
         <section class="card">
             <div class="row between wrap"><h3 class="h3">Mi target y mis unidades del mes</h3><span class="badge" id="cc-tot">0 uds</span></div>
             <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>Referencia</th><th>Mi target</th><th>Mis unidades</th><th>% target</th><th>Speed/ud</th><th>Ganado</th></tr></thead><tbody>
-                ${INFINIX_MODELS.map(m => `<tr><td><b>${esc(m.name)}</b></td>
+                ${INFINIX_MODELS.map(m => `<tr data-ref="${m.key}" ${refOn.has(m.key) ? '' : 'hidden'}><td><b>${esc(m.name)}</b></td>
                     <td><input class="input num" type="number" inputmode="numeric" min="0" id="cc-t-${m.key}" value="0" title="Target del asesor para esta referencia (se puede ajustar)"></td>
                     <td><div class="stp"><button type="button" data-d="-1">−</button><input class="input num" type="number" inputmode="numeric" min="0" id="cc-u-${m.key}" value="0"><button type="button" data-d="1">+</button></div></td>
                     <td class="c" id="cc-p-${m.key}">—</td><td class="c">${money(planValores()[m.key] || 0)}</td><td class="c" id="cc-g-${m.key}">—</td></tr>`).join('')}
-                <tr><td colspan="6" class="l"><b>Accesorios</b> <small class="mute">· pagan desde la primera unidad y no suman al ROI</small></td></tr>
-                ${INFINIX_ACCESSORIES.map(a => `<tr><td><b>${esc(a.name)}</b></td><td></td><td><div class="stp"><button type="button" data-d="-1">−</button><input class="input num" type="number" inputmode="numeric" min="0" id="cc-a-${a.key}" value="0"><button type="button" data-d="1">+</button></div></td><td></td><td class="c">${money(planValoresAcc()[a.key] || 0)}</td><td class="c" id="cc-ag-${a.key}">—</td></tr>`).join('')}
+                <tr data-acchead ${accOn.size ? '' : 'hidden'}><td colspan="6" class="l"><b>Accesorios</b> <small class="mute">· pagan desde la primera unidad y no suman al ROI</small></td></tr>
+                ${INFINIX_ACCESSORIES.map(a => `<tr data-acc="${a.key}" ${accOn.has(a.key) ? '' : 'hidden'}><td><b>${esc(a.name)}</b></td><td></td><td><div class="stp"><button type="button" data-d="-1">−</button><input class="input num" type="number" inputmode="numeric" min="0" id="cc-a-${a.key}" value="0"><button type="button" data-d="1">+</button></div></td><td></td><td class="c">${money(planValoresAcc()[a.key] || 0)}</td><td class="c" id="cc-ag-${a.key}">—</td></tr>`).join('')}
             </tbody></table></div>
             <p class="hint">El target sale del target de la tienda repartido entre los asesores; puedes ajustarlo y queda guardado. Las unidades se precargan solas; ajústalas si tienes ventas que aún no están en la data.</p>
         </section>
         <section class="card" id="cc-scheme"></section>
+        <section class="card cc-money" id="cc-money"></section>
         ${actionBarHTML()}`;
 
         view.addEventListener('change', e => { if (e.target.name === 'cc-as') { asesor = e.target.value; prefill(); } });
@@ -322,6 +324,7 @@ registerModule('calc', (() => {
             const c = computeStore(st, closures, todayStr());
             if ((st.asesores || []).length === 1 && c.infMes > 0) { c.models.forEach(m => { units[m.key] = m.mes; }); src = `cierres diarios de la tienda (${c.cierresMes} cierres del mes)`; }
         }
+        $$('#view tr[data-ref]').forEach(tr => { if (int(units[tr.dataset.ref]) > 0) tr.hidden = false; });      // vendió una referencia que no está en la lista: se muestra
         INFINIX_MODELS.forEach(m => { const i = $('#cc-u-' + m.key); if (i) i.value = int(units[m.key]); const t = $('#cc-t-' + m.key); if (t) t.value = int(targets[m.key]); });
         $('#cc-src').innerHTML = src ? `Unidades tomadas de <b>${src}</b>. Ajústalas si tienes ventas que aún no están en la data.` : 'No hay data de zona ni cierres de este asesor: escribe tus unidades.';
         paint();
@@ -340,6 +343,19 @@ registerModule('calc', (() => {
             <div class="kpi ${K.abierto ? '' : 'warn'}"><span>Llave de speeds (ROI 1 · ${P2.base} uds)</span><b>${K.abierto ? 'Abierta ✅' : `Faltan ${K.faltaBase}`}</b><small>${K.abierto ? 'Ya cobras el speed de cada modelo' : 'Desde ahí cobras el speed de cada modelo'}</small></div>
             <div class="kpi"><span>Llevas ganado</span><b>${money(K.total)}</b><small>speeds ${money(K.speeds)}${K.kpi ? ` + ROI ${money(K.kpi)}` : ''}${K.acc ? ` + accesorios ${money(K.acc)}` : ''}</small></div>
             <div class="kpi"><span>Siguiente premio</span><b>${K.next ? K.next.meta + ' uds' : '🏆'}</b><small>${K.next ? `Faltan ${K.falta} · ${esc(K.next.label)}` : 'Alcanzaste el ROI 3'}</small></div>`;
+        // Mi dinero del mes: lo ya ganado, lo acumulado sin desbloquear (en gris) y cuánto quedaría si sigue a este ritmo
+        const dIdx = new Date().getDate(), dim = daysInMonth(todayStr().slice(0, 7)), f = t > 0 ? Math.max(1, dim / Math.max(1, dIdx)) : 1;
+        const uP = Object.fromEntries(INFINIX_MODELS.map(m => [m.key, Math.round(int(units[m.key]) * f)])), aP = Object.fromEntries(Object.entries(accU).map(([k, v]) => [k, Math.round(int(v) * f)]));
+        const KP = incentivo(uP, P2, aP), tP = sum(Object.values(uP)), pctLl = P2.base ? Math.min(100, Math.round(t / P2.base * 100)) : 100;
+        $('#cc-money').innerHTML = `<h3 class="h3">💰 Mi dinero del mes</h3>
+            <div class="mm-bar"><div style="width:${pctLl}%"></div></div>
+            <p class="hint" style="margin-top:4px">${K.abierto ? `✅ Llave abierta (${t} de ${P2.base} uds para el ROI 1).` : `🔒 Llevas <b>${pctLl}%</b> para abrir la llave: ${t} de ${P2.base} uds (te faltan <b>${K.faltaBase}</b>${left ? `, ${perDay(P2.base)} por día` : ''}).`}</p>
+            <div class="mm-rows">
+                <div class="mm-r ok"><span>Dinero ganado</span><b>${money(K.total)}</b><small>${K.abierto ? `speeds ${money(K.speeds)}${K.kpi ? ` + ROI ${money(K.kpi)}` : ''}` : 'aún sin speeds'}${K.acc ? ` + accesorios ${money(K.acc)}` : ''}</small></div>
+                <div class="mm-r ${K.abierto ? 'off' : 'lock'}"><span>${K.abierto ? 'Sin desbloquear' : '🔒 Dinero acumulado sin desbloquear'}</span><b>${money(K.speedsBloq)}</b><small>${K.abierto ? 'ya todo está liberado' : `speeds de tus ${t} uds: se vuelven tuyos al llegar a ${P2.base} uds`}</small></div>
+                ${K.next && K.next.premio ? `<div class="mm-r lock"><span>🎯 Próximo premio</span><b>${money(K.next.premio)}</b><small>faltan ${K.falta} uds · ${esc(K.next.label)}</small></div>` : ''}
+                <div class="mm-r tot"><span>Si sigues a este ritmo</span><b>${money(KP.total)}</b><small>proyección ${tP} uds al cierre del mes${KP.abierto ? '' : ' · aún sin abrir la llave'}</small></div>
+            </div>`;
         $('#cc-scheme').innerHTML = `
             <h3 class="h3">Plan de incentivos · noviembre 2026</h3>
             <div class="ac-steps">${step('ROI 1 · Llave de speeds', P2.base, 0, K.nivel >= 1)}${step('ROI 2', P2.k400, P2.pay400, K.nivel >= 2)}${step('ROI 3', P2.k700, P2.pay700, K.nivel >= 3)}${tt > 0 ? step('100% de mi target', tt, 0, t >= tt) : ''}</div>

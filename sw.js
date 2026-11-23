@@ -1,11 +1,11 @@
 // Central de Operaciones (Infinix) · Service Worker
 // App shell: red primero (para que las actualizaciones lleguen) con respaldo en caché.
 // Imágenes y librerías CDN: caché primero. Firestore nunca se intercepta.
-const CACHE_NAME = 'infinix-opscore-v34';
+const CACHE_NAME = 'infinix-opscore-v35';
 const SHELL = [
   './', './index.html', './manifest.json', './opscore.css', './icon-192.png', './icon-512.png', './favicon-32.png', './apple-touch-icon.png',
   './opscore-assets.js', './opscore-config.js', './opscore-core.js', './opscore-m1.js', './opscore-m2.js',
-  './opscore-m3.js', './opscore-m4.js', './opscore-m5.js', './opscore-seed.js', './opscore-snap.js', './opscore-zone.js', './opscore-calc.js', './opscore-central.js', './opscore-evals.js', './opscore-cargas.js', './opscore-plan-roles.js', './opscore-ventas.js', './opscore-real.js', './opscore-adm.js', './opscore-parcial.js', './opscore-admin.js', './opscore-demo.js'
+  './opscore-m3.js', './opscore-m4.js', './opscore-m5.js', './opscore-seed.js', './opscore-snap.js', './opscore-zone.js', './opscore-calc.js', './opscore-central.js', './opscore-evals.js', './opscore-cargas.js', './opscore-plan-roles.js', './opscore-ventas.js', './opscore-real.js', './opscore-adm.js', './opscore-parcial.js', './opscore-hub.js', './opscore-admin.js', './opscore-demo.js'
 ];
 
 self.addEventListener('install', event => {

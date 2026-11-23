@@ -15,7 +15,7 @@
 
 const ADM = {
     MAX_SAMPLES: 10, MAX_VIS: 6, MAX_PLAN: 3,
-    VIS_TIPOS: ['Exhibidor / mueble', 'Habladores y precios', 'Cenefa / branding', 'Mesa de demo', 'Material POP', 'Otro'],
+    VIS_TIPOS: ['Roll up', 'Mesa counter', 'Dummy gigante', 'Exhibidor / mueble', 'Habladores y precios', 'Cenefa / branding', 'Mesa de demo', 'Material POP', 'Cabezote / backing', 'Pendón', 'Otro'],
     TIPO: { acta: 'Acta de sample', sample: 'Sample', mesa: 'Mesa con asesores', vis: 'Visibilidad', plan: 'Planilla semanal' },
     ICON: { acta: '📝', sample: '📱', mesa: '👥', vis: '🎯', plan: '🗒️' }
 };
@@ -213,7 +213,7 @@ registerModule('adm', (() => {
 
         <section class="card"><h3 class="h3">📱 Samples <small class="mute">${samples.length} de ${ADM.MAX_SAMPLES} · foto del equipo en exhibición con su IMEI</small></h3>
             <div class="adm-grid">${samples.map(d => thumb(d)).join('') || '<p class="empty sm">Aún no cargas samples.</p>'}</div>
-            ${nextS ? `<div class="adm-form"><select class="input" id="adm-ref"><option value="">Referencia del sample…</option>${CATALOGO_INFINIX.map(r => `<option>${esc(r)}</option>`).join('')}</select>
+            ${nextS ? `<div class="adm-form"><input class="input" id="adm-ref" list="adm-ref-l" autocomplete="off" autocapitalize="characters" placeholder="Referencia (escríbela o pégala, ej. NOTE 50 PRO)"><datalist id="adm-ref-l">${CATALOGO_INFINIX.concat(typeof REFS_OBSOLETAS !== 'undefined' ? REFS_OBSOLETAS : []).map(r => `<option value="${esc(r)}">`).join('')}</datalist>
                 <input class="input num" id="adm-imei" inputmode="numeric" maxlength="15" placeholder="IMEI (15 dígitos)">${upBtn('Foto del sample', `data-up="sample" data-slot="${nextS}"`)}</div>` : '<p class="hint">Llegaste al máximo de 10 samples. Quita uno para cargar otro.</p>'}</section>
 
         <section class="card"><h3 class="h3">👥 Mesa con los asesores <small class="mute">foto HORIZONTAL de la mesa con todo el equipo</small></h3>
@@ -222,7 +222,7 @@ registerModule('adm', (() => {
 
         <section class="card"><h3 class="h3">🎯 Herramientas de visibilidad <small class="mute">${vis.length} de ${ADM.MAX_VIS}</small></h3>
             <div class="adm-grid">${vis.map(d => thumb(d)).join('') || '<p class="empty sm">Aún no cargas visibilidad.</p>'}</div>
-            ${nextV ? `<div class="adm-form"><select class="input" id="adm-vtipo">${ADM.VIS_TIPOS.map(t => `<option>${esc(t)}</option>`).join('')}</select>${upBtn('Foto de visibilidad', `data-up="vis" data-slot="${nextV}"`)}</div>` : ''}</section>
+            ${nextV ? `<div class="adm-form"><input class="input" id="adm-vtipo" list="adm-vt-l" autocomplete="off" placeholder="Herramienta (escríbela o pégala, ej. Roll up, Dummy gigante GT 50)"><datalist id="adm-vt-l">${ADM.VIS_TIPOS.map(t => `<option value="${esc(t)}">`).join('')}</datalist>${upBtn('Foto de visibilidad', `data-up="vis" data-slot="${nextV}"`)}</div>` : ''}</section>
 
         <section class="card"><h3 class="h3">🗒️ Planilla física de ventas <small class="mute">PDF escaneado o foto, una por semana (hasta ${ADM.MAX_PLAN} archivos)</small></h3>
             <div class="seg sm wrap" style="margin:6px 0">${admWeeksOfMonth(ym).map(w => { const n = of('plan', w).length; return `<button class="seg-btn ${w === semana ? 'active' : ''}" data-wk="${w}">${w} ${n ? '✅' : '·'}</button>`; }).join('')}</div>
@@ -251,7 +251,8 @@ registerModule('adm', (() => {
             if (!imeiOk(meta.imei)) { toast('El IMEI debe tener 15 dígitos.', 'warn'); inp.value = ''; return; }
             if (docs.some(d => d.tipo === 'sample' && d.imei === meta.imei)) { toast('Ese IMEI ya está cargado este mes.', 'warn'); inp.value = ''; return; }
         }
-        if (tipo === 'vis') meta.nota = $('#adm-vtipo').value;
+        if (tipo === 'sample') meta.ref = meta.ref.toUpperCase().replace(/\s+/g, ' ');
+        if (tipo === 'vis') { meta.nota = ($('#adm-vtipo').value || '').trim().replace(/\s+/g, ' '); if (!meta.nota) { toast('Escribe qué herramienta de visibilidad es antes de la foto.', 'warn'); inp.value = ''; return; } }
         busyUp = true; const lab = inp.closest('label'); if (lab) lab.classList.add('loading');
         try {
             const { doc, synced } = await admUpload(s, file, meta);

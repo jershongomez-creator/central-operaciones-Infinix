@@ -129,7 +129,7 @@ function toast(msg, type = 'ok', ms = 3800) {
 function openModal(html, opts = {}) {
     const root = $('#modal-root');
     const wrap = document.createElement('div');
-    wrap.className = 'modal-backdrop';
+    wrap.className = 'modal-backdrop' + (opts.sheet ? ' sheet' : '');
     wrap.innerHTML = `<div class="modal ${opts.wide ? 'modal-wide' : ''}" role="dialog" aria-modal="true">${opts.locked ? '' : '<button class="modal-x" aria-label="Cerrar">✕</button>'}${html}</div>`;
     if (!opts.locked) {
         wrap.addEventListener('click', e => { if (e.target === wrap) closeModal(wrap); });
@@ -161,17 +161,39 @@ function busy(btn, on) {
 // Toda lectura cae al caché local si no hay red; toda escritura queda en el
 // equipo y en una cola que se reenvía cuando vuelve la conexión.
 const Data = (() => {
-    let db = null, online = null, denied = false;
+    let db = null, online = null, denied = false, persisted = false;
     const listeners = [];
-    const TIMEOUT = 8000;
+    const TIMEOUT = 15000, LONG = 45000;
     const ck = col => 'opscore_c_' + col;
-    const readCache = col => { try { return JSON.parse(localStorage.getItem(ck(col))) || {}; } catch (e) { return {}; } };
-    const writeCache = (col, map) => { try { localStorage.setItem(ck(col), JSON.stringify(map)); } catch (e) { console.warn('[Central] caché local lleno', e); } };
+    // Colecciones pesadas (data plana, evaluaciones, reportes y fotos): NO se copian al almacenamiento del navegador (5 MB),
+    // que al llenarse dejaba la app "pensando" y obligaba a borrar la caché de Chrome. Su respaldo sin red es el de Firebase.
+    const NOLOCAL = new Set(['zone_data', 'eval_data', 'zone_reports']);
+    const memC = {};
+    const heavyCol = col => !!db && NOLOCAL.has(col);
+    const readCache = col => { if (heavyCol(col)) return { ...(memC[col] || {}) }; try { return JSON.parse(localStorage.getItem(ck(col))) || {}; } catch (e) { return {}; } };
+    // Lo local que pasa de ~70 días no hace falta en el teléfono (la nube lo conserva)
+    const prune = map => { const lim = Date.now() - 70 * 864e5, out = {}; Object.entries(map).forEach(([k, d]) => { const t = d && (d.updatedAt || d.createdAt || (d.fecha ? Date.parse(d.fecha) : 0)); if (!t || t >= lim) out[k] = d; }); return out; };
+    const writeCache = (col, map) => {
+        if (heavyCol(col)) { memC[col] = map; return; }
+        try { localStorage.setItem(ck(col), JSON.stringify(map)); }
+        catch (e) {
+            freeSpace();
+            try { localStorage.setItem(ck(col), JSON.stringify(prune(map))); } catch (e2) { console.warn('[Central] caché local lleno', e2); }
+        }
+    };
+    // Libera el almacenamiento del navegador: borra las copias locales de colecciones pesadas de versiones anteriores
+    function freeSpace() {
+        try {
+            NOLOCAL.forEach(c => localStorage.removeItem(ck(c)));
+            ['daily_closures', 'work_plans', 'visit_reports'].forEach(c => { const raw = localStorage.getItem(ck(c)); if (raw && raw.length > 400000) localStorage.setItem(ck(c), JSON.stringify(prune(JSON.parse(raw)))); });
+            const q = JSON.parse(localStorage.getItem('opscore_pending') || '[]'); const q2 = q.filter(o => !NOLOCAL.has(o.col)); if (q2.length !== q.length) localStorage.setItem('opscore_pending', JSON.stringify(q2));
+        } catch (e) { /* nada que liberar */ }
+    }
     const readQueue = () => { try { return JSON.parse(localStorage.getItem('opscore_pending')) || []; } catch (e) { return []; } };
     const writeQueue = q => { try { localStorage.setItem('opscore_pending', JSON.stringify(q)); } catch (e) { /* sin espacio */ } };
     // Sin red no se hace esperar al usuario: 8 s la primera vez, 2,5 s mientras siga sin conexión
-    const waitMs = () => navigator.onLine === false ? 50 : online === false ? 2500 : TIMEOUT;
-    const withTimeout = p => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), waitMs()))]);
+    const waitMs = long => navigator.onLine === false ? 50 : long ? LONG : online === false ? 5000 : TIMEOUT;
+    const withTimeout = (p, long) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), waitMs(long)))]);
     const setOnline = (v, err) => {
         const d = !v && !!err && err.code === 'permission-denied';      // reglas de Firestore sin publicar
         if (online !== v || denied !== d) { online = v; denied = d; listeners.forEach(fn => fn(v)); }
@@ -191,19 +213,21 @@ const Data = (() => {
             if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
             db = firebase.firestore();
             // Cola sin conexión del propio Firebase (guardada en el teléfono): lo que no alcanza a subir se envía al volver a abrir
-            try { db.enablePersistence({ synchronizeTabs: true }).catch(() => { }); } catch (e) { /* navegador sin IndexedDB */ }
+            try { db.enablePersistence({ synchronizeTabs: true }).then(() => { persisted = true; }).catch(e => console.warn('[Central] sin respaldo de Firebase en el equipo', e.code || e.message)); } catch (e) { /* navegador sin IndexedDB */ }
             if (firebase.firestore.setLogLevel) firebase.firestore.setLogLevel('silent');   // sin ruido en consola cuando no hay red
         } catch (e) { console.warn('[Central] Firebase no disponible; modo local.', e.message); db = null; setOnline(false); }
+        if (db) freeSpace();
         window.addEventListener('online', flush);
     }
 
     async function fetch(col, filters = []) {
+        const heavy = NOLOCAL.has(col);
         const local = () => Object.values(readCache(col)).filter(d => filters.every(f => match(d, f)));
         if (!db) return { docs: local(), fromServer: false };
+        let q = db.collection(col);
+        filters.forEach(f => { q = q.where(f[0], f[1], f[2]); });
         try {
-            let q = db.collection(col);
-            filters.forEach(f => { q = q.where(f[0], f[1], f[2]); });
-            const snap = await withTimeout(q.get());
+            const snap = await withTimeout(q.get(), heavy);
             if (snap.metadata && snap.metadata.fromCache) throw new Error('offline');
             const docs = snap.docs.map(d => ({ ...d.data(), id: d.id }));
             let cache = readCache(col);
@@ -216,20 +240,29 @@ const Data = (() => {
             writeCache(col, cache);
             setOnline(true);
             return { docs, fromServer: true };
-        } catch (e) { setOnline(false, e); return { docs: local(), fromServer: false }; }
+        } catch (e) {
+            if (!(heavy && e.message === 'timeout' && navigator.onLine !== false)) setOnline(false, e);
+            if (heavy) {          // sin red: lo último que Firebase guardó en el equipo
+                try { const sn = await q.get({ source: 'cache' }); const docs = sn.docs.map(d => ({ ...d.data(), id: d.id })); const seen = new Set(docs.map(d => d.id)); local().forEach(d => { if (!seen.has(d.id)) docs.push(d); }); return { docs, fromServer: false }; } catch (e2) { /* sin respaldo */ }
+            }
+            return { docs: local(), fromServer: false };
+        }
     }
     const list = async (col, filters) => (await fetch(col, filters)).docs;
 
     async function get(col, id) {
         if (db) {
             try {
-                const snap = await withTimeout(db.collection(col).doc(id).get());
+                const snap = await withTimeout(db.collection(col).doc(id).get(), NOLOCAL.has(col));
                 if (snap.metadata && snap.metadata.fromCache && !snap.exists) throw new Error('offline');
                 setOnline(true);
                 const cache = readCache(col);
                 if (snap.exists) { cache[id] = { ...snap.data(), id }; writeCache(col, cache); return cache[id]; }
                 return cache[id] && readQueue().some(p => p.col === col && p.id === id) ? cache[id] : null;
-            } catch (e) { setOnline(false, e); }
+            } catch (e) {
+                setOnline(false, e);
+                if (NOLOCAL.has(col) && !readCache(col)[id]) { try { const sn = await db.collection(col).doc(id).get({ source: 'cache' }); if (sn.exists) return { ...sn.data(), id }; } catch (e2) { /* sin respaldo */ } }
+            }
         }
         return readCache(col)[id] || null;
     }
@@ -240,8 +273,8 @@ const Data = (() => {
         writeCache(col, cache);
         const payload = JSON.parse(JSON.stringify(data)); delete payload.id;       // Firestore no admite valores undefined
         if (db) {
-            try { await withTimeout(db.collection(col).doc(id).set(payload, { merge })); setOnline(true); return { synced: true }; }
-            catch (e) { setOnline(false, e); if (!denied) return { synced: false }; }      // Firebase ya lo tiene en su cola y lo sube solo
+            try { await withTimeout(db.collection(col).doc(id).set(payload, { merge }), NOLOCAL.has(col)); setOnline(true); return { synced: true }; }
+            catch (e) { const bad = e && /invalid-argument|resource-exhausted|too large|exceeds/i.test((e.code || '') + ' ' + (e.message || '')); if (!bad) setOnline(false, e); if (!denied) return { synced: false, error: bad ? (e.code || e.message) : '' }; }      // Firebase ya lo tiene en su cola y lo sube solo
         }
         const q = readQueue().filter(p => !(p.col === col && p.id === id && p.op === 'set' && !merge));
         q.push({ op: 'set', col, id, data: payload, merge: !!merge }); writeQueue(q);
@@ -256,7 +289,7 @@ const Data = (() => {
                 const ref = db.collection(o.col).doc(o.id);
                 if (o.op === 'del') b.delete(ref); else b.set(ref, o.data, { merge: !!o.merge });
             });
-            await withTimeout(b.commit());
+            await withTimeout(b.commit(), ops.some(o => NOLOCAL.has(o.col)));
         }
     }
     async function batch(ops) {                // ops: [{ op:'set'|'del', col, id, data, merge }]
@@ -273,7 +306,7 @@ const Data = (() => {
         });
         if (db) {
             try { await commit(clean); setOnline(true); return { synced: true }; }
-            catch (e) { setOnline(false, e); if (!denied) return { synced: false }; }
+            catch (e) { const bad = e && /invalid-argument|resource-exhausted|too large|exceeds/i.test((e.code || '') + ' ' + (e.message || '')); if (!bad) setOnline(false, e); if (!denied) return { synced: false, error: bad ? (e.code || e.message) : '' }; }
         }
         writeQueue(readQueue().concat(clean));
         return { synced: false };
@@ -283,7 +316,7 @@ const Data = (() => {
         const cache = readCache(col); delete cache[id]; writeCache(col, cache);
         if (db) {
             try { await withTimeout(db.collection(col).doc(id).delete()); setOnline(true); return { synced: true }; }
-            catch (e) { setOnline(false, e); if (!denied) return { synced: false }; }
+            catch (e) { const bad = e && /invalid-argument|resource-exhausted|too large|exceeds/i.test((e.code || '') + ' ' + (e.message || '')); if (!bad) setOnline(false, e); if (!denied) return { synced: false, error: bad ? (e.code || e.message) : '' }; }
         }
         const q = readQueue(); q.push({ op: 'del', col, id }); writeQueue(q);
         return { synced: false };
@@ -329,6 +362,15 @@ const Data = (() => {
         } catch (e) { return () => { }; }
     }
 
+    // Tiempo real de una consulta (p. ej. la data plana de mis zonas): avisa cada vez que alguien sube algo nuevo
+    function watchQuery(col, filters, cb) {
+        if (!db) return () => { };
+        try {
+            let q = db.collection(col); filters.forEach(f => { q = q.where(f[0], f[1], f[2]); });
+            return q.onSnapshot(snap => { if (snap.metadata.fromCache || snap.metadata.hasPendingWrites) return; setOnline(true); cb(snap.docs.map(d => ({ ...d.data(), id: d.id }))); }, err => console.warn('[Central] watch', col, err.code || err.message));
+        } catch (e) { return () => { }; }
+    }
+
     // Archivos pesados (fotos en base64): van directo a Firestore, sin la caché del navegador (no cabrían en ella).
     // Sin señal, Firebase los deja en su cola del teléfono y los sube solo al volver la conexión.
     const mem = {};
@@ -337,14 +379,14 @@ const Data = (() => {
         (mem[col] = mem[col] || {})[id] = { ...data, id };
         if (!db) return { synced: false };
         const payload = JSON.parse(JSON.stringify(data)); delete payload.id;
-        try { await withTimeout(db.collection(col).doc(id).set(payload)); setOnline(true); return { synced: true }; }
+        try { await withTimeout(db.collection(col).doc(id).set(payload), true); setOnline(true); return { synced: true }; }
         catch (e) { setOnline(false, e); return { synced: false, denied }; }
     }
     async function listRaw(col, filters = []) {
         if (!db) return memList(col, filters);
         let q = db.collection(col); filters.forEach(f => { q = q.where(f[0], f[1], f[2]); });
         try {
-            const snap = await withTimeout(q.get()); setOnline(true);
+            const snap = await withTimeout(q.get(), true); setOnline(true);
             const docs = snap.docs.map(d => ({ ...d.data(), id: d.id }));
             memList(col, filters).forEach(m => { if (!docs.some(d => d.id === m.id)) docs.push(m); });   // lo recién subido que aún no llega
             return docs;
@@ -356,9 +398,16 @@ const Data = (() => {
     }
     async function getRaw(col, id) {
         if (mem[col] && mem[col][id]) return mem[col][id];
+        if (memC[col] && memC[col][id]) return memC[col][id];
         if (!db) return null;
-        try { const sn = await withTimeout(db.collection(col).doc(id).get()); setOnline(true); return sn.exists ? { ...sn.data(), id } : null; }
+        try { const sn = await withTimeout(db.collection(col).doc(id).get(), true); setOnline(true); return sn.exists ? { ...sn.data(), id } : null; }
         catch (e) { setOnline(false, e); try { const sn = await db.collection(col).doc(id).get({ source: 'cache' }); return sn.exists ? { ...sn.data(), id } : null; } catch (e2) { return null; } }
+    }
+    // Lectura directa del servidor (sin caché): para confirmar que algo ya quedó en la nube
+    async function serverGet(col, id) {
+        if (!db) return null;
+        const sn = await withTimeout(db.collection(col).doc(id).get({ source: 'server' }), true); setOnline(true);
+        return sn.exists ? { ...sn.data(), id } : null;
     }
     async function delRaw(col, id) {
         if (mem[col]) delete mem[col][id];
@@ -368,7 +417,7 @@ const Data = (() => {
     }
 
     return {
-        init, fetch, list, get, set, del, batch, flush, watch, setRaw, listRaw, getRaw, delRaw, hasCloud: () => !!db, denied: () => denied,
+        init, fetch, list, get, set, del, batch, flush, watch, watchQuery, serverGet, setRaw, persisted: () => persisted, online: () => online, listRaw, getRaw, delRaw, hasCloud: () => !!db, denied: () => denied,
         local: col => Object.values(readCache(col)),
         seedLocal: (col, docs) => { const c = readCache(col); docs.forEach(d => { if (!c[d.id]) c[d.id] = d; }); writeCache(col, c); },
         onStatus: fn => { listeners.push(fn); if (online !== null) fn(online); },
@@ -530,6 +579,45 @@ const activeAdvisors = st => storeAdvisors(st).filter(a => a.activo && !a.home &
 const scopedZones = () => (isAllZones() ? State.zones.map(z => z.nombre) : myZones()).sort();
 // Meta del mes: el total fijado para la tienda o, si no hay, la suma de las metas por referencia.
 // Se escribe una sola vez y se mantiene hasta que alguien la cambie.
+// ---------- Referencias que maneja cada tienda (cierre, parcial, calculadora) -------------------------
+// Las que tienen target, más las que el líder habilite a mano (Gestión › Tiendas › 📦). Sin selección manual,
+// también las del portafolio vigente que aún tienen inventario. Las obsoletas (HOT 60 Pro+…) solo si tienen target.
+const OBSOLETE_KEYS = ['hot-60-pro'];
+function storeRefs(st) {
+    const sel = st && Array.isArray(st.refsSel) ? new Set(st.refsSel) : null;
+    const L = INFINIX_MODELS.filter(m => int(st && st.metas && st.metas[m.key]) > 0 || (sel ? sel.has(m.key) : !OBSOLETE_KEYS.includes(m.key) && int(st && st.inventario && st.inventario[m.key]) > 0));
+    return L.length ? L : INFINIX_MODELS.filter(m => !OBSOLETE_KEYS.includes(m.key));
+}
+const storeAccs = st => INFINIX_ACCESSORIES.filter(a => int(st && st.metasAcc && st.metasAcc[a.key]) > 0 || (st && Array.isArray(st.accSel) && st.accSel.includes(a.key)));
+// Unidades de referencias obsoletas que la tienda aún tiene en bodega: [{ ref, uds }]
+const storeObsoletas = st => ((st && st.obsoletas) || []).filter(o => o && o.ref && int(o.uds) > 0);
+// Editor de referencias de una tienda (coordinador, supervisor y formador)
+function openStoreRefs(storeId) {
+    const st = storeById(storeId); if (!st) return;
+    const on = new Set(storeRefs(st).map(m => m.key)), acc = new Set(storeAccs(st).map(a => a.key));
+    let obs = storeObsoletas(st).map(o => ({ ...o }));
+    const chip = (k, name, checked, tgt, extra) => `<label class="chip rf-chip ${tgt ? 'tg' : ''}"><input type="checkbox" value="${k}" ${checked ? 'checked' : ''} ${tgt ? 'disabled' : ''}><span><b>${esc(name)}</b><small>${tgt ? `target ${tgt}` : extra || 'sin target'}</small></span></label>`;
+    const m = openModal(`<h3 class="modal-title">📦 Referencias de ${esc(st.tienda)}</h3>
+        <p class="mute">Marca lo que maneja la tienda: es lo que verán en el cierre, el parcial y la calculadora. Las que tienen target quedan siempre activas.</p>
+        <h4 class="sec">Celulares</h4><div class="chips" id="rf-m">${INFINIX_MODELS.map(x => chip(x.key, x.name, on.has(x.key), int(st.metas && st.metas[x.key]), OBSOLETE_KEYS.includes(x.key) ? 'obsoleta' : '')).join('')}</div>
+        <h4 class="sec">Accesorios</h4><div class="chips" id="rf-a">${INFINIX_ACCESSORIES.map(x => chip(x.key, x.name, acc.has(x.key), int(st.metasAcc && st.metasAcc[x.key]))).join('')}</div>
+        <h4 class="sec">Referencias obsoletas en bodega</h4><p class="hint">Equipos que ya no tienen target pero siguen en la tienda (SMART 10, NOTE 50 PRO, GT 30…). La tienda también los actualiza desde su cierre.</p>
+        <div id="rf-obs"></div>
+        <div class="row" style="gap:6px;margin-top:6px"><input class="input grow" id="rf-on" list="rf-ol" placeholder="Referencia obsoleta"><datalist id="rf-ol">${REFS_OBSOLETAS.map(r => `<option value="${esc(r)}">`).join('')}</datalist><input class="input num" id="rf-ou" type="number" inputmode="numeric" min="1" placeholder="Uds" style="width:80px"><button class="btn btn-ghost" id="rf-oadd">➕</button></div>
+        <div class="actions"><button class="btn btn-primary" id="rf-save">Guardar</button></div>`);
+    const paintObs = () => { $('#rf-obs', m).innerHTML = obs.length ? obs.map((o, i) => `<div class="adv-edit"><span class="grow"><b>${esc(o.ref)}</b></span><input class="input num" type="number" min="0" data-ou="${i}" value="${int(o.uds)}" style="width:80px"><button class="icon-btn" data-ox="${i}">✕</button></div>`).join('') : '<p class="empty sm">Sin referencias obsoletas.</p>'; };
+    paintObs();
+    $('#rf-obs', m).addEventListener('input', e => { const i = e.target.dataset.ou; if (i !== undefined) obs[+i].uds = int(e.target.value); });
+    $('#rf-obs', m).addEventListener('click', e => { const i = e.target.dataset.ox; if (i !== undefined) { obs.splice(+i, 1); paintObs(); } });
+    $('#rf-oadd', m).onclick = () => { const r = ($('#rf-on', m).value || '').trim().toUpperCase().replace(/\s+/g, ' '), u = int($('#rf-ou', m).value); if (!r || !u) return toast('Escribe la referencia y las unidades.', 'warn'); const e = obs.find(o => o.ref === r); if (e) e.uds = u; else obs.push({ ref: r, uds: u }); $('#rf-on', m).value = ''; $('#rf-ou', m).value = ''; paintObs(); };
+    $('#rf-save', m).onclick = async () => {
+        if (!canWrite()) return;
+        const upd = { refsSel: $$('#rf-m input:checked', m).map(i => i.value), accSel: $$('#rf-a input:checked', m).map(i => i.value), obsoletas: obs.filter(o => int(o.uds) > 0), refsBy: State.session.nombre || '', updatedAt: Date.now() };
+        Object.assign(st, upd); const r = await Data.set(COL.stores, st.id, upd, true);
+        closeModal(m); toast(r.synced ? 'Referencias de la tienda actualizadas ✔' : 'Guardado; se sincroniza al volver la señal', r.synced ? 'ok' : 'info');
+        if (State.tab && Modules[State.tab] && Modules[State.tab].onData) Modules[State.tab].onData();
+    };
+}
 const storeMetaMes = st => int(st && st.metaMes) || sum(INFINIX_MODELS.map(m => int(st && st.metas && st.metas[m.key])));
 // Inserta o reemplaza en el estado sin duplicar (el listener en tiempo real puede haber llegado antes)
 const upsertState = (key, doc) => { State[key] = State[key].filter(x => x.id !== doc.id).concat(doc); };
@@ -596,6 +684,7 @@ async function boot() {
     Data.watch(COL.zones, docs => applyCollections({ zones: docs }));
     Data.watch(COL.staff, docs => applyCollections({ staff: docs }));
     Data.flush();
+    startLive();
     if (State.session && typeof ZoneData !== 'undefined') { const zs = State.session.type === 'store' ? [(currentStore() || {}).zona] : scopedZones(); ZoneData.loadMany(zs.filter(Boolean), todayStr().slice(0, 7)).catch(() => { }); if (State.session.type === 'staff' && typeof Evals !== 'undefined') Evals.load(zs.filter(Boolean), todayStr().slice(0, 7)).catch(() => { }); }
     // Primera vez con la base vacía: se cargan los datos de demostración (se borran desde Gestión › Configuración)
     if (DEMO_AUTOLOAD && !State.demo && typeof Demo !== 'undefined' && (st.fromServer || !Data.hasCloud() || Data.denied())) {
@@ -992,6 +1081,7 @@ function logout() {
     State.session = null; State.tab = null; try { localStorage.removeItem('opscore_session'); } catch (e) { /* sin almacenamiento */ }
     $('#modal-root').innerHTML = ''; document.body.classList.remove('no-scroll');
     $('#app').hidden = true; $('#login-screen').hidden = false; renderLogin();
+    const bn = $('#bnav'); if (bn) bn.hidden = true; document.body.classList.remove('has-bnav');
 }
 
 // ---------- Shell y navegación por rol ---------------------------------------
@@ -1000,11 +1090,68 @@ function enterApp() {
     loadChainView();
     renderHeader();
     const mods = ROLES[State.session.rol].modules;
-    $('#tabs').innerHTML = mods.map(m => `<button class="tab" data-tab="${m}">${MODULE_LABELS[m]}</button>`).join('');
+    const cn = $('#conn'); if (cn) { cn.onclick = openCloudStatus; cn.setAttribute('role', 'button'); cn.tabIndex = 0; }
+    const navMods = mods.filter(m => !(NAV_HIDDEN.includes(m) && mods.includes('reportes')));
+    $('#tabs').innerHTML = navMods.map(m => `<button class="tab" data-tab="${m}">${NAV_ICON[m] ? `<i class="tab-ic">${NAV_ICON[m]}</i> ` : ''}${MODULE_LABELS[m]}</button>`).join('');
     $$('#tabs .tab').forEach(b => b.onclick = () => navigate(b.dataset.tab));
+    paintBottomNav(navMods);
     navigate(mods.includes(State.tab) ? State.tab : mods[0]);
+    startLive.key = ''; startLive();
     const st = currentStore();
     if (st && !st.isConfigured) openStoreSettings(st.id, { onboarding: true });
+}
+
+// ---------- Estado de la nube y reparación ------------------------------------------
+// Toca el punto de conexión (arriba) para ver si todo está en la nube y, si la app se queda pensando, repararla
+// sin borrar las contraseñas ni el historial de Chrome.
+function openCloudStatus() {
+    const on = Data.online(), pend = Data.pending(), Z = Object.values(State.zoneSnaps || {}).filter(z => z && z.zona);
+    const hora = t => t ? new Date(t).toLocaleString('es-CO', { day: '2-digit', month: 'short', hour: 'numeric', minute: '2-digit' }) : '—';
+    const m = openModal(`<h3 class="modal-title">☁️ Estado de la nube</h3>
+        <div class="cs-row"><span class="conn ${on ? 'on' : 'off'}"></span><b>${!Data.hasCloud() ? 'Sin Firebase (modo local)' : on ? 'Conectado a la nube' : 'Sin conexión: se trabaja con lo guardado en el equipo'}</b></div>
+        <p class="mute">${pend ? `⏳ ${pend} registro(s) esperando subir a la nube.` : '✅ No hay nada pendiente por subir desde este equipo.'} ${Data.persisted() ? 'Respaldo sin señal activo.' : ''}</p>
+        ${Z.length ? `<h4 class="sec">Data plana que estás viendo</h4><div class="tbl-scroll"><table class="tbl compact"><thead><tr><th class="l">Zona</th><th>Corte</th><th class="l">Cargada por</th><th>Cuándo</th></tr></thead><tbody>${Z.map(z => `<tr><td class="l">${esc(z.zona)}</td><td>${esc((z.corte || '').slice(5))}</td><td class="l">${esc(z.seed ? 'Precargada en la app' : z.uploadedBy || '—')}</td><td>${z.seed ? '—' : esc(hora(z.updatedAt))}</td></tr>`).join('')}</tbody></table></div>` : ''}
+        <h4 class="sec">¿La app se queda pensando o no muestra lo último?</h4>
+        <p class="hint">Primero toca <b>Actualizar datos</b>. Si sigue igual, <b>Reparar la app</b> borra solo las copias de la app en este teléfono y la vuelve a bajar de la nube. <b>No</b> borra contraseñas de Chrome ni tu sesión. No hace falta borrar la caché de Chrome.</p>
+        <div class="actions"><button class="btn btn-primary" data-cs="sync">🔄 Actualizar datos</button><button class="btn btn-ghost" data-cs="fix">🛠️ Reparar la app</button></div>`);
+    $('[data-cs="sync"]', m).onclick = async e => {
+        busy(e.target, true);
+        try {
+            await Data.flush();
+            const zs = (State.session.type === 'store' ? [(currentStore() || {}).zona] : scopedZones()).filter(Boolean);
+            const r = await Data.fetch(COL.stores); if (r.fromServer) applyCollections({ stores: r.docs });
+            if (typeof ZoneData !== 'undefined') await ZoneData.loadMany(zs, todayStr().slice(0, 7));
+            closeModal(m); toast('Datos actualizados desde la nube ✔', 'ok'); if (State.tab) navigate(State.tab);
+        } catch (err) { toast('No se pudo actualizar: ' + (err.message || err), 'error'); busy(e.target, false); }
+    };
+    $('[data-cs="fix"]', m).onclick = async e => { busy(e.target, true); await repairApp(); };
+}
+async function repairApp() {
+    try { await Data.flush(); } catch (e) { }
+    try { Object.keys(localStorage).filter(k => k.startsWith('opscore_c_')).forEach(k => localStorage.removeItem(k)); } catch (e) { }
+    try { if (window.caches) { const ks = await caches.keys(); await Promise.all(ks.filter(k => k.startsWith('infinix-opscore')).map(k => caches.delete(k))); } } catch (e) { }
+    try { if (navigator.serviceWorker) { const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r => r.unregister())); } } catch (e) { }
+    try { if (typeof firebase !== 'undefined' && firebase.apps.length) { const db = firebase.firestore(); await db.terminate(); await db.clearPersistence(); } } catch (e) { console.warn('reparar', e); }
+    location.reload();
+}
+// Errores internos del respaldo de Firebase (lo que antes obligaba a borrar la caché de Chrome): se ofrece reparar
+window.addEventListener('unhandledrejection', e => { const m = String((e.reason && (e.reason.message || e.reason)) || ''); if (/INTERNAL ASSERTION|IndexedDB|Failed to obtain exclusive access|persistence layer/i.test(m) && !window.__fixOffered) { window.__fixOffered = true; toast('La app tuvo un problema con su copia local. Toca el punto de conexión (arriba) › Reparar la app.', 'warn', 9000); } });
+
+// Data plana en vivo: si cualquiera de los líderes de la zona (o el coordinador) sube data, a todos les llega sola
+function startLive() {
+    if (!State.session || typeof ZoneData === 'undefined' || !Data.hasCloud()) return;
+    const zs = (State.session.type === 'store' ? [(currentStore() || {}).zona] : scopedZones()).filter(Boolean);
+    const key = zs.join('|'); if (startLive.key === key) return; startLive.key = key;
+    ZoneData.live(zs, todayStr().slice(0, 7), ch => {
+        const nuevos = ch.filter(c => c.isNew);
+        if (nuevos.length && State.session && State.session.type === 'staff') {
+            const d = nuevos[0].doc, h = new Date(d.updatedAt || Date.now()).toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit' });
+            toast(`🔄 Data plana nueva de ${nuevos.map(c => c.doc.zona).join(', ')} · cargada por ${d.uploadedBy || '—'} a las ${h}`, 'info', 6500);
+        }
+        const mod = Modules[State.tab];
+        if (mod && mod.onZoneData) mod.onZoneData();
+        else if (mod && mod.onData && ['central', 'ventas'].includes(State.tab)) mod.onData();
+    });
 }
 
 function renderHeader() {
@@ -1081,10 +1228,37 @@ async function notifyReminder(r) {
 // Con la app abierta se revisa cada minuto (para que a las 8 p.m. salga el aviso del cierre)
 setInterval(() => { if (State.session && !document.hidden) paintReminder(); }, 60000);
 
+// ---------- Menú del celular: barra fija abajo con lo más usado + "Más" con el resto ----------------
+function paintBottomNav(navMods) {
+    let bn = $('#bnav'); if (!bn) { bn = document.createElement('nav'); bn.id = 'bnav'; bn.setAttribute('aria-label', 'Menú'); document.body.appendChild(bn); }
+    const rol = State.session.rol, prim = (NAV_PRIMARY[rol] || navMods.slice(0, 4)).filter(m => navMods.includes(m)).slice(0, 4), rest = navMods.filter(m => !prim.includes(m));
+    const btn = m => `<button class="bn-b" data-tab="${m}"><i>${NAV_ICON[m] || '•'}</i><span>${esc(NAV_SHORT[m] || MODULE_LABELS[m])}</span></button>`;
+    bn.innerHTML = prim.map(btn).join('') + (rest.length ? `<button class="bn-b" data-more><i>☰</i><span>Más</span></button>` : '');
+    bn.hidden = false; document.body.classList.add('has-bnav');
+    $$('[data-tab]', bn).forEach(b => b.onclick = () => navigate(b.dataset.tab));
+    const more = $('[data-more]', bn);
+    if (more) more.onclick = () => {
+        const m = openModal(`<h3 class="modal-title">Menú</h3><div class="more-grid">${navMods.map(k => `<button class="more-it ${navKeyOf(State.tab) === k ? 'on' : ''}" data-go="${k}"><i>${NAV_ICON[k] || '•'}</i><b>${esc(MODULE_LABELS[k])}</b><small>${esc(NAV_DESC[k] || '')}</small></button>`).join('')}</div>`, { sheet: true });
+        $$('[data-go]', m).forEach(b => b.onclick = () => { closeModal(m); navigate(b.dataset.go); });
+    };
+}
+const navKeyOf = tab => (State.session && ROLES[State.session.rol].modules.includes('reportes') && NAV_PARENT[tab]) || tab;
+// Abrir un módulo directo en una de sus pestañas (lo usa el centro de Reportes)
+function goTo(tab, sub) { State.deep = { tab, sub }; navigate(tab); }
+const takeDeep = tab => { const d = State.deep; if (d && d.tab === tab) { State.deep = null; return d.sub; } return null; };
+// Botón flotante "↑ Menú": cuando se baja mucho en el celular, devuelve a las pestañas de la sección
+window.addEventListener('scroll', () => {
+    let f = $('#to-menu');
+    if (!f) { f = document.createElement('button'); f.id = 'to-menu'; f.className = 'to-menu'; f.innerHTML = '↑ Menú'; f.hidden = true; document.body.appendChild(f); f.onclick = () => { const nav = $$('#view .ztabs').find(n => n.offsetParent); if (nav) nav.scrollIntoView({ behavior: 'smooth', block: 'start' }); else window.scrollTo({ top: 0, behavior: 'smooth' }); }; }
+    f.hidden = window.scrollY < 700 || !State.session;
+}, { passive: true });
+
 function navigate(tab) {
     if (!State.session || !ROLES[State.session.rol].modules.includes(tab)) return;   // RBAC
     State.tab = tab;
-    $$('#tabs .tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    const nk = navKeyOf(tab);
+    $$('#tabs .tab').forEach(b => b.classList.toggle('active', b.dataset.tab === nk));
+    $$('#bnav .bn-b').forEach(b => b.classList.toggle('active', b.dataset.tab === nk || (b.dataset.more !== undefined && !$(`#bnav [data-tab="${nk}"]`))));
     // Contenedor nuevo en cada cambio de pestaña: así no quedan listeners huérfanos del módulo anterior
     const old = $('#view'), view = old.cloneNode(false); old.replaceWith(view);
     Charts.destroyAll('view');
@@ -1290,8 +1464,14 @@ const Exporter = {
     // (cortando entre secciones o entre filas de tabla) para que al llegar al teléfono se lea sin hacer zoom.
     WA_MAX: 4096, HI_MAX: 7680, RATIO: 1.6, SPLIT_AT: 2.05,
     iOS() { return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); },
+    // Tope de memoria: un lienzo más grande de lo que el teléfono aguanta sale en BLANCO o el archivo queda dañado.
+    // iPhone y teléfonos de 4 GB o menos: 16 millones de píxeles; los demás, 24 millones; ningún lado pasa de 8192 px.
+    limits() {
+        const low = this.iOS() || (navigator.deviceMemory && navigator.deviceMemory <= 4);
+        return { area: low ? 16e6 : 24e6, dim: 8190 };
+    },
     scaleFor(w, h, target) {
-        const maxArea = this.iOS() ? 16.5e6 : 110e6, maxDim = this.iOS() ? 8190 : 16000;
+        const L = this.limits(), maxArea = L.area, maxDim = L.dim;
         let sc = Math.max(1.5, (target || this.WA_MAX) / Math.max(1, w, h));
         sc = Math.min(sc, maxDim / Math.max(w, h), Math.sqrt(maxArea / Math.max(1, w * h)));
         return Math.max(1, Math.round(sc * 100) / 100);
@@ -1300,9 +1480,35 @@ const Exporter = {
         await Promise.all($$('img', el).map(img => img.complete ? null : new Promise(r => { img.onload = img.onerror = r; })));
         await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
     },
-    shot(el, target) {
+    shot1(el, target) {
         return html2canvas(el, { scale: this.scaleFor(el.offsetWidth, el.offsetHeight, target), backgroundColor: '#FFFFFF', useCORS: true, logging: false,
             width: el.offsetWidth, height: el.offsetHeight, windowWidth: el.offsetWidth + 80, scrollX: 0, scrollY: 0 });
+    },
+    // ¿Salió dibujada? (un lienzo que el teléfono no pudo crear queda vacío o todo blanco)
+    blank(c) {
+        try {
+            if (!c || !c.width || !c.height) return true;
+            const t = document.createElement('canvas'); t.width = 48; t.height = 48; const g = t.getContext('2d'); g.drawImage(c, 0, 0, 48, 48);
+            const d = g.getImageData(0, 0, 48, 48).data; let dark = 0; for (let i = 0; i < d.length; i += 4) if (d[i] < 235 || d[i + 1] < 235 || d[i + 2] < 235) dark++;
+            return dark < 3;
+        } catch (e) { return false; }
+    },
+    // Si la imagen sale en blanco o falla por memoria, se repite a menor resolución (4096 → 2560 → 1600 px)
+    async shot(el, target) {
+        let t = target || this.WA_MAX, last;
+        for (let k = 0; k < 4; k++) {
+            try { const c = await this.shot1(el, t); if (!this.blank(c)) return c; last = new Error('imagen en blanco'); }
+            catch (e) { last = e; }
+            t = k === 0 && t > this.WA_MAX ? this.WA_MAX : Math.round(t * 0.62); if (t < 1200) break;
+        }
+        throw new Error('El teléfono no tuvo memoria para dibujar la imagen (' + (last && last.message || 'error') + '). Cierra otras apps e intenta de nuevo.');
+    },
+    // Lienzo → archivo. Si el PNG no se puede crear (memoria), se intenta JPEG; nunca se entrega un archivo vacío.
+    async toBlob(c, type = 'image/png', q) {
+        let b = await new Promise(r => { try { c.toBlob(r, type, q); } catch (e) { r(null); } });
+        if (!b || b.size < 200) b = await new Promise(r => { try { c.toBlob(r, 'image/jpeg', 0.92); } catch (e) { r(null); } });
+        if (!b || b.size < 200) throw new Error('No se pudo crear el archivo de la imagen');
+        return b;
     },
     // Parte un reporte largo en páginas: encabezado y pie se repiten; las tablas largas se cortan por filas
     paginate(el, stage) {
@@ -1425,16 +1631,21 @@ const ReportActions = {
     },
     // Se dibuja en la máxima calidad del equipo (hasta 8K): "Guardar imagen" entrega ese original, para enviarlo
     // por WhatsApp como Documento sin compresión; "Compartir" manda la copia de 4096 px, ideal para WhatsApp HD.
-    async make(cfg, pdf) {
-        const canvases = await Exporter.renderPages(cfg.build, pdf ? Exporter.WA_MAX : Exporter.HI_MAX);
+    // Compartir y vista previa: 4096 px (rápido; WhatsApp no conserva más). Guardar: el original en la máxima calidad que aguante el equipo.
+    async make(cfg, pdf, hi) {
+        const canvases = await Exporter.renderPages(cfg.build, pdf || !hi ? Exporter.WA_MAX : Exporter.HI_MAX);
         if (pdf) return { blob: await canvasToPdf(canvases[0]) };
-        const toB = c => new Promise(r => c.toBlob(r, 'image/png'));
         const full = [], blobs = [];
-        for (const c of canvases) { full.push(await toB(c)); const f = Exporter.fit(c, Exporter.WA_MAX); blobs.push(f === c ? full[full.length - 1] : await toB(f)); }
+        for (const c of canvases) {
+            full.push(await Exporter.toBlob(c));
+            const f = Exporter.fit(c, Exporter.WA_MAX), fb = f === c ? full[full.length - 1] : await Exporter.toBlob(f);
+            // Archivos muy pesados fallan al compartir en algunos teléfonos: la copia para WhatsApp va en JPEG de alta calidad
+            blobs.push(fb.size > 6e6 ? await Exporter.toBlob(f, 'image/jpeg', 0.93) : fb);
+        }
         const big = canvases[0] ? Math.max(canvases[0].width, canvases[0].height) : 0;
         return { blob: blobs[0], url: URL.createObjectURL(blobs[0]), blobs, full, big, urls: blobs.map(b => URL.createObjectURL(b)) };
     },
-    names(out, cfg) { const n = cfg.filename(), k = out.blobs ? out.blobs.length : 1; return k < 2 ? [n] : out.blobs.map((_, i) => n.replace(/\.png$/i, '') + `_parte${i + 1}de${k}.png`); },
+    names(out, cfg, list) { const L = list || out.blobs || [out.blob], ext = b => b && b.type === 'image/jpeg' ? '.jpg' : '.png', n = cfg.filename().replace(/\.png$/i, ''), k = L.length; return L.map((b, i) => n + (k < 2 ? '' : `_parte${i + 1}de${k}`) + ext(b)); },
     async run(act, cfg, btn) {
         const err = cfg.validate ? cfg.validate() : null;
         if (err) { toast(err, 'warn'); return; }
@@ -1446,7 +1657,7 @@ const ReportActions = {
         }
         try {
             if (act === 'pdf') { const out = await this.make(cfg, true); await this.sharePdf(out, cfg); return; }
-            const out = await this.make(cfg);
+            const out = await this.make(cfg, false, act === 'save');
             if (act === 'preview') this.preview(out, cfg);
             else if (act === 'share') await this.share(out, cfg);
             else await this.save(out, cfg);
@@ -1464,19 +1675,32 @@ const ReportActions = {
     },
     async share(out, cfg) {
         const blobs = out.blobs || [out.blob], names = this.names(out, cfg);
-        const files = blobs.map((b, i) => new File([b], names[i], { type: 'image/png' }));
+        const files = blobs.map((b, i) => new File([b], names[i], { type: b.type || 'image/png' }));
         const saving = this.persist(cfg);                        // Regla de oro: compartir = guardar en Firestore
         const dlAll = async () => { let ok = false; for (let i = 0; i < blobs.length; i++) { ok = await downloadBlob(blobs[i], names[i]) || ok; if (blobs.length > 1) await new Promise(r => setTimeout(r, 400)); } return ok; };
         let via = '';
         if (navigator.canShare && navigator.canShare({ files })) {
             try { await navigator.share({ files, title: cfg.title || 'Central de Operaciones' }); via = 'whatsapp'; }
-            catch (e) { if (e.name !== 'AbortError' && await dlAll()) { via = 'descarga'; toast('No se pudo abrir el menú de compartir: la imagen se descargó.', 'warn'); } }
+            catch (e) {
+                // Si la imagen tardó en dibujarse, el teléfono ya no deja abrir el menú de compartir sin un toque nuevo
+                if (e.name === 'NotAllowedError') via = await this.tapToShare(files, cfg, dlAll);
+                else if (e.name !== 'AbortError' && await dlAll()) { via = 'descarga'; toast('No se pudo abrir el menú de compartir: la imagen se descargó.', 'warn'); }
+            }
         } else if (await dlAll()) {
             via = 'descarga';
             toast(`Este navegador no comparte archivos directamente: ${blobs.length > 1 ? 'las imágenes se descargaron' : 'la imagen se descargó'} para enviarla por WhatsApp Web.`, 'info', 5200);
         }
         await saving;
         if (via && cfg.onShared) { try { await cfg.onShared(via); } catch (e) { console.warn(e); } }
+    },
+    tapToShare(files, cfg, dlAll) {
+        return new Promise(res => {
+            const m = openModal(`<h3 class="modal-title">✅ Imagen lista</h3><p class="mute">Toca el botón para abrir WhatsApp y enviarla.</p>
+                <div class="actions"><button class="btn btn-wa" data-t="share">📲 Enviar por WhatsApp</button><button class="btn btn-ghost" data-t="dl">💾 Descargar</button><button class="btn btn-ghost" data-t="no">Cancelar</button></div>`, { locked: true });
+            $('[data-t="share"]', m).onclick = async () => { try { await navigator.share({ files, title: cfg.title || 'Central de Operaciones' }); closeModal(m); res('whatsapp'); } catch (e) { if (e.name !== 'AbortError') { closeModal(m); res(await dlAll() ? 'descarga' : ''); } } };
+            $('[data-t="dl"]', m).onclick = async () => { closeModal(m); res(await dlAll() ? 'descarga' : ''); };
+            $('[data-t="no"]', m).onclick = () => { closeModal(m); res(''); };
+        });
     },
     async sharePdf(out, cfg) {
         const name = cfg.filename().replace(/\.png$/i, '') + '.pdf';
@@ -1490,7 +1714,7 @@ const ReportActions = {
     },
     async save(out, cfg) {
         const saving = this.persist(cfg);                        // Regla de oro: guardar imagen = guardar en Firestore
-        const blobs = out.full || out.blobs || [out.blob], names = this.names(out, cfg);
+        const blobs = out.full || out.blobs || [out.blob], names = this.names(out, cfg, blobs);
         for (let i = 0; i < blobs.length; i++) { await downloadBlob(blobs[i], names[i]); if (blobs.length > 1) await new Promise(r => setTimeout(r, 400)); }
         await saving;
     },
