@@ -187,7 +187,7 @@ async function onRealFile(chain, file, after) {
 
 // ---------- Explorador de share real y de Infinix vs. competencia (Análisis de zona) ----------
 // Filtros en cascada (regional → zona → cadena → tienda) y nivel de agrupación (tienda, cadena, zona, regional).
-const RS = { regional: '', zona: '', cadena: '', tienda: '', nivel: 'tienda', cache: null };
+const RS = { regional: '', zona: '', cadena: '', tienda: '', nivel: 'tienda', cache: null, src: 'real', wk: '' };
 const rsPc = v => v == null ? '—' : Math.round(v * 100) + '%';
 function rsScope(L) {
     return L.filter(x => (!RS.regional || zoneRegional(x.st.zona) === RS.regional) && (!RS.zona || x.st.zona === RS.zona) && (!RS.cadena || chainGroup(x.st).key === RS.cadena) && (!RS.tienda || x.st.id === RS.tienda));
@@ -211,9 +211,10 @@ function rsBind(box, again) {
     $$('[data-rsn]', box).forEach(b => b.onclick = () => { RS.nivel = b.dataset.rsn; again(); });
 }
 // Suma marcas de un grupo de tiendas (data real o, si no hay, cierres)
+// RS.src: 'real' = solo data real de las cadenas (Share real) · 'cierres' = solo lo que reportan los asesores (Infinix vs. competencia)
 function rsAgg(L) {
     const m = {}; let real = 0;
-    L.forEach(x => { const S = x.real || x.rep; if (!S) return; if (x.real) real++; S.rank.forEach(([b, v]) => { m[b] = (m[b] || 0) + v; }); });
+    L.forEach(x => { const S = RS.src === 'cierres' ? x.rep : RS.src === 'real' ? x.real : (x.real || x.rep); if (!S) return; real++; S.rank.forEach(([b, v]) => { m[b] = (m[b] || 0) + v; }); });
     return { ...RealData.shareOf(m), marcas: m, real, n: L.length };
 }
 function rsGroups(L, nivel) {
@@ -227,42 +228,55 @@ const brandBars = (rank, tot, n = 8) => `<div class="rs-bars">${rank.slice(0, n)
 
 async function paintRealShare(box, stores, label) {
     if (!box) return;
-    box.innerHTML = '<p class="hint">Cruzando la data real con los reportes de los asesores…</p>';
+    box.innerHTML = '<p class="hint">Leyendo la data real de las cadenas…</p>';
     const month = todayStr().slice(0, 7), L = await realVsReporte(stores, month);
     if (!box.isConnected) return;
     if (!RS.cache || RS.cache.label !== label) Object.assign(RS, { regional: '', zona: '', cadena: '', tienda: '' });
     RS.cache = { L, label, month };
     const paint = () => {
-        const Ls = rsScope(L), A = rsAgg(Ls), alertas = Ls.filter(x => x.alerta), G = rsGroups(Ls, RS.nivel), lider = A.rank[0];
-        const lbl = rsLabel(label);
+        RS.src = 'real';
+        const Ls = rsScope(L), A = rsAgg(Ls), alertas = Ls.filter(x => x.alerta && x.real), G = rsGroups(Ls, RS.nivel), lider = A.rank[0], lbl = rsLabel(label);
+        const V = refsOf(Ls), infRank = V.all.findIndex(r => r.marca === 'INFINIX'), atk = ataques(V, RS.tienda ? storeById(RS.tienda) : null);
+        const porCadena = rsGroups(Ls, 'cadena').map(g => ({ g, V: refsOf(g.L) })).filter(x => x.V.all.length);
+        if (!A.tot) { box.innerHTML = rsFiltersHTML(L) + `<div class="card empty" style="margin-top:10px">${RealData.docsFor(month).length ? 'No hay data real para este filtro.' : 'Aún no hay data real este mes. La carga el coordinador en <b>Cargar datos › Data real por cadena</b>.'} Lo que reportan los asesores en sus cierres está en <b>⚔️ Infinix vs competencia</b>.</div>`; rsBind(box, paint); return; }
         box.innerHTML = `
         ${rsFiltersHTML(L)}
         <div class="seg sm" style="margin:8px 0">${[['tienda', 'Por tienda'], ['cadena', 'Por cadena'], ['zona', 'Por zona'], ['regional', 'Por regional']].map(([k, l]) => `<button class="seg-btn ${RS.nivel === k ? 'active' : ''}" data-rsn="${k}">${l}</button>`).join('')}</div>
-        <div class="zg-kpis" style="grid-template-columns:repeat(5,1fr)">
-            <div class="hl"><span>Share Infinix · ${esc(lbl)}</span><b>${rsPc(A.share)}</b><em>${A.inf} de ${A.tot} uds</em></div>
+        <div class="zg-kpis">
+            <div class="hl"><span>Share real Infinix · ${esc(lbl)}</span><b>${rsPc(A.share)}</b><em>${A.inf} de ${A.tot} uds</em></div>
             <div><span>Puesto de Infinix</span><b>${A.pos ? '#' + A.pos : '—'}</b><em>de ${A.rank.length} marcas</em></div>
             <div><span>Marca #1</span><b style="font-size:20px">${lider ? esc(lider[0]) : '—'}</b><em>${lider ? `${lider[1]} uds · ${rsPc(lider[1] / A.tot)}` : ''}</em></div>
-            <div><span>PDV con data real</span><b>${A.real}<small>/${Ls.length}</small></b><em>${RealData.docsFor(month).length} cadenas cargadas</em></div>
-            <div><span>Alertas de reporte</span><b class="${alertas.length ? 'r' : 'g'}">${alertas.length}</b><em>reporte ≠ venta real</em></div>
+            <div><span>Ref. #1 del mercado</span><b style="font-size:17px">${V.all[0] ? esc(V.all[0].ref) : '—'}</b><em>${V.all[0] ? `${esc(V.all[0].marca)} · ${V.all[0].q} uds` : 'el archivo no trae modelo'}</em></div>
+            <div><span>Mejor Infinix</span><b style="font-size:17px">${infRank >= 0 ? esc(V.all[infRank].ref) : '—'}</b><em>${infRank >= 0 ? `puesto #${infRank + 1} · ${V.all[infRank].q} uds` : ''}</em></div>
+            <div><span>PDV con data real</span><b>${A.real}<small>/${Ls.length}</small></b><em>${RealData.docsFor(month).length} cadena(s) cargada(s)</em></div>
         </div>
-        <details class="card acc" open><summary><span>🏁 Ranking de marcas · ${esc(lbl)}</span></summary>${A.tot ? brandBars(A.rank, A.tot, 11) : '<p class="mute">Sin data para este filtro.</p>'}</details>
-        <details class="card acc" open><summary><span>📊 Share ${RS.nivel === 'tienda' ? 'por tienda' : RS.nivel === 'cadena' ? 'por cadena' : RS.nivel === 'zona' ? 'por zona' : 'por regional'} (${G.length})</span></summary>
-            <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>${RS.nivel === 'tienda' ? 'PDV' : RS.nivel === 'cadena' ? 'Cadena' : RS.nivel === 'zona' ? 'Zona' : 'Regional'}</th>${RS.nivel !== 'tienda' ? '<th>PDV</th>' : '<th>Fuente</th>'}<th>Infinix</th><th>Total</th><th>Share</th><th>Puesto</th><th>Marca #1</th><th>Top marcas</th></tr></thead><tbody>
-            ${G.map(g => `<tr><td class="l">${RS.nivel === 'tienda' ? storeLogo(g.st, 'xs') + ' ' : RS.nivel === 'cadena' ? chainGroupLogo(chainGroup(g.st).key, 'xs') + ' ' : ''}<b>${esc(g.nombre)}</b></td><td>${RS.nivel !== 'tienda' ? g.L.length : g.L[0].fuente === 'real' ? '<i class="pill ok">Real</i>' : '<i class="pill">Cierres</i>'}</td><td><b>${g.A.inf}</b></td><td>${g.A.tot}</td><td><b>${rsPc(g.A.share)}</b></td><td>${g.A.pos ? '#' + g.A.pos : '—'}</td><td>${g.A.rank[0] ? esc(g.A.rank[0][0]) : '—'}</td><td class="l"><small>${g.A.rank.slice(0, 4).map(([b, v]) => `${b === 'INFINIX' ? '<b>' + b + '</b>' : b} ${v}`).join(' · ')}</small></td></tr>`).join('') || '<tr><td colspan="8">Sin data para este filtro.</td></tr>'}</tbody></table></div>
+        <details class="card acc" open><summary><span>🏁 Ranking de marcas · ${esc(lbl)}</span></summary>${brandBars(A.rank, A.tot, 11)}</details>
+        <details class="card acc" open><summary><span>📊 Share real ${RS.nivel === 'tienda' ? 'por tienda' : RS.nivel === 'cadena' ? 'por cadena' : RS.nivel === 'zona' ? 'por zona' : 'por regional'} (${G.length})</span></summary>
+            <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>${RS.nivel === 'tienda' ? 'PDV' : RS.nivel === 'cadena' ? 'Cadena' : RS.nivel === 'zona' ? 'Zona' : 'Regional'}</th>${RS.nivel !== 'tienda' ? '<th>PDV</th>' : ''}<th>Infinix</th><th>Total</th><th>Share</th><th>Puesto</th><th>Marca #1</th><th>Ref. #1</th><th>Top marcas</th></tr></thead><tbody>
+            ${G.map(g => { const v = refsOf(g.L).all[0]; return `<tr><td class="l">${RS.nivel === 'tienda' ? storeLogo(g.st, 'xs') + ' ' : RS.nivel === 'cadena' ? chainGroupLogo(chainGroup(g.st).key, 'xs') + ' ' : ''}<b>${esc(g.nombre)}</b></td>${RS.nivel !== 'tienda' ? `<td>${g.A.real}</td>` : ''}<td><b>${g.A.inf}</b></td><td>${g.A.tot}</td><td><b>${rsPc(g.A.share)}</b></td><td>${g.A.pos ? '#' + g.A.pos : '—'}</td><td>${g.A.rank[0] ? esc(g.A.rank[0][0]) : '—'}</td><td class="l"><small>${v ? `${esc(v.ref)} (${esc(v.marca)}) ${v.q}` : '—'}</small></td><td class="l"><small>${g.A.rank.slice(0, 4).map(([b, q]) => `${esc(b)} ${rsPc(q / g.A.tot)}`).join(' · ')}</small></td></tr>`; }).join('')}</tbody></table></div>
             <div class="actions" id="rs-act" style="margin-top:10px"><button class="btn btn-ghost" data-act="preview">👁️ Vista previa</button><button class="btn btn-wa" data-act="share">📲 WhatsApp</button><button class="btn btn-primary" data-act="save">⬇️ Descargar</button></div></details>
-        <details class="card acc" ${alertas.length ? 'open' : ''}><summary><span>⚠️ Reporte del asesor vs. venta real (${alertas.length} alertas)</span></summary>
+        ${V.all.length ? `
+        <details class="card acc" open><summary><span>🏆 Referencias más vendidas · ${esc(lbl)}</span></summary>
+            <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>#</th><th>Referencia</th><th>Marca</th><th>Uds</th><th>% del total</th><th>PDV</th></tr></thead><tbody>
+            ${V.all.slice(0, 20).map((r, i) => `<tr class="${r.marca === 'INFINIX' ? 'vs-inf' : ''}"><td>${i + 1}</td><td class="l"><b>${esc(r.ref)}</b></td><td>${esc(r.marca)}</td><td><b>${r.q}</b></td><td>${rsPc(r.q / V.tot)}</td><td>${r.pdv}</td></tr>`).join('')}</tbody></table></div></details>
+        <details class="card acc"><summary><span>🏷️ Lo más vendido de cada cadena (${porCadena.length})</span></summary>
+            <div class="vs-brands">${porCadena.map(({ g, V: W }) => { const i1 = W.all.find(r => r.marca === 'INFINIX'); return `<div><b>${chainGroupLogo(chainGroup(g.st).key, 'xs')} ${esc(g.nombre)} <small>${W.tot} uds</small></b>${W.all.slice(0, 5).map((r, i) => `<span class="${r.marca === 'INFINIX' ? 'inf' : ''}">${i + 1}. ${esc(r.ref)} <small>${esc(r.marca)}</small> <em>${r.q}</em></span>`).join('')}${i1 && W.all.indexOf(i1) >= 5 ? `<span class="inf">${W.all.indexOf(i1) + 1}. ${esc(i1.ref)} <small>INFINIX</small> <em>${i1.q}</em></span>` : ''}</div>`; }).join('')}</div></details>
+        <details class="card acc"><summary><span>🏬 Lo más vendido en cada tienda (${V.porTienda.length})</span></summary>
+            <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>PDV</th><th>Ref. #1 de la tienda</th><th>Ref. #1 competencia</th><th>Uds</th><th>Ref. #1 Infinix</th><th>Uds</th></tr></thead><tbody>
+            ${V.porTienda.sort((a, b) => b.tot - a.tot).map(t => { const top = t.comp.concat(t.inf).sort((a, b) => b.q - a.q)[0]; return `<tr><td class="l">${storeLogo(t.st, 'xs')} <b>${esc(t.st.tienda)}</b></td><td class="l"><small>${top ? `${esc(top.ref)} (${esc(top.marca)}) ${top.q}` : '—'}</small></td><td class="l">${t.comp[0] ? `<b>${esc(t.comp[0].ref)}</b> <small>${esc(t.comp[0].marca)}</small>` : '—'}</td><td>${t.comp[0] ? t.comp[0].q : '—'}</td><td class="l">${t.inf[0] ? `<b>${esc(t.inf[0].ref)}</b>` : '<small class="r">sin venta</small>'}</td><td>${t.inf[0] ? t.inf[0].q : '—'}</td></tr>`; }).join('')}</tbody></table></div></details>
+        <details class="card acc"><summary><span>🎯 Focos de ataque para tus visitas</span></summary>
+            <ol class="vs-atk">${atk.map(a => `<li><b>${esc(a.ref)}</b> <small>${esc(a.marca)} · ${a.q} uds</small><br>${esc(a.txt)}</li>`).join('')}</ol>
+            <p class="hint">Estos focos salen solos en el plan de trabajo de cada tienda.</p></details>` : `<p class="hint">El archivo de data real cargado no trae la columna de modelo o referencia: cuando la traiga, aquí verás las referencias más vendidas por cadena y por tienda.</p>`}
+        <details class="card acc" ${alertas.length ? 'open' : ''}><summary><span>⚠️ Inconsistencias: reporte del asesor vs. venta real (${alertas.length})</span></summary>
             ${alertas.length ? `<div class="ds-list">${alertas.map(x => `<div class="ds-row"><span>${storeLogo(x.st, 'xs')} <b>${esc(x.st.tienda)}</b> <small class="mute">${x.cierres} cierres</small></span><em class="rv-dias r">${esc(x.alerta)}</em></div>`).join('')}</div>` : '<p class="mute">✅ Sin inconsistencias para este filtro.</p>'}
-            <h4 class="sec">Tiendas con alerta por inconsistencia en el reporte de venta: detalle</h4>
-            <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>PDV</th><th>Infinix real</th><th>Total real</th><th>Share real</th><th>Infinix reportado</th><th>Total reportado</th><th>Share reportado</th><th>Estado</th></tr></thead><tbody>
-            ${Ls.filter(x => x.real).map(x => `<tr class="${x.alerta ? 'alert-row' : ''}"><td class="l">${storeLogo(x.st, 'xs')} <b>${esc(x.st.tienda)}</b></td><td><b>${x.real.inf}</b></td><td>${x.real.tot}</td><td>${rsPc(x.real.share)}</td><td>${x.rep ? x.rep.inf : '—'}</td><td>${x.rep ? x.rep.tot : '—'}</td><td>${x.rep ? rsPc(x.rep.share) : '—'}</td><td>${x.alerta ? `<small class="r">${esc(x.alerta)}</small>` : '<i class="pill ok">Coincide</i>'}</td></tr>`).join('') || '<tr><td colspan="8">Aún no hay data real para este filtro.</td></tr>'}</tbody></table></div>
             <p class="hint">Alerta: Infinix reportado distinto en 3 uds y 15% o más, share con 10 puntos de diferencia, venta de la tienda muy distinta, o tienda sin cierres en el periodo de la data real.</p></details>
-        <p class="hint">Share = unidades Infinix ÷ unidades de la tienda. La data real la carga el coordinador por cadena; donde no hay, se usa lo que reportan los asesores en el cierre diario. Solo la ven los líderes.</p>`;
+        <p class="hint">Share real = unidades Infinix ÷ unidades de la tienda según el sell-out de cada cadena (lo carga el coordinador). Solo la ven los líderes.</p>`;
         rsBind(box, paint);
         ReportActions.bind($('#rs-act', box), {
             title: 'Market share real · Central de Operaciones', noStore: true,
             validate: () => A.tot ? null : 'No hay data para este filtro.',
             filename: () => `Share_real_${slug(lbl)}_${month}.png`,
-            build: stage => buildShareCanvas(stage, { lbl, A, G, nivel: RS.nivel, alertas, month, autor: State.session })
+            build: stage => buildShareCanvas(stage, { lbl, A, G, nivel: RS.nivel, alertas, month, autor: State.session, V })
         });
     };
     paint();
@@ -274,7 +288,7 @@ function buildShareCanvas(stage, d) {
     const el = document.createElement('div'); el.className = 'rp sp rs-rep';
     el.innerHTML = `<div class="rp-bar"></div>
     <header class="rp-head"><img class="rp-logo" src="${LOGO_INFINIX}" alt="Infinix">
-        <div class="rp-head-mid"><div class="rp-kicker">MARKET SHARE REAL · DATA DE LAS CADENAS</div><div class="rp-title">${esc(d.lbl.toUpperCase())}</div><div class="rp-sub">${esc(mesLargo(d.month))}${per ? ' · venta del ' + esc(per) : ''}</div></div>
+        <div class="rp-head-mid"><div class="rp-kicker">MARKET SHARE REAL · SELL-OUT DE LAS CADENAS</div><div class="rp-title">${esc(d.lbl.toUpperCase())}</div><div class="rp-sub">${esc(mesLargo(d.month))}${per ? ' · venta del ' + esc(per) : ''}</div></div>
         <div class="pl-who"><b>${esc((d.autor || {}).nombre || '')}</b><small>${ROLES[(d.autor || {}).rol] ? ROLES[d.autor.rol].label : ''}</small></div></header>
     <div class="sp-band">
         <div class="hero"><span>SHARE INFINIX</span><b>${rsPc(d.A.share)}</b><em>${d.A.inf} de ${d.A.tot} uds vendidas</em></div>
@@ -288,8 +302,9 @@ function buildShareCanvas(stage, d) {
     <div class="rp-sec">SHARE ${nivelTxt}</div>
     <table class="rp-tbl sp-tbl"><thead><tr><th class="l">#</th><th class="l">${nivelTxt.replace('POR ', '')}</th><th>INFINIX</th><th>TOTAL</th><th class="c-tot">SHARE</th><th>PUESTO</th><th class="l">MARCA #1</th><th class="l">TOP MARCAS</th></tr></thead><tbody>
     ${d.G.map((g, i) => `<tr><td class="l">${i + 1}</td><td class="l"><div class="sp-pdv">${d.nivel === 'tienda' ? storeLogo(g.st, 'xs') : d.nivel === 'cadena' ? chainGroupLogo(chainGroup(g.st).key, 'xs') : ''}<b>${esc(g.nombre)}</b></div></td><td><b>${g.A.inf}</b></td><td>${g.A.tot}</td><td class="c-tot"><b>${rsPc(g.A.share)}</b></td><td>${g.A.pos ? '#' + g.A.pos : '—'}</td><td class="l">${g.A.rank[0] ? esc(g.A.rank[0][0]) : '—'}</td><td class="l small">${g.A.rank.slice(0, 4).map(([b, v]) => `${b === 'INFINIX' ? '<b>INFINIX</b>' : esc(b)} ${v}`).join(' · ')}</td></tr>`).join('')}</tbody></table>
+    ${d.V && d.V.all.length ? `<div class="rp-sec">REFERENCIAS MÁS VENDIDAS</div><table class="rp-tbl sp-tbl"><thead><tr><th class="l">#</th><th class="l">REFERENCIA</th><th class="l">MARCA</th><th>UDS</th><th class="c-tot">% TOTAL</th><th>PDV</th></tr></thead><tbody>${d.V.all.slice(0, 12).map((r, i) => `<tr class="${r.marca === 'INFINIX' ? 'vs-inf' : ''}"><td class="l">${i + 1}</td><td class="l"><b>${esc(r.ref)}</b></td><td class="l">${esc(r.marca)}</td><td><b>${r.q}</b></td><td class="c-tot">${rsPc(r.q / d.V.tot)}</td><td>${r.pdv}</td></tr>`).join('')}</tbody></table>` : ''}
     ${d.alertas.length ? `<div class="rp-sec">ALERTAS: EL REPORTE DEL ASESOR NO COINCIDE CON LA VENTA REAL</div><table class="rp-tbl sp-tbl"><tbody>${d.alertas.map(x => `<tr><td class="l"><div class="sp-pdv">${storeLogo(x.st, 'xs')}<b>${esc(x.st.tienda)}</b></div></td><td class="l r">${esc(x.alerta)}</td></tr>`).join('')}</tbody></table>` : ''}
-    <footer class="rp-foot"><span>Share = unidades Infinix ÷ unidades de la tienda según la data de la cadena (sell-out). Donde no hay data real se usa el reporte de los cierres diarios.</span><b>Infinix · Central de Operaciones</b></footer><div class="rp-bar"></div>`;
+    <footer class="rp-foot"><span>Share real = unidades Infinix ÷ unidades de la tienda según la data de la cadena (sell-out).</span><b>Infinix · Central de Operaciones</b></footer><div class="rp-bar"></div>`;
     stage.appendChild(el); return el;
 }
 
@@ -315,59 +330,84 @@ function ataques(V, st) {
         return { ...r, arma, txt: `${r.ref} (${r.marca}) vende ${r.q} uds en ${r.pdv} PDV: comparativo y role play de ${arma} contra ${r.ref}; argumentos de cámara, batería y carga rápida, y precio en piso.` };
     });
 }
+// ---------- Infinix vs. competencia: lo que reportan los asesores en sus cierres (por semana o mes) ----------
+// Cada cierre trae la venta del día de Infinix y de cada marca de la competencia. El cierre semanal cuenta en su semana.
+const closureWeek = c => 'W' + isoWeek(c.fecha);
+async function closureShare(stores, month) {
+    const keys = [...new Set(stores.map(s => `${s.id}_${month}`))];
+    let cl = [];
+    for (let i = 0; i < keys.length; i += 10) cl = cl.concat(await Data.list(COL.closures, [['storeMonth', 'in', keys.slice(i, i + 10)]]).catch(() => []));
+    return cl;
+}
+function closureL(stores, cl, wk) {
+    return stores.map(st => {
+        const mine = cl.filter(c => c.storeId === st.id && (!wk || closureWeek(c) === wk));
+        const rep = {}; mine.forEach(c => { rep.INFINIX = (rep.INFINIX || 0) + closureInfinix(c); Object.entries(c.competencia || {}).forEach(([b, v]) => { rep[b] = (rep[b] || 0) + int(v); }); });
+        return { st, rep: mine.length ? RealData.shareOf(rep) : null, cierres: mine.length };
+    });
+}
 async function paintVersus(box, stores, label) {
     if (!box) return;
-    box.innerHTML = '<p class="hint">Leyendo la data real…</p>';
-    const month = todayStr().slice(0, 7);
-    if (!RS.cache || RS.cache.month !== month || RS.cache.label !== label || RS.cache.L.length !== stores.length) { const L = await realVsReporte(stores, month); if (!RS.cache || RS.cache.label !== label) Object.assign(RS, { regional: '', zona: '', cadena: '', tienda: '' }); RS.cache = { L, label, month }; }
+    box.innerHTML = '<p class="hint">Sumando los cierres de los asesores…</p>';
+    const month = todayStr().slice(0, 7), cl = await closureShare(stores, month);
     if (!box.isConnected) return;
-    const L = RS.cache.L;
+    if (!RS.cache || RS.cache.label !== label) Object.assign(RS, { regional: '', zona: '', cadena: '', tienda: '' });
+    const weeks = [...new Set(cl.map(closureWeek))].sort((a, b) => int(a.slice(1)) - int(b.slice(1)));
+    if (RS.wk && !weeks.includes(RS.wk)) RS.wk = '';
+    const rangeOf = w => { const D = cl.filter(c => closureWeek(c) === w).map(c => c.semana ? [c.semana.desde, c.semana.hasta] : [c.fecha, c.fecha]).flat().sort(); return D.length ? `${int(D[0].slice(8))}–${int(D[D.length - 1].slice(8))}` : ''; };
     const paint = () => {
-        const Ls = rsScope(L), V = refsOf(Ls), lbl = rsLabel(label), atk = ataques(V, RS.tienda ? storeById(RS.tienda) : null);
-        if (!V.all.length) { box.innerHTML = rsFiltersHTML(L) + `<p class="mute" style="margin-top:10px">${RealData.docsFor(month).length ? 'La data real cargada para este filtro no trae la columna de <b>modelo o referencia</b>. Cuando el archivo de la cadena la traiga, aquí verás qué referencias vende cada marca.' : 'Aún no hay data real este mes. La carga el coordinador en <b>Cargar datos</b>.'}</p>`; rsBind(box, paint); return; }
-        const infRank = V.all.findIndex(r => r.marca === 'INFINIX');
-        const marcas = Object.entries(V.porMarca).sort((a, b) => sum(b[1].map(r => r.q)) - sum(a[1].map(r => r.q)));
+        RS.src = 'cierres';
+        const L = closureL(stores, cl, RS.wk), Ls = rsScope(L), A = rsAgg(Ls), G = rsGroups(Ls, RS.nivel), lider = A.rank[0], lbl = rsLabel(label);
+        const per = RS.wk ? `${RS.wk} (${rangeOf(RS.wk)} ${mesLargo(month).split(' ')[0].toLowerCase()})` : `Mes de ${mesLargo(month)}`;
+        // Evolución semana a semana del alcance filtrado
+        const evo = weeks.map(w => { const Lw = rsScope(closureL(stores, cl, w)), Aw = rsAgg(Lw); return { w, A: Aw }; });
         box.innerHTML = `${rsFiltersHTML(L)}
-        <div class="zg-kpis" style="grid-template-columns:repeat(4,1fr);margin-top:8px">
-            <div class="hl"><span>Ref. #1 del mercado · ${esc(lbl)}</span><b style="font-size:20px">${esc(V.all[0].ref)}</b><em>${esc(V.all[0].marca)} · ${V.all[0].q} uds</em></div>
-            <div><span>Mejor Infinix</span><b style="font-size:20px">${infRank >= 0 ? esc(V.all[infRank].ref) : '—'}</b><em>${infRank >= 0 ? `puesto #${infRank + 1} · ${V.all[infRank].q} uds` : 'sin venta Infinix'}</em></div>
-            <div><span>Referencias vendidas</span><b>${V.all.length}</b><em>${V.tot} uds · ${V.porTienda.length} PDV</em></div>
-            <div><span>Marcas</span><b>${marcas.length}</b><em>#1 ${esc(marcas[0][0])}</em></div>
+        <div class="vs-wk"><span class="lbl">Periodo</span><div class="seg sm">${[['', 'Mes completo']].concat(weeks.map(w => [w, `${w} · ${rangeOf(w)}`])).map(([k, l]) => `<button class="seg-btn ${RS.wk === k ? 'active' : ''}" data-rswk="${k}">${esc(l)}</button>`).join('')}</div></div>
+        <div class="seg sm" style="margin:8px 0">${[['tienda', 'Por tienda'], ['cadena', 'Por cadena'], ['zona', 'Por zona'], ['regional', 'Por regional']].map(([k, l]) => `<button class="seg-btn ${RS.nivel === k ? 'active' : ''}" data-rsn="${k}">${l}</button>`).join('')}</div>
+        ${!A.tot ? `<div class="card empty">No hay cierres con venta de competencia para este filtro y periodo.</div>` : `
+        <div class="zg-kpis">
+            <div class="hl"><span>Share Infinix · ${esc(per)}</span><b>${rsPc(A.share)}</b><em>${A.inf} de ${A.tot} uds reportadas</em></div>
+            <div><span>Puesto de Infinix</span><b>${A.pos ? '#' + A.pos : '—'}</b><em>de ${A.rank.length} marcas</em></div>
+            <div><span>Marca #1</span><b style="font-size:20px">${lider ? esc(lider[0]) : '—'}</b><em>${lider ? `${lider[1]} uds · ${rsPc(lider[1] / A.tot)}` : ''}</em></div>
+            <div><span>PDV que reportan</span><b>${A.real}<small>/${Ls.length}</small></b><em>${sum(Ls.map(x => x.cierres))} cierres</em></div>
         </div>
-        <details class="card acc" open><summary><span>🎯 Focos de ataque para tus visitas</span></summary>
-            <ol class="vs-atk">${atk.map(a => `<li><b>${esc(a.ref)}</b> <small>${esc(a.marca)} · ${a.q} uds</small><br>${esc(a.txt)}</li>`).join('')}</ol>
-            <p class="hint">Estos focos salen solos en el plan de trabajo de cada tienda (acciones sugeridas y tarjeta del plan).</p></details>
-        <details class="card acc" open><summary><span>🏆 Top 20 referencias del mercado · ${esc(lbl)}</span></summary>
-            <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>#</th><th>Referencia</th><th>Marca</th><th>Uds</th><th>% del total</th><th>PDV</th></tr></thead><tbody>
-            ${V.all.slice(0, 20).map((r, i) => `<tr class="${r.marca === 'INFINIX' ? 'vs-inf' : ''}"><td>${i + 1}</td><td class="l"><b>${esc(r.ref)}</b></td><td>${esc(r.marca)}</td><td><b>${r.q}</b></td><td>${rsPc(r.q / V.tot)}</td><td>${r.pdv}</td></tr>`).join('')}</tbody></table></div></details>
-        <details class="card acc"><summary><span>🏷️ Lo más vendido de cada marca</span></summary>
-            <div class="vs-brands">${marcas.map(([b, R]) => `<div class="${b === 'INFINIX' ? 'inf' : ''}"><b style="border-color:${BRAND_COL[b] || '#94A3B8'}">${esc(b)} <small>${sum(R.map(r => r.q))} uds</small></b>${R.slice(0, 4).map((r, i) => `<span>${i + 1}. ${esc(r.ref)} <em>${r.q}</em></span>`).join('')}</div>`).join('')}</div></details>
-        <details class="card acc"><summary><span>🏬 Por tienda: lo que más vende la competencia vs. Infinix (${V.porTienda.length})</span></summary>
-            <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>PDV</th><th>Ref. #1 competencia</th><th>Uds</th><th>2.ª competencia</th><th>Ref. #1 Infinix</th><th>Uds</th></tr></thead><tbody>
-            ${V.porTienda.sort((a, b) => b.tot - a.tot).map(t => `<tr><td class="l">${storeLogo(t.st, 'xs')} <b>${esc(t.st.tienda)}</b></td><td class="l">${t.comp[0] ? `<b>${esc(t.comp[0].ref)}</b> <small>${esc(t.comp[0].marca)}</small>` : '—'}</td><td>${t.comp[0] ? t.comp[0].q : '—'}</td><td class="l"><small>${t.comp[1] ? `${esc(t.comp[1].ref)} (${esc(t.comp[1].marca)}) ${t.comp[1].q}` : '—'}</small></td><td class="l">${t.inf[0] ? `<b>${esc(t.inf[0].ref)}</b>` : '<small class="r">sin venta</small>'}</td><td>${t.inf[0] ? t.inf[0].q : 0}</td></tr>`).join('')}</tbody></table></div></details>
-        <div class="actions" id="vs-act"><button class="btn btn-ghost" data-act="preview">👁️ Vista previa</button><button class="btn btn-wa" data-act="share">📲 WhatsApp</button><button class="btn btn-primary" data-act="save">⬇️ Descargar</button></div>`;
+        <details class="card acc" open><summary><span>🏁 Ranking de marcas · ${esc(lbl)} · ${esc(per)}</span></summary>${brandBars(A.rank, A.tot, 11)}</details>
+        <details class="card acc" open><summary><span>📊 Share ${RS.nivel === 'tienda' ? 'por tienda' : RS.nivel === 'cadena' ? 'por cadena' : RS.nivel === 'zona' ? 'por zona' : 'por regional'} (${G.length})</span></summary>
+            <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>${RS.nivel === 'tienda' ? 'PDV' : RS.nivel === 'cadena' ? 'Cadena' : RS.nivel === 'zona' ? 'Zona' : 'Regional'}</th>${RS.nivel !== 'tienda' ? '<th>PDV</th>' : '<th>Cierres</th>'}<th>Infinix</th><th>Total</th><th>Share</th><th>Puesto</th><th>Marca #1</th><th>Top marcas</th></tr></thead><tbody>
+            ${G.map(g => `<tr><td class="l">${RS.nivel === 'tienda' ? storeLogo(g.st, 'xs') + ' ' : RS.nivel === 'cadena' ? chainGroupLogo(chainGroup(g.st).key, 'xs') + ' ' : ''}<b>${esc(g.nombre)}</b></td><td>${RS.nivel !== 'tienda' ? g.A.real : g.L[0].cierres}</td><td><b>${g.A.inf}</b></td><td>${g.A.tot}</td><td><b>${rsPc(g.A.share)}</b></td><td>${g.A.pos ? '#' + g.A.pos : '—'}</td><td>${g.A.rank[0] ? esc(g.A.rank[0][0]) : '—'}</td><td class="l"><small>${g.A.rank.slice(0, 4).map(([b, q]) => `${esc(b)} ${rsPc(q / g.A.tot)}`).join(' · ')}</small></td></tr>`).join('')}</tbody></table></div></details>`}
+        ${evo.length ? `<details class="card acc" open><summary><span>📈 Share semana a semana · ${esc(lbl)}</span></summary>
+            <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>Semana</th><th>Infinix</th><th>Total tienda</th><th>Share</th><th>Var.</th><th>Puesto</th><th>Marca #1</th></tr></thead><tbody>
+            ${evo.map((e, i) => { const p = i ? evo[i - 1].A.share : null, dv = e.A.share != null && p != null ? Math.round((e.A.share - p) * 100) : null; return `<tr class="${RS.wk === e.w ? 'cur' : ''}"><td class="l"><b>${e.w}</b> <small class="mute">${rangeOf(e.w)}</small></td><td><b>${e.A.inf}</b></td><td>${e.A.tot}</td><td><b>${rsPc(e.A.share)}</b></td><td class="${dv == null ? '' : dv >= 0 ? 'g' : 'r'}">${dv == null ? '—' : (dv >= 0 ? '▲ ' : '▼ ') + Math.abs(dv) + ' pts'}</td><td>${e.A.pos ? '#' + e.A.pos : '—'}</td><td>${e.A.rank[0] ? esc(e.A.rank[0][0]) : '—'}</td></tr>`; }).join('')}</tbody></table></div></details>` : ''}
+        ${A.tot ? `<div class="actions" id="vs-act"><button class="btn btn-ghost" data-act="preview">👁️ Vista previa</button><button class="btn btn-wa" data-act="share">📲 WhatsApp</button><button class="btn btn-primary" data-act="save">⬇️ Descargar</button></div>` : ''}
+        <p class="hint">Sale de los cierres que llenan los asesores cada noche (venta de Infinix y de cada marca de la competencia). El cierre semanal cuenta en su semana. La venta según las cadenas está en <b>📊 Share real</b>.</p>`;
         rsBind(box, paint);
-        ReportActions.bind($('#vs-act', box), {
+        $$('[data-rswk]', box).forEach(b => b.onclick = () => { RS.wk = b.dataset.rswk; paint(); });
+        if ($('#vs-act', box)) ReportActions.bind($('#vs-act', box), {
             title: 'Infinix vs. competencia · Central de Operaciones', noStore: true,
-            filename: () => `Infinix_vs_competencia_${slug(lbl)}_${month}.png`,
-            build: stage => buildVersusCanvas(stage, { lbl, V, atk, marcas, month, autor: State.session })
+            filename: () => `Infinix_vs_competencia_${slug(lbl)}_${RS.wk || month}.png`,
+            build: stage => buildVersusCanvas(stage, { lbl, per, A, G, evo, nivel: RS.nivel, month, autor: State.session })
         });
     };
     paint();
 }
 function buildVersusCanvas(stage, d) {
-    const V = d.V, el = document.createElement('div'); el.className = 'rp sp rs-rep';
+    const nivelTxt = { tienda: 'POR TIENDA', cadena: 'POR CADENA', zona: 'POR ZONA', regional: 'POR REGIONAL' }[d.nivel];
+    const el = document.createElement('div'); el.className = 'rp sp rs-rep';
     el.innerHTML = `<div class="rp-bar"></div>
     <header class="rp-head"><img class="rp-logo" src="${LOGO_INFINIX}" alt="Infinix">
-        <div class="rp-head-mid"><div class="rp-kicker">INFINIX VS. COMPETENCIA · REFERENCIAS MÁS VENDIDAS</div><div class="rp-title">${esc(d.lbl.toUpperCase())}</div><div class="rp-sub">${esc(mesLargo(d.month))} · data real de las cadenas · ${V.tot} uds · ${V.porTienda.length} PDV</div></div>
+        <div class="rp-head-mid"><div class="rp-kicker">INFINIX VS. COMPETENCIA · REPORTE DE CIERRES DE LOS ASESORES</div><div class="rp-title">${esc(d.lbl.toUpperCase())}</div><div class="rp-sub">${esc(d.per)} · ${d.A.tot} uds reportadas · ${d.A.real} PDV</div></div>
         <div class="pl-who"><b>${esc((d.autor || {}).nombre || '')}</b><small>${ROLES[(d.autor || {}).rol] ? ROLES[d.autor.rol].label : ''}</small></div></header>
-    <div class="rp-sec">FOCOS DE ATAQUE</div>
-    <ol class="vs-atk rp-pad">${d.atk.map(a => `<li><b>${esc(a.ref)}</b> <small>${esc(a.marca)} · ${a.q} uds</small><br>${esc(a.txt)}</li>`).join('')}</ol>
-    <div class="rp-sec">TOP 15 REFERENCIAS DEL MERCADO</div>
-    <table class="rp-tbl sp-tbl"><thead><tr><th class="l">#</th><th class="l">REFERENCIA</th><th class="l">MARCA</th><th>UDS</th><th class="c-tot">% TOTAL</th><th>PDV</th></tr></thead><tbody>
-    ${V.all.slice(0, 15).map((r, i) => `<tr class="${r.marca === 'INFINIX' ? 'vs-inf' : ''}"><td class="l">${i + 1}</td><td class="l"><b>${esc(r.ref)}</b></td><td class="l">${esc(r.marca)}</td><td><b>${r.q}</b></td><td class="c-tot">${rsPc(r.q / V.tot)}</td><td>${r.pdv}</td></tr>`).join('')}</tbody></table>
-    <div class="rp-sec">LO MÁS VENDIDO DE CADA MARCA</div>
-    <div class="vs-brands rp-pad">${d.marcas.slice(0, 8).map(([b, R]) => `<div class="${b === 'INFINIX' ? 'inf' : ''}"><b style="border-color:${BRAND_COL[b] || '#94A3B8'}">${esc(b)} <small>${sum(R.map(r => r.q))} uds</small></b>${R.slice(0, 3).map((r, i) => `<span>${i + 1}. ${esc(r.ref)} <em>${r.q}</em></span>`).join('')}</div>`).join('')}</div>
-    <footer class="rp-foot"><span>Referencias según el sell-out de cada cadena (data real). Foco de ataque: referencia de la competencia que más vende, con la referencia Infinix para el comparativo.</span><b>Infinix · Central de Operaciones</b></footer><div class="rp-bar"></div>`;
+    <div class="sp-band">
+        <div class="hero"><span>SHARE INFINIX</span><b>${rsPc(d.A.share)}</b><em>${d.A.inf} de ${d.A.tot} uds</em></div>
+        <div><span>Puesto Infinix</span><b>${d.A.pos ? '#' + d.A.pos : '—'}</b><em>de ${d.A.rank.length} marcas</em></div>
+        <div><span>Marca #1</span><b style="font-size:28px">${d.A.rank[0] ? esc(d.A.rank[0][0]) : '—'}</b><em>${d.A.rank[0] ? rsPc(d.A.rank[0][1] / d.A.tot) + ' de share' : ''}</em></div>
+        <div><span>PDV que reportan</span><b>${d.A.real}</b><em>${nivelTxt.toLowerCase()}</em></div>
+    </div>
+    <div class="rp-sec">RANKING DE MARCAS</div>${brandBars(d.A.rank, d.A.tot, 11)}
+    <div class="rp-sec">SHARE ${nivelTxt}</div>
+    <table class="rp-tbl sp-tbl"><thead><tr><th class="l">#</th><th class="l">${nivelTxt.replace('POR ', '')}</th><th>INFINIX</th><th>TOTAL</th><th class="c-tot">SHARE</th><th>PUESTO</th><th class="l">MARCA #1</th></tr></thead><tbody>
+    ${d.G.map((g, i) => `<tr><td class="l">${i + 1}</td><td class="l"><div class="sp-pdv">${d.nivel === 'tienda' ? storeLogo(g.st, 'xs') : d.nivel === 'cadena' ? chainGroupLogo(chainGroup(g.st).key, 'xs') : ''}<b>${esc(g.nombre)}</b></div></td><td><b>${g.A.inf}</b></td><td>${g.A.tot}</td><td class="c-tot"><b>${rsPc(g.A.share)}</b></td><td>${g.A.pos ? '#' + g.A.pos : '—'}</td><td class="l">${g.A.rank[0] ? esc(g.A.rank[0][0]) : '—'}</td></tr>`).join('')}</tbody></table>
+    ${d.evo.length > 1 ? `<div class="rp-sec">SHARE SEMANA A SEMANA</div><table class="rp-tbl sp-tbl"><thead><tr><th class="l">SEMANA</th><th>INFINIX</th><th>TOTAL</th><th class="c-tot">SHARE</th><th>PUESTO</th><th class="l">MARCA #1</th></tr></thead><tbody>${d.evo.map(e => `<tr><td class="l"><b>${e.w}</b></td><td>${e.A.inf}</td><td>${e.A.tot}</td><td class="c-tot"><b>${rsPc(e.A.share)}</b></td><td>${e.A.pos ? '#' + e.A.pos : '—'}</td><td class="l">${e.A.rank[0] ? esc(e.A.rank[0][0]) : '—'}</td></tr>`).join('')}</tbody></table>` : ''}
+    <footer class="rp-foot"><span>Fuente: cierres diarios de los asesores (venta de Infinix y de la competencia en cada tienda). Share = unidades Infinix ÷ unidades reportadas de la tienda.</span><b>Infinix · Central de Operaciones</b></footer><div class="rp-bar"></div>`;
     stage.appendChild(el); return el;
 }

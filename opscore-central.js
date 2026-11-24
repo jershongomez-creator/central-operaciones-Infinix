@@ -65,7 +65,7 @@ function openAdvisorPhotos(storeId, onDone) {
 
 // ---- Pantalla ----------------------------------------------------------------
 registerModule('central', (() => {
-    let sel = 'tienda', closures = [], openP = {};
+    let sel = 'tienda', closures = [], openP = {}, facs = [], upBusy = false;
     const st = () => currentStore();
 
     async function render(view) {
@@ -75,6 +75,7 @@ registerModule('central', (() => {
         try { await ZoneData.load(s.zona, month); } catch (e) { }
         if (typeof Evals !== 'undefined') await Evals.ensureLoaded([s.zona]);
         try { closures = await fetchStoreClosures(s.id, todayStr()); } catch (e) { closures = []; }
+        try { facs = await ImeiFac.cleanup(await ImeiFac.byStore(s.id)); } catch (e) { facs = []; }
         view.innerHTML = `<section class="card ct-head">
             <div class="row between wrap" style="gap:8px"><div class="row">${storeLogo(s)}<div><h2 class="h2">Mi central</h2><p class="mute">${esc(s.tienda)} · cómo va el mes, semana a semana y en equipo</p></div></div>
                 <button class="btn btn-ghost sm" id="ct-photos">📸 Fotos del equipo</button></div>
@@ -82,7 +83,18 @@ registerModule('central', (() => {
             <div id="ct-body"></div>`;
         $('#ct-photos').onclick = () => openAdvisorPhotos(s.id, () => paint());
         $('#ct-pick').addEventListener('click', e => { const b = e.target.closest('[data-ct]'); if (b) { sel = b.dataset.ct; paint(); } });
-        $('#ct-body').addEventListener('click', e => {
+        $('#ct-body').addEventListener('change', async e => {
+            const inp = e.target.closest('[data-facup]'); if (!inp || !inp.files || !inp.files[0] || upBusy) return;
+            if (!canWrite()) return;
+            const D = Advisor.forStore(s).find(x => x.id === sel), Z = ZoneData.forStore(s.id) || {}, r = (Z.inact || []).find(x => String(x.imei) === inp.dataset.facup);
+            if (!r) return; upBusy = true; const lab = inp.closest('label'); if (lab) lab.classList.add('loading');
+            try { const d = await ImeiFac.upload(s, r, inp.files[0]); facs = facs.filter(f => f.id !== d.id).concat(d); toast('Factura cargada ✔ Tu supervisor ya la puede descargar.', 'ok'); }
+            catch (err) { toast(err.message || 'No se pudo cargar la factura', 'error'); }
+            finally { upBusy = false; openP.imei = true; paint(); }
+        });
+        $('#ct-body').addEventListener('click', async e => {
+            const v = e.target.closest('[data-facv]'); if (v) { const d = facs.find(f => f.id === v.dataset.facv); if (d) docView(d, 'Factura IMEI ' + d.imei, docFileName(d, 'factura_' + d.imei)); return; }
+            const x = e.target.closest('[data-facx]'); if (x) { const d = facs.find(f => f.id === x.dataset.facx); if (d && await confirmBox('¿Quitar esta factura?', 'Quitar')) { await docDelete(d); facs = facs.filter(f => f !== d); openP.imei = true; paint(); } return; }
             const c = e.target.closest('[data-cpy]'); if (c) { const v = c.dataset.cpy; (navigator.clipboard ? navigator.clipboard.writeText(v) : Promise.reject()).then(() => toast('IMEI copiado', 'ok', 1800)).catch(() => toast(v, 'info')); return; }
             const b = e.target.closest('[data-ficha]'); if (b) openAdvisorFicha(b.dataset.ficha, 'asesor');
         });
@@ -199,8 +211,12 @@ registerModule('central', (() => {
     // IMEI sin activar del asesor elegido (de la última data plana DCR de la zona): para hacerles seguimiento
     function imeiPanel(s, d) {
         const Z = ZoneData.forStore(s.id) || {}, L = (Z.inact || []).filter(r => sameAdvisor({ nombre: r.a }, { nombre: d.nombre }) || nameSubset(r.a, d.nombre)).sort((a, b) => String(b.f + b.h).localeCompare(String(a.f + a.h)));
-        const body = L.length ? `<div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>Fecha</th><th class="l">Referencia</th><th class="l">IMEI</th></tr></thead><tbody>${L.map(r => `<tr><td>${esc((r.f || '').slice(8))}/${esc((r.f || '').slice(5, 7))}${r.h ? ` <small class="mute">${esc(r.h)}</small>` : ''}</td><td class="l">${esc(r.ref || '')}</td><td class="l"><code>${esc(r.imei || '—')}</code> ${r.imei ? `<button class="icon-btn sm" data-cpy="${esc(r.imei)}" title="Copiar IMEI">📋</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
-            <p class="hint">Ventas cargadas en DCR con el equipo aún sin activar. Pide al cliente que lo encienda con su SIM o guarda la factura como soporte para no perder la venta. Se actualiza con cada data que cargan tus líderes${Z.corte ? ` (corte ${esc(Z.corte.slice(8))}/${esc(Z.corte.slice(5, 7))})` : ''}.</p>`
+        const fac = r => facs.find(f => String(f.imei) === String(r.imei));
+        const con = L.filter(fac).length;
+        const body = L.length ? `<div class="row wrap" style="gap:6px;margin-bottom:8px"><i class="pill ok">📎 ${con} con factura</i><i class="pill ${L.length - con ? 'warn' : 'ok'}">${L.length - con} sin factura</i></div>
+            <div class="imf-list">${L.map(r => { const F = fac(r); return `<div class="imf ${F ? 'ok' : ''}"><div class="imf-t"><b>${esc(r.ref || '')}</b><small>${esc((r.f || '').slice(8))}/${esc((r.f || '').slice(5, 7))}${r.h ? ' · ' + esc(r.h) : ''}</small><span><code>${esc(r.imei || '—')}</code> ${r.imei ? `<button class="icon-btn sm" data-cpy="${esc(r.imei)}" title="Copiar IMEI">📋</button>` : ''}</span></div>
+                <div class="imf-a">${F ? `<i class="pill ok">📎 Factura cargada</i><button class="btn btn-ghost sm" data-facv="${esc(F.id)}">Ver</button><button class="icon-btn sm" data-facx="${esc(F.id)}" title="Quitar factura">✕</button>` : r.imei ? `<span class="adm-ups"><label class="btn btn-primary sm adm-up">📷 Factura<input type="file" accept="image/*" capture="environment" data-facup="${esc(r.imei)}" hidden></label><label class="btn btn-ghost sm adm-up">📄 PDF o galería<input type="file" accept="application/pdf,image/*" data-facup="${esc(r.imei)}" hidden></label></span>` : ''}</div></div>`; }).join('')}</div>
+            <p class="hint">Ventas cargadas en DCR con el equipo aún sin activar. Pide al cliente que lo encienda con su SIM o sube la factura como soporte para no perder la venta: tu supervisor la ve y la descarga. Cuando una data nueva trae el IMEI activo, sale de la lista y la factura se borra sola. Se actualiza con cada data que cargan tus líderes${Z.corte ? ` (corte ${esc(Z.corte.slice(8))}/${esc(Z.corte.slice(5, 7))})` : ''}.</p>`
             : '<p class="empty">✅ No tienes IMEI sin activar en la última data de la zona.</p>';
         return panel('imei', `📵 Mis IMEI sin activar <small class="mute">${L.length ? L.length + ' pendiente(s)' : 'ninguno'}</small>`, body, L.length > 0);
     }

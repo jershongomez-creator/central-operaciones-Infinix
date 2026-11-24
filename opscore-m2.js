@@ -129,6 +129,7 @@ registerModule('m2', (() => {
             if (!r) continue;
             r.visita = { at: v.savedAt || v.updatedAt || 0, ejecutado: v.ejecutado || [], gestion: (v.form && v.form.gestion) || '', compromisos: (v.form && v.form.compromisos) || '', alertas: (v.form && v.form.alertas) || '', ventaDia: int(v.ventaDia != null ? v.ventaDia : v.form && v.form.ventaDia), fotos: (v.fotosMini || []).slice(0, 3), evalPromedio: v.evalPromedio, evalRealizadas: v.evalRealizadas || 0, cumplMes: v.cumplMes, ventaMes: v.form && v.form.ventaMes };
             if (!int(r.undVisita) && r.visita.ventaDia) r.undVisita = r.visita.ventaDia;
+            if (v.form && Array.isArray(v.form.planEstados) && v.form.planEstados.some(Boolean) && !r.estados.some(Boolean)) r.estados = v.form.planEstados.slice(0, 3);   // lo que marcó en la visita rápida
             if (r.fromVisit && !r.acciones.some(a => a && a.trim())) r.acciones = [0, 1, 2].map(j => r.visita.ejecutado[j] || '');
             if (r.fromVisit && r.acciones.some(Boolean) && !r.estados.some(Boolean)) r.estados = r.acciones.map(a => a ? 'ok' : '');
         }
@@ -322,7 +323,7 @@ registerModule('m2', (() => {
         });
         return {
             id: docId(), userId: s.userId, nombre: s.nombre, rol: s.rol, zona: s.zona || '', fecha, week: 'W' + isoWeek(fecha), month: ym(),
-            stores, storeIds: rows.map(r => r.storeId),
+            stores, storeIds: rows.map(r => r.storeId), visitOff: (planDoc && planDoc.visitOff) || [],
             zoneGoal: sup() ? zoneGoal([s.zona].filter(Boolean).length ? [s.zona] : [...new Set(rows.map(r => r.zona))], fecha) : null,
             planSentAt: planDoc && planDoc.planSentAt ? planDoc.planSentAt : (fase === 'plan' ? Date.now() : null),
             cierreSentAt: cierre ? Date.now() : (planDoc && planDoc.cierreSentAt) || null,

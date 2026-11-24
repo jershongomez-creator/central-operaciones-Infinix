@@ -8,6 +8,8 @@
 registerModule('m3', (() => {
     let fecha = todayStr(), modo = 'supervisor', storeId = '', fotos = [null, null, null], minis = [null, null, null];
     let F = null;                                   // estado del formulario
+    // Visitas del plan de trabajo de hoy: la tienda, los asesores y las acciones ya vienen del plan (modo rápido)
+    let plan = null, planRow = null, quick = false, visHoy = [];
     const me = () => State.session;
     const fresh = () => ({
         promotores: [], promExtra: '', auto: false, corte: '',
@@ -35,13 +37,20 @@ registerModule('m3', (() => {
                 <label class="field-inline"><span class="lbl">Fecha</span><input type="date" id="m3-fecha" class="input" value="${fecha}" max="${todayStr()}"></label>
             </div>
             ${canSwitch ? `<div class="seg" style="margin-top:12px"><button class="seg-btn" data-modo="supervisor">Modo Supervisión</button><button class="seg-btn" data-modo="formador">Modo Formación</button></div>` : ''}
-            <label class="lbl">Punto de venta visitado</label>
+            <div id="m3-plan"></div>
+            <label class="lbl" id="m3-store-l">Punto de venta visitado</label>
             <select id="m3-store" class="input"><option value="">Selecciona una tienda…</option>${scopedStores().map(s => `<option value="${esc(s.id)}">${esc(s.tienda)} · ${esc(s.ciudad || '')}</option>`).join('')}</select>
         </section>
         <div id="m3-body"></div>`;
         $$('[data-modo]', view).forEach(b => b.onclick = () => { modo = b.dataset.modo; paint(); });
-        $('#m3-fecha').onchange = e => { fecha = e.target.value || todayStr(); if (storeId) pickStore(storeId); };
-        $('#m3-store').onchange = e => pickStore(e.target.value);
+        $('#m3-fecha').onchange = e => { fecha = e.target.value || todayStr(); loadPlan(); if (storeId) pickStore(storeId, quick ? planRow : null); };
+        $('#m3-store').onchange = e => pickStore(e.target.value, (plan && (plan.stores || []).find(r => r.storeId === e.target.value)) || null);
+        $('#m3-plan').addEventListener('click', async e => {
+            const x = e.target.closest('[data-pvx]'); if (x) { e.stopPropagation(); if (!await confirmBox('¿Quitar esta tienda de las visitas de hoy?', 'Quitar')) return; plan.visitOff = [...new Set((plan.visitOff || []).concat(x.dataset.pvx))]; await Data.set(COL.plans, plan.id, { visitOff: plan.visitOff }, true); paintPlan(); return; }
+            const c = e.target.closest('[data-pv]'); if (c) { const row = (plan.stores || []).find(r => r.storeId === c.dataset.pv); $('#m3-store').value = c.dataset.pv; await pickStore(c.dataset.pv, row); const b = $('#m3-body'); if (b) b.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+            if (e.target.id === 'm3-gotoplan') navigate('m2');
+        });
+        loadPlan();
 
         const body = $('#m3-body');
         const onIn = e => {
@@ -87,9 +96,30 @@ registerModule('m3', (() => {
     };
     function paintEjec(body) { const box = $('#m3-ej-list', body); if (box) box.innerHTML = ejecListHTML(); const c = $('#m3-ejec-n', body); if (c) c.textContent = ejecCount(); const d = $('#m3-ej-det', body); if (d) d.value = ''; }
 
+    // Plan de hoy y visitas ya guardadas: tarjetas para tocar y llenar en segundos
+    async function loadPlan() {
+        const box = $('#m3-plan'); if (!box) return;
+        try { plan = await Data.get(COL.plans, `${me().userId}_${fecha}`); } catch (e) { plan = null; }
+        try { visHoy = (await Data.list(COL.visits, [['fecha', '==', fecha]])).filter(v => v.userId === me().userId); } catch (e) { visHoy = []; }
+        paintPlan();
+    }
+    function paintPlan() {
+        const box = $('#m3-plan'); if (!box) return;
+        const L = plan && plan.stores ? plan.stores.filter(r => !(plan.visitOff || []).includes(r.storeId) && storeById(r.storeId)) : [];
+        const lbl = $('#m3-store-l'); if (lbl) lbl.textContent = L.length ? '¿Visitaste otra tienda que no estaba en el plan? Agrégala aquí' : 'Punto de venta visitado';
+        if (!L.length) { box.innerHTML = `<div class="pv-empty">📋 ${plan ? 'Ya quitaste todas las tiendas del plan de hoy.' : 'Aún no tienes plan de trabajo para esta fecha.'} Con el plan armado, aquí te aparecen las visitas listas: solo fotos, venta del día y si hiciste lo planeado. ${plan ? '' : '<button type="button" class="btn btn-link sm" id="m3-gotoplan">Armar plan →</button>'}</div>`; return; }
+        const done = id => visHoy.find(v => v.storeId === id);
+        box.innerHTML = `<label class="lbl">🗺️ Visitas de hoy según tu plan <small class="mute">· toca la tienda que estás visitando</small></label>
+            <div class="pv-grid">${L.map(r => { const st = storeById(r.storeId), v = done(r.storeId), acc = (r.acciones || []).filter(a => a && a.trim()).length; return `<div class="pv-card ${v ? 'ok' : ''} ${storeId === r.storeId ? 'on' : ''}" data-pv="${esc(r.storeId)}" role="button" tabindex="0">
+                ${storeLogo(st, 'xs')}<div class="pv-t"><b>${esc(st.tienda)}</b><small>Meta día ${int(r.metaDia)}${int(r.compromisoUnd) ? ' · compromiso ' + int(r.compromisoUnd) : ''} · ${acc} acción(es)${(r.asesores || []).length ? ' · ' + r.asesores.map(a => esc(String(a.nombre || '').split(' ')[0])).join(', ') : ''}</small></div>
+                <i class="pill ${v ? 'ok' : 'warn'}">${v ? '✅ ' + new Date(v.savedAt || v.updatedAt || Date.now()).toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit' }) : 'Pendiente'}</i>
+                <button type="button" class="icon-btn sm pv-x" data-pvx="${esc(r.storeId)}" title="Quitar de las visitas de hoy">✕</button></div>`; }).join('')}</div>`;
+    }
+
     // Arrastre automático: todo sale de los cierres diarios de la tienda
-    async function pickStore(id) {
+    async function pickStore(id, row) {
         storeId = id; F = fresh(); fotos = [null, null, null]; minis = [null, null, null];
+        planRow = row || null; quick = !!row;
         const st = storeById(id);
         if (st) {
             const ym = fecha.slice(0, 7), dim = daysInMonth(ym), dd = fecha.slice(8);
@@ -137,7 +167,18 @@ registerModule('m3', (() => {
             const prev = await Data.get(COL.visits, visitId());          // el reporte de hoy se puede retomar
             if (prev && prev.fotosMini && prev.fotosMini.length) { minis = [0, 1, 2].map(i => prev.fotosMini[i] || null); fotos = minis.slice(); }
             if (prev && prev.form) F = { ...fresh(), ...prev.form, ejec: { ...fresh().ejec, ...(prev.form.ejec || {}) }, ejecItems: (prev.form.ejecItems || []).map(x => ({ ...x })) };
+            if (planRow) {
+                const acc = (planRow.acciones || []).map((t, j) => ({ t: String(t || '').trim(), j })).filter(a => a.t);
+                const old = F.planAcciones || [];
+                F.planAcciones = acc.map(a => ({ t: a.t, j: a.j, e: (old.find(o => o.t === a.t) || {}).e || '' }));
+                F.compromiso = int(planRow.compromisoUnd) || int(planRow.metaDia) || F.metaDia;
+                if (int(planRow.metaDia)) F.metaDia = int(planRow.metaDia);
+                const pn = (planRow.asesores || []).map(a => a.nombre).filter(Boolean);
+                if (pn.length && !(prev && prev.form)) F.promotores = F.promotores.filter(n => pn.some(p => sameAdvisor({ nombre: p }, { nombre: n }) || nameSubset(p, n))).concat(pn.filter(p => !F.promotores.some(n => sameAdvisor({ nombre: p }, { nombre: n }) || nameSubset(p, n))));
+                if (prev && prev.form && prev.form.quick === false) quick = false;
+            }
         }
+        paintPlan();
         if ($('#m3-body')) paint();
     }
     const visitId = () => `${me().userId}_${storeId}_${fecha}`;
@@ -162,7 +203,8 @@ registerModule('m3', (() => {
         $$('[data-modo]').forEach(b => b.classList.toggle('active', b.dataset.modo === modo));
         const body = $('#m3-body'); if (!body) return;
         const st = storeById(storeId);
-        if (!st) { body.innerHTML = '<div class="card empty">Selecciona el punto de venta para iniciar el reporte.</div>'; return; }
+        if (!st) { body.innerHTML = `<div class="card empty">${plan && (plan.stores || []).length ? 'Toca arriba la tienda que estás visitando.' : 'Selecciona el punto de venta para iniciar el reporte.'}</div>`; return; }
+        if (quick && F.planAcciones) return paintQuick(body, st);
         const n = (f, v, ro) => `<input class="input num" type="number" inputmode="numeric" min="0" data-f="${f}" value="${v ?? 0}" ${ro ? 'readonly tabindex="-1"' : ''}>`;
         const rng = (f, v) => `<div class="rng"><input type="range" min="1" max="5" step="1" data-f="${f}" value="${v}"><output data-out="${f}">${v}</output></div>`;
         const chk = (f, label, on, cls = '') => `<label class="chip ${cls}"><input type="checkbox" data-f="${f}" ${on ? 'checked' : ''}><span>${esc(label)}</span></label>`;
@@ -240,6 +282,54 @@ registerModule('m3', (() => {
             build: stage => buildVisitCanvas(stage, buildDoc(), fotos),
             persist,
             noStore: true                       // la visita ya tiene su propio botón de guardar
+        });
+    }
+
+    // ---- Visita rápida (viene del plan): fotos, venta del día y si se hizo lo planeado ----------------
+    const QE = [['ok', '✅ Sí'], ['parcial', '⚠️ A medias'], ['pend', '❌ No']];
+    const metaOk = () => int(F.compromiso) > 0 ? (int(F.ventaDia) >= int(F.compromiso) ? 'si' : 'no') : '';
+    function syncQuick() {
+        if (!quick || !F.planAcciones) return;
+        const A = F.planAcciones, hechas = A.filter(a => a.e === 'ok').length, m = metaOk();
+        F.ejecItems = A.filter(a => a.e === 'ok' || a.e === 'parcial').map(a => ({ tipo: a.t, detalle: a.e === 'ok' ? 'Hecho' : 'A medias' }));
+        F.planEstados = [0, 1, 2].map(j => (A.find(a => a.j === j) || {}).e || '');
+        const no = A.filter(a => a.e === 'pend').map(a => a.t);
+        F.gestion = `Plan del día: ${hechas} de ${A.length} acción(es) hechas${A.some(a => a.e === 'parcial') ? ` (${A.filter(a => a.e === 'parcial').length} a medias)` : ''}. Venta del día al momento de la visita: ${int(F.ventaDia)} de ${int(F.compromiso)} ${m === 'si' ? '✅ meta del día cumplida' : m === 'no' ? '❌ meta del día no cumplida' : ''}.` + (F.notaRapida ? ' ' + F.notaRapida : '');
+        F.alertas = no.length ? 'No se hizo: ' + no.join('; ') : '';
+        F.quick = true;
+    }
+    function paintQuick(body, st) {
+        const A = F.planAcciones, m = metaOk();
+        body.innerHTML = `
+        <section class="card qv-head"><div class="row">${storeLogo(st)}<div class="grow"><b>${esc(st.tienda)}</b><p class="mute">Visita del plan de hoy · ${esc(st.ciudad || '')}</p></div><button type="button" class="btn btn-link sm" id="m3-full">📝 Reporte completo</button></div>
+            <div class="chips" style="margin-top:6px">${[...new Set(activeAdvisors(st).map(a => a.nombre))].map(a => `<label class="chip"><input type="checkbox" data-f="prom" value="${esc(a)}" ${F.promotores.includes(a) ? 'checked' : ''}><span>${typeof advisorAvatar === 'function' ? advisorAvatar(st.id, a, 22) : ''} ${esc(a.split(' ').slice(0, 2).join(' '))}</span></label>`).join('')}</div></section>
+        <section class="card"><h3 class="h3">✅ ¿Hiciste lo que planeaste?</h3>
+            ${A.length ? A.map((a, i) => `<div class="qv-acc"><span>${i + 1}. ${esc(a.t)}</span><div class="qv-e">${QE.map(([v, l]) => `<button type="button" class="${a.e === v ? 'on ' + v : ''}" data-qe="${i}" data-v="${v}">${l}</button>`).join('')}</div></div>`).join('') : '<p class="mute">El plan de esta tienda no tiene acciones escritas.</p>'}</section>
+        <section class="card"><h3 class="h3">📊 Venta del día</h3>
+            <div class="grid-num" style="margin-top:0"><label class="numcell"><span>Vendidas hoy al momento de la visita</span><input class="input num" type="number" inputmode="numeric" min="0" data-f="ventaDia" value="${int(F.ventaDia)}"></label><label class="numcell"><span>Compromiso / meta del día</span><input class="input num" type="number" inputmode="numeric" min="0" data-f="compromiso" value="${int(F.compromiso)}"></label></div>
+            <div id="qv-ok">${m === 'si' ? '<i class="pill big ok">✅ Se cumplió la meta del día</i>' : m === 'no' ? `<i class="pill big bad">❌ Faltan ${int(F.compromiso) - int(F.ventaDia)} para la meta del día</i>` : ''}</div></section>
+        <section class="card"><h3 class="h3">📷 Fotos de la visita (hasta 3)</h3>
+            <div class="foto-grid">${[0, 1, 2].map(i => fotos[i] ? `<div class="foto"><img src="${fotos[i]}" alt="Evidencia ${i + 1}"><button type="button" data-rmfoto="${i}">✕</button></div>` : `<label class="foto add"><input type="file" accept="image/*" data-foto="${i}" hidden><span>＋<small>${['Exhibición', 'Equipo', 'Planillas'][i]}</small></span></label>`).join('')}</div>
+            <textarea class="input" rows="2" style="margin-top:8px" data-f="notaRapida" placeholder="Algo más para contar (opcional)">${esc(F.notaRapida || '')}</textarea></section>
+        <section class="card save-visit"><button class="btn btn-dark btn-block" id="m3-guardar">💾 Guardar visita</button><p class="hint" id="m3-saved"></p></section>
+        ${actionBarHTML()}`;
+        $$('[data-qe]', body).forEach(b => b.onclick = () => { A[int(b.dataset.qe)].e = b.dataset.v; paintQuick(body, st); });
+        $('#m3-full', body).onclick = () => { syncQuick(); quick = false; F.quick = false; paint(); };
+        body.oninput = e => { if (['ventaDia', 'compromiso'].includes(e.target.dataset.f)) { const o = $('#qv-ok', body), mm = metaOk(); if (o) o.innerHTML = mm === 'si' ? '<i class="pill big ok">✅ Se cumplió la meta del día</i>' : mm === 'no' ? `<i class="pill big bad">❌ Faltan ${int(F.compromiso) - int(F.ventaDia)} para la meta del día</i>` : ''; } };
+        const check = () => A.some(a => !a.e) ? 'Marca si hiciste cada acción del plan (Sí, A medias o No).' : null;
+        $('#m3-guardar', body).onclick = async e => {
+            const err = check(); if (err) return toast(err, 'warn');
+            syncQuick(); busy(e.currentTarget, true);
+            try { const r = await persist(); toast(r && r.synced === false ? 'Visita guardada en el equipo; se sincroniza al recuperar conexión.' : 'Visita guardada ✅ Ya está en tu cierre de actividades.', 'ok', 5000); visHoy = visHoy.filter(v => v.storeId !== storeId).concat(buildDoc()); paintPlan(); }
+            finally { const b = $('#m3-guardar'); if (b) busy(b, false); }
+        };
+        ReportActions.bind(body, {
+            title: 'Reporte de visita · Central de Operaciones',
+            validate: () => { const err = check(); if (!err) syncQuick(); return err; },
+            filename: () => `Visita_${slug(st.tienda)}_${fecha}.png`,
+            build: stage => buildVisitCanvas(stage, buildDoc(), fotos),
+            persist: async () => { const r = await persist(); visHoy = visHoy.filter(v => v.storeId !== storeId).concat(buildDoc()); paintPlan(); return r; },
+            noStore: true
         });
     }
 

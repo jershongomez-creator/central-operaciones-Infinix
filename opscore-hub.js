@@ -21,11 +21,12 @@ registerModule('reportes', (() => {
         ]],
         ['🧾 Cierres y control', [
             ['m4', 'cierres', '🧾', 'Auditoría de cierres', 'Quién no ha cerrado, qué días le faltan y la imagen de cada cierre.'],
-            ['ventas', 'imei', '📵', 'IMEI sin activar', 'Ventas con IMEI inactivo por asesor y fecha.']
+            ['ventas', 'imei', '📵', 'IMEI sin activar y facturas', 'IMEI inactivos por asesor, con la factura que subió para descargarla.'],
+            ['m4', 'obsequios', '🎁', 'Legalizaciones de obsequios', 'Merchandising recibido por tienda, legalizaciones pendientes y descarga de archivos.']
         ]],
         ['⚔️ Competencia', [
-            ['zona', 'share', '📊', 'Share real', 'Participación real por tienda, cadena, zona y regional.'],
-            ['zona', 'versus', '⚔️', 'Infinix vs competencia', 'Referencias rivales por tienda y acciones sugeridas.']
+            ['zona', 'share', '📊', 'Share real (data de las cadenas)', 'Share, puesto y referencias más vendidas por cadena y por tienda según el sell-out.'],
+            ['zona', 'versus', '⚔️', 'Infinix vs competencia (cierres)', 'Market share que reportan las tiendas en sus cierres, por semana (W46…) o mes.']
         ]],
         ['🗓️ Equipo', [
             ['m4', 'equipo', '👥', 'Visitas y planes del equipo', 'Lo que hizo cada líder en el rango.'],

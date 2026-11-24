@@ -131,7 +131,8 @@ registerModule('ventas', (() => {
     // ---- Pantalla
     async function render(v) {
         view = v;
-        const dk = takeDeep('ventas'); if (dk) tab = dk;
+        const dk = takeDeep('ventas'); if (dk) { tab = dk; if (dk === 'imei') F.preset = 'mes'; }
+        facs = null;
         await ZoneData.loadMany(scopedZones(), todayStr().slice(0, 7)).catch(() => { });
         if (!view.isConnected) return;
         const zs = scopedZones();
@@ -162,7 +163,9 @@ registerModule('ventas', (() => {
         });
         v.addEventListener('click', e => {
             const p = e.target.closest('[data-pre]'); if (p) { F.preset = p.dataset.pre; if (F.preset !== 'rango') [F.desde, F.hasta] = presetRange(F.preset); paint(); return; }
-            const t = e.target.closest('[data-tab2]'); if (t) { tab = t.dataset.tab2; paint(); }
+            const t = e.target.closest('[data-tab2]'); if (t) { tab = t.dataset.tab2; paint(); return; }
+            const fd = e.target.closest('[data-facdl]'); if (fd) { const d = (facs || []).find(f => f.id === fd.dataset.facdl); if (d) docDownload(d, docFileName(d, `factura_${slug(d.asesor || '')}_${d.imei}`)); return; }
+            if (e.target.id === 'rv-facall') { (async () => { const b = e.target; busy(b, true); const D = days(F.desde, F.hasta), I = imei(D), list = []; I.forEach(g => g.items.forEach(r => { const f = facOf(g.st, r); if (f) list.push(f); })); for (const d of list) { await docDownload(d, docFileName(d, `factura_${slug(d.asesor || '')}_${d.imei}`)); await new Promise(r => setTimeout(r, 450)); } busy(b, false); })(); }
         });
         ReportActions.bind(v, {
             title: 'Reporte de venta · Central de Operaciones',
@@ -241,12 +244,23 @@ registerModule('ventas', (() => {
             ${A.map(x => `<tr><td class="l"><b>${esc(x.nombre)}</b></td><td class="l"><small>${esc(x.st.tienda)}</small></td>${cols.map(d => { const n = int(x.dr[d]), ds = typeof DayStatus !== 'undefined' ? DayStatus.ofAdvisor(x.st, x.nombre, d) : null; return `<td class="${n ? 'g' : ds && ds.off ? 'off' : 'z'}" title="${ds ? esc(ds.label) : ''}">${n || (ds && ds.off ? '—' : 0)}</td>`; }).join('')}<td><b>${x.v}</b></td><td>${x.md && x.md.tot != null ? x.md.tot : '—'}</td><td>${x.md && x.md.tot ? `<i class="pill ${x.hoy >= x.md.tot ? 'ok' : x.hoy ? 'warn' : 'bad'}">${x.hoy}/${x.md.tot} · ${Math.round(x.hoy / x.md.tot * 100)}%</i>` : '—'}</td><td>${wowCell(x.w)}</td></tr>`).join('')}
             </tbody></table></div><p class="hint">Ordenado del que más vende al que menos. Meta día = lo que le falta para su meta del mes ÷ días que quedan (redondeado hacia arriba). 0 en rojo = día sin venta · — = compensando o con novedad (malla). vs sem. ant. = lunes a la fecha contra los mismos días de la semana pasada.</p>`;
     }
+    // Facturas que subieron los asesores para sus IMEI sin activar (se borran solas cuando el IMEI aparece activo)
+    let facs = null, facKey = '';
+    async function loadFacs() {
+        const zs = [...new Set(storesF().map(s => s.zona))], k = zs.join('|');
+        if (facs && facKey === k) return; facKey = k;
+        try { facs = await ImeiFac.cleanup(await ImeiFac.byZones(zs)); } catch (e) { facs = []; }
+        if (tab === 'imei' && view && view.isConnected) paint();
+    }
+    const facOf = (st, r) => (facs || []).find(f => f.storeId === st.id && String(f.imei) === String(r.imei));
     function imeiHTML(L, D) {
-        const n = sum(L.map(g => g.items.length));
+        if (!facs) loadFacs();
+        const n = sum(L.map(g => g.items.length)), con = sum(L.map(g => g.items.filter(r => facOf(g.st, r)).length));
         return `<div class="row between wrap"><h3 class="h3">📵 IMEI sin activar · ${esc(rangoTxt())}</h3><b>${n} IMEI · ${L.length} asesores</b></div>
-            <p class="hint">Ventas cargadas con el IMEI sin activar. El asesor debe enviar la factura o el soporte para no perder la venta.</p>
+            <div class="row wrap" style="gap:6px;margin:6px 0"><i class="pill ok">📎 ${con} con factura</i><i class="pill ${n - con ? 'warn' : 'ok'}">${n - con} sin factura</i>${con ? `<button class="btn btn-primary sm" id="rv-facall">⬇️ Descargar las ${con} facturas</button>` : ''}${facs ? '' : '<small class="mute">Buscando facturas…</small>'}</div>
+            <p class="hint">Ventas cargadas con el IMEI sin activar. El asesor sube la factura desde su Mi central; aquí la descargas. Cuando una data nueva trae el IMEI activo, sale de la lista y la factura se borra sola de la nube. Para ver todo el mes elige el rango <b>Mes</b>.</p>
             ${L.map(g => `<div class="rv-imei"><div class="row between"><span>${advRow({ st: g.st, nombre: g.nombre }, '')}</span><b>${g.items.length}</b></div>
-                <table class="tbl compact"><tbody>${g.items.map(r => `<tr><td class="l"><code>${esc(r.imei || '—')}</code></td><td class="l">${esc(r.ref || '')}</td><td>${esc((r.f || '').slice(5))}${r.h ? ' ' + esc(r.h) : ''}</td></tr>`).join('')}</tbody></table></div>`).join('') || '<p class="empty">Sin IMEI inactivos en el rango.</p>'}`;
+                <table class="tbl compact"><tbody>${g.items.map(r => { const F = facOf(g.st, r); return `<tr><td class="l"><code>${esc(r.imei || '—')}</code></td><td class="l">${esc(r.ref || '')}</td><td>${esc((r.f || '').slice(5))}${r.h ? ' ' + esc(r.h) : ''}</td><td>${F ? `<button class="btn btn-ghost sm" data-facdl="${esc(F.id)}">📎 Factura ⬇️</button>` : '<small class="r">sin factura</small>'}</td></tr>`; }).join('')}</tbody></table></div>`).join('') || '<p class="empty">Sin IMEI inactivos en el rango.</p>'}`;
     }
     function reportData() {
         const D = days(F.desde, F.hasta), S = status(F.hasta), R = cero(D), I = imei(D), RF = refsData(D);

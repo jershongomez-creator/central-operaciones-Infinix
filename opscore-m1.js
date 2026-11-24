@@ -70,6 +70,7 @@ registerModule('m1', (() => {
                 <span id="m1-wkbox" hidden><select class="input" id="m1-wk"></select></span></div>
                 <p class="hint" id="m1-wkpend" hidden></p>
                 <p class="hint" id="m1-wkhint" hidden>Carga en un solo cierre toda la venta de la semana (Infinix, accesorios y competencia). Solo aparece para semanas que ya terminaron y en las que faltan 2 o más cierres; si ya había cierres diarios en esa semana, se suman aquí y quedan reemplazados por este.</p>
+            <div id="m1-ob"></div>
             <div class="m1-days" id="m1-days"></div>
             <div id="m1-wkwarn"></div>
             <label class="lbl">¿Quién reporta hoy?</label>
@@ -141,6 +142,7 @@ registerModule('m1', (() => {
             onShared: async via => { const id = collect().id, env = { via, at: Date.now() }; const c = closures.find(x => x.id === id); if (c) c.enviado = env; await Data.set(COL.closures, id, { enviado: env }, true); }
         });
         modo = 'dia'; per = null; load();
+        if (typeof obseqPendientes === 'function') obseqPendientes(st).then(n => { const b = $('#m1-ob'); if (b && n) { b.innerHTML = `<div class="m1-ob"><span>🎁 Tienes <b>${n}</b> obsequio(s) por legalizar. Sube la legalización de las entregas de hoy.</span><button type="button" class="btn btn-sm" id="m1-obgo">Legalizar</button></div>`; $('#m1-obgo').onclick = () => navigate('obseq'); } }).catch(() => { });
     }
     function setModo(m, first) {
         modo = m;

@@ -237,7 +237,7 @@ registerModule('m4', (() => {
         Charts.destroyAll('view');
         const byRoi = a.rows.slice().sort((x, y) => (y.roi ?? -1) - (x.roi ?? -1));
         const maxRoi = Math.max(1, ...byRoi.map(r => r.roi || 0));
-        const TABS = [['resumen', '📊 Resumen de venta'], ['cierres', '🧾 Cierres de las tiendas'], ['inventario', '📦 Inventario'], ['equipo', '👥 Visitas y planes']];
+        const TABS = [['resumen', '📊 Resumen de venta'], ['cierres', '🧾 Cierres de las tiendas'], ['inventario', '📦 Inventario'], ['obsequios', '🎁 Obsequios'], ['equipo', '👥 Visitas y planes']];
         out.innerHTML = `
         <nav class="ztabs m4-tabs" id="m4-tabs">${TABS.map(([k, l]) => `<button class="ztab ${m4tab === k ? 'on' : ''}" data-m4t="${k}">${l}</button>`).join('')}</nav>
         <div class="zpanel" data-m4p="resumen" ${m4tab === 'resumen' ? '' : 'hidden'}>
@@ -338,6 +338,10 @@ registerModule('m4', (() => {
             <div class="actions" style="margin-top:10px"><button class="btn btn-ghost" data-act="preview">👁️ Vista previa</button><button class="btn btn-wa" data-act="share">📲 WhatsApp</button><button class="btn btn-primary" data-act="save">⬇️ Descargar</button></div>
         </section>
         </div>
+        <div class="zpanel" data-m4p="obsequios" ${m4tab === 'obsequios' ? '' : 'hidden'}>
+        <p class="hint m4-help">🎁 Merchandising que recibió cada tienda, cuántas entregas ya legalizó y cuántas le faltan. Descarga las legalizaciones por tienda para subirlas a la otra plataforma.</p>
+        <section class="card"><h3 class="h3">🎁 Obsequios y legalizaciones</h3><div id="m4-obs-out"></div></section>
+        </div>
         <div class="zpanel" data-m4p="equipo" ${m4tab === 'equipo' ? '' : 'hidden'}>
         <p class="hint m4-help">👥 Lo que hace el equipo en el rango: visitas, tiendas distintas visitadas, planes de la mañana y cierres de la noche.</p>
         <section class="card">
@@ -347,7 +351,8 @@ registerModule('m4', (() => {
             </tbody></table></div>
         </section>
         </div>`;
-        $$('[data-m4t]', out).forEach(b => b.onclick = () => { m4tab = b.dataset.m4t; $$('[data-m4t]', out).forEach(x => x.classList.toggle('on', x === b)); $$('[data-m4p]', out).forEach(p => { p.hidden = p.dataset.m4p !== m4tab; }); });
+        $$('[data-m4t]', out).forEach(b => b.onclick = () => { m4tab = b.dataset.m4t; $$('[data-m4t]', out).forEach(x => x.classList.toggle('on', x === b)); $$('[data-m4p]', out).forEach(p => { p.hidden = p.dataset.m4p !== m4tab; }); if (m4tab === 'obsequios') paintObseqLeaders($('#m4-obs-out'), agg.rows.map(r => r.st)); });
+        if (m4tab === 'obsequios' && typeof paintObseqLeaders === 'function') paintObseqLeaders($('#m4-obs-out'), agg.rows.map(r => r.st));
 
         // Auditoría: filtro, imagen y cierres del día
         const fa = $('#m4-aud-falta'); if (fa) fa.onchange = () => $$('#m4-aud-t tbody tr').forEach(tr => { tr.hidden = fa.checked && tr.dataset.falta !== '1'; });

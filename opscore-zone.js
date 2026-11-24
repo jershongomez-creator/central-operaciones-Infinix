@@ -687,8 +687,8 @@ registerModule('zona', (() => {
 
         ${canPlan ? `<div class="zpanel" data-zp="plan" ${ztab === 'plan' ? '' : 'hidden'}><section class="card" id="z-planbox"></section></div>` : ''}
 
-        <div class="zpanel" data-zp="share" ${ztab === 'share' ? '' : 'hidden'}><section class="card"><h3 class="h3">📊 Market share real y alertas de reporte</h3><div id="z-share"></div></section></div>
-        <div class="zpanel" data-zp="versus" ${ztab === 'versus' ? '' : 'hidden'}><section class="card"><h3 class="h3">⚔️ Infinix vs. competencia · referencias más vendidas</h3><div id="z-versus"></div></section></div>
+        <div class="zpanel" data-zp="share" ${ztab === 'share' ? '' : 'hidden'}><section class="card"><h3 class="h3">📊 Market share real · data de las cadenas</h3><p class="hint">Share, puesto y referencias más vendidas por cadena y por tienda según el sell-out que carga el coordinador.</p><div id="z-share"></div></section></div>
+        <div class="zpanel" data-zp="versus" ${ztab === 'versus' ? '' : 'hidden'}><section class="card"><h3 class="h3">⚔️ Infinix vs. competencia · lo que reportan las tiendas</h3><p class="hint">Market share con los cierres de los asesores. Elige el mes completo o una semana (W46, W47…).</p><div id="z-versus"></div></section></div>
 
         <div class="zpanel" data-zp="reportes" ${ztab === 'reportes' ? '' : 'hidden'}>
             <div class="grid2">
@@ -1134,6 +1134,15 @@ function advisorRanking(list) {
     const count = {}; L.forEach(x => { count[x.status] = (count[x.status] || 0) + 1; });
     return { list: L, count };
 }
+// Incentivos del asesor (igual que en su tarjeta): ROI 1 = llave de speeds (50 uds), ROI 2 = $400.000, ROI 3 = $700.000
+function incentivoTag(d) {
+    const C = d.comision || {}, P = C.plan || {}, H = C.hoy || {}; if (!P.base) return '—';
+    const n = H.nivel || 0, ok = (l, on) => `<i class="ark-k ${on ? 'on' : ''}">${on ? '✓' : '🔒'} ${l}</i>`;
+    const chips = `<div class="ark-ks">${ok('ROI 1', n >= 1)}${ok('$400K', n >= 2)}${ok('$700K', n >= 3)}</div>`;
+    const txt = n >= 3 ? '🏆 Logró el ROI 3 ($700.000)' : n === 2 ? `Faltan <b>${Math.max(0, P.k700 - (H.u || 0))}</b> uds para $700.000` : n === 1 ? `Faltan <b>${Math.max(0, P.k400 - (H.u || 0))}</b> uds para $400.000` : `Faltan <b>${Math.max(0, P.base - (H.u || 0))}</b> uds para abrir ROI 1`;
+    return chips + `<small class="ark-kt">${txt}</small>`;
+}
+const incentivoResumen = L => { const n = k => L.filter(x => ((x.d.comision || {}).hoy || {}).nivel >= k).length; return `ROI 1: <b>${n(1)}</b> · $400K: <b>${n(2)}</b> · $700K: <b>${n(3)}</b>`; };
 function buildAdvRankCanvas(stage, d) {
     const { RK, an, autor } = d, L = RK.list, dash = '—', pc = v => v == null ? dash : Math.round(v * 100) + '%';
     const cls = v => v == null ? '' : v >= 1 ? 'g' : v >= .85 ? 'g2' : v >= .7 ? 'a' : 'r';
@@ -1156,14 +1165,14 @@ function buildAdvRankCanvas(stage, d) {
     </div>
     <div class="ark-dist">${ks.map(k => `<div style="flex:${RK.count[k]};background:${ADV_ST[k][1]}"><b>${RK.count[k]}</b> ${ADV_ST[k][0]}</div>`).join('')}</div>
     <div class="rp-sec">ASESORES DEL MEJOR AL MÁS CRÍTICO</div>
-    <table class="rp-tbl sp-tbl ark-tbl"><thead><tr><th class="l">#</th><th class="l">ASESOR</th><th class="l">PUNTO DE VENTA</th><th>ESTADO</th><th>META</th><th>VENTA</th><th>CUMPL.</th><th>PROY.</th><th>% PROYECCIÓN</th><th>ROI</th><th>ROI PROY.</th><th>VS SEM. ANT.</th><th class="l">EVALUACIONES</th><th>PROM.</th></tr></thead><tbody>
+    <table class="rp-tbl sp-tbl ark-tbl"><thead><tr><th class="l">#</th><th class="l">ASESOR</th><th class="l">PUNTO DE VENTA</th><th>ESTADO</th><th>META</th><th>VENTA</th><th>CUMPL.</th><th>PROY.</th><th>% PROYECCIÓN</th><th>ROI</th><th>ROI PROY.</th><th class="l">INCENTIVOS (ROI 1 · $400K · $700K)</th><th>VS SEM. ANT.</th><th class="l">EVALUACIONES</th><th>PROM.</th></tr></thead><tbody>
     ${L.map((x, i) => { const p = x.d.pacing; return `<tr><td class="l">${i + 1}</td><td class="l"><b>${esc(x.d.nombre.split(' ').slice(0, 3).join(' '))}</b></td><td class="l small"><div class="sp-pdv">${chainLogo(x.d.pdv.logoKey, x.d.pdv.cadena, 'xs')}<span>${esc(x.d.pdv.tienda)}</span></div></td>
         <td><i class="ztag" style="background:${ADV_ST[x.status][1]}">${ADV_ST[x.status][0]}</i></td><td>${p.meta || dash}</td><td><b>${p.venta}</b></td><td class="c-tot ${cls(p.cumpl)}">${pc(p.cumpl)}</td><td>${Math.round(p.proy || 0)}</td>
         <td><div class="ark-bar"><i style="width:${Math.min(100, Math.round((x.pc || 0) * 100))}%;background:${ADV_ST[x.status][1]}"></i><b>${pc(x.pc)}</b></div></td>
-        <td>${p.venta}</td><td class="roi"><b>${Math.round(p.proy || 0)}</b></td><td class="w-${wowCls(x.d.wow)}">${wowTxt(x.d.wow)}</td>
+        <td>${p.venta}</td><td class="roi"><b>${Math.round(p.proy || 0)}</b></td><td class="l">${incentivoTag(x.d)}</td><td class="w-${wowCls(x.d.wow)}">${wowTxt(x.d.wow)}</td>
         <td class="l"><div class="ark-ev">${(x.d.evSemanas || []).filter(e => e.estado !== 'sin').map(e => `<i class="${e.estado === 'ok' ? (e.nota == null || e.nota >= 80 ? 'g' : e.nota >= 70 ? 'a' : 'r') : 'x'}">${e.w.slice(1)}<b>${e.estado === 'ok' ? (e.nota == null ? '✓' : e.nota) : '✕'}</b></i>`).join('') || dash}</div></td>
         <td><b>${x.prom ?? dash}</b></td></tr>`; }).join('')}
-    <tr class="tot"><td class="l" colspan="4">TOTAL · ${L.length} ASESORES</td><td>${metaT || dash}</td><td>${ventaT}</td><td class="c-tot ${metaT ? cls(ventaT / metaT) : ''}">${metaT ? pc(ventaT / metaT) : dash}</td><td>${proyT}</td><td class="c-tot">${metaT ? pc(proyT / metaT) : dash}</td><td>${ventaT}</td><td class="roi">${proyT}</td><td></td><td class="l">${evT ? `${evH}/${evT}` : ''}</td><td>${proms.length ? Math.round(sum(proms) / proms.length) : ''}</td></tr>
+    <tr class="tot"><td class="l" colspan="4">TOTAL · ${L.length} ASESORES</td><td>${metaT || dash}</td><td>${ventaT}</td><td class="c-tot ${metaT ? cls(ventaT / metaT) : ''}">${metaT ? pc(ventaT / metaT) : dash}</td><td>${proyT}</td><td class="c-tot">${metaT ? pc(proyT / metaT) : dash}</td><td>${ventaT}</td><td class="roi">${proyT}</td><td class="l small">${incentivoResumen(L)}</td><td></td><td class="l">${evT ? `${evH}/${evT}` : ''}</td><td>${proms.length ? Math.round(sum(proms) / proms.length) : ''}</td></tr>
     </tbody></table>
     <footer class="rp-foot"><span>Estado por proyección frente a la meta del asesor: en meta ≥100%, bien ≥85%, en riesgo ≥70%, crítico &lt;70%. Proyección = venta ÷ días transcurridos × días del mes. ROI del asesor = sus unidades (1 promotor); ROI proyectado = unidades proyectadas al cierre. Evaluaciones: nota de cada semana cargada (✕ = no la presentó).</span><b>Infinix · Central de Operaciones</b></footer><div class="rp-bar"></div>`;
     stage.appendChild(el); return el;

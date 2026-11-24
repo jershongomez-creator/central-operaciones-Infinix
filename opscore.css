@@ -1068,3 +1068,29 @@ tr.vs-inf td { background: #F0FDF4; } tr.vs-inf td b { color: #047857; }
 .mm-r.off b { color: #94A3B8; }
 .mm-r.tot { background: #0F172A; border-color: #0F172A; } .mm-r.tot span, .mm-r.tot b { color: #fff; } .mm-r.tot small { color: #CBD5E1; }
 @media (max-width: 700px) { details.card.acc > table.tbl { display: block; overflow-x: auto; max-width: 100%; } }
+.ark-ks { display: flex; gap: 3px; flex-wrap: nowrap; }
+.ark-k { font-style: normal; font-size: 11px; font-weight: 800; padding: 2px 5px; border-radius: 6px; background: #F1F5F9; color: #94A3B8; white-space: nowrap; }
+.ark-k.on { background: #DCFCE7; color: #15803D; }
+.ark-kt { display: block; font-size: 11px; color: #475569; margin-top: 2px; white-space: nowrap; }
+.vs-wk { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; } .vs-wk .seg { flex: 1; }
+.vs-brands span.inf { color: #15803D; font-weight: 800; }
+/* v1.19 · facturas IMEI y obsequios */
+.imf-list { display: grid; gap: 8px; }
+.imf { border: 1px solid #FECACA; background: #FFF7F7; border-radius: 12px; padding: 10px 12px; display: grid; gap: 8px; }
+.imf.ok { border-color: #BBF7D0; background: #F0FDF4; }
+.imf-t { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; } .imf-t small { color: #64748B; }
+.imf-a { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ob-it { font-size: 16px; } .ob-lote.done { opacity: .85; }
+.ob-files { display: grid; gap: 4px; margin-top: 8px; } .ob-files > div { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px dashed #E2E8F0; font-size: 13px; }
+.m1-ob { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; background: #FFF7ED; border: 1px solid #FED7AA; border-radius: 12px; padding: 10px 12px; margin-top: 10px; font-size: 14px; }
+/* v1.19 · visitas del plan */
+.pv-grid { display: grid; gap: 8px; margin-top: 4px; }
+.pv-card { position: relative; display: flex; align-items: center; gap: 10px; padding: 12px 40px 12px 12px; border: 1.5px solid #E2E8F0; border-radius: 14px; background: #fff; cursor: pointer; }
+.pv-card.on { border-color: #0F172A; box-shadow: 0 0 0 3px rgba(15,23,42,.08); } .pv-card.ok { background: #F0FDF4; border-color: #86EFAC; }
+.pv-t { flex: 1; min-width: 0; display: flex; flex-direction: column; } .pv-t small { color: #64748B; font-size: 12px; }
+.pv-x { position: absolute; top: 6px; right: 6px; }
+.pv-empty { background: #F8FAFC; border: 1px dashed #CBD5E1; border-radius: 12px; padding: 10px 12px; font-size: 13px; color: #475569; margin-top: 10px; }
+.qv-acc { display: grid; gap: 6px; padding: 10px 0; border-bottom: 1px solid #F1F5F9; } .qv-acc > span { font-weight: 600; font-size: 14px; }
+.qv-e { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.qv-e button { border: 1.5px solid #E2E8F0; background: #fff; border-radius: 10px; padding: 10px 4px; font-weight: 800; font-size: 13px; cursor: pointer; }
+.qv-e button.on.ok { background: #DCFCE7; border-color: #16A34A; } .qv-e button.on.parcial { background: #FEF3C7; border-color: #F59E0B; } .qv-e button.on.pend { background: #FEE2E2; border-color: #DC2626; }
