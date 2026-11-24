@@ -24,16 +24,26 @@ const XL = {
         return v;
     },
     async sheets(file) {
-        if (typeof ExcelJS === 'undefined') throw new Error('La librería de Excel no cargó. Revisa la conexión y vuelve a intentar.');
-        const wb = new ExcelJS.Workbook();
-        await wb.xlsx.load(await file.arrayBuffer());
-        const out = [];
-        wb.eachSheet(ws => {
-            const rows = [];
-            ws.eachRow({ includeEmpty: true }, (row, i) => { const vals = []; row.eachCell({ includeEmpty: true }, (c, j) => { vals[j - 1] = XL.cell(c.value); }); rows[i - 1] = vals; });
-            out.push({ name: ws.name, rows: Array.from(rows, r => r || []) });
-        });
-        return out;
+        const buf = await file.arrayBuffer(), out = [];
+        if (typeof ExcelJS !== 'undefined' && !/\.xls$/i.test(file.name || '')) {
+            try {
+                const wb = new ExcelJS.Workbook();
+                await wb.xlsx.load(buf.slice(0));
+                wb.eachSheet(ws => {
+                    const rows = [];
+                    ws.eachRow({ includeEmpty: true }, (row, i) => { const vals = []; row.eachCell({ includeEmpty: true }, (c, j) => { vals[j - 1] = XL.cell(c.value); }); rows[i - 1] = vals; });
+                    out.push({ name: ws.name, rows: Array.from(rows, r => r || []) });
+                });
+            } catch (e) { console.warn('[Central] ExcelJS no pudo leer el archivo; se usa el lector alterno', e.message); }
+        }
+        if (out.some(s => s.rows.length)) return out;
+        return XL.sheetsAlt(buf);
+    },
+    // Lector alterno (SheetJS): archivos que exportan sistemas como el del Éxito (hoja "worksheet1.xml") o Excel 97 (.xls)
+    async sheetsAlt(buf) {
+        if (typeof XLSX === 'undefined') await new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; sc.onload = res; sc.onerror = () => rej(new Error('No se pudo cargar el lector de Excel. Revisa la conexión.')); document.head.appendChild(sc); });
+        const wb = XLSX.read(new Uint8Array(buf), { type: 'array', cellDates: true });
+        return wb.SheetNames.map(n => ({ name: n, rows: XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' }) }));
     },
     iso(v) {
         if (v instanceof Date && !isNaN(v)) return v.toISOString().slice(0, 10);
@@ -87,7 +97,7 @@ const Match = (() => {
         return null;
     }
     const person = (a, b) => sameAdvisor({ nombre: a }, { nombre: b }) || nameSubset(a, b);
-    return { N, store, chainHint, person };
+    return { N, store, score, chainHint, person };
 })();
 
 // ---------- Estado del asesor en un día: novedad manual > malla ----------

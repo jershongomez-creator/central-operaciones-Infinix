@@ -1094,3 +1094,15 @@ tr.vs-inf td { background: #F0FDF4; } tr.vs-inf td b { color: #047857; }
 .qv-e { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .qv-e button { border: 1.5px solid #E2E8F0; background: #fff; border-radius: 10px; padding: 10px 4px; font-weight: 800; font-size: 13px; cursor: pointer; }
 .qv-e button.on.ok { background: #DCFCE7; border-color: #16A34A; } .qv-e button.on.parcial { background: #FEF3C7; border-color: #F59E0B; } .qv-e button.on.pend { background: #FEE2E2; border-color: #DC2626; }
+.rl-cols { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: #334155; margin: 6px 0; }
+td.pc-ok { background: #F0FDF4; color: #15803D; font-weight: 700; white-space: nowrap; } td.pc-late { background: #FFFBEB; color: #B45309; font-weight: 700; white-space: nowrap; } td.pc-no { background: #FEF2F2; color: #DC2626; font-weight: 800; }
+/* v1.20 · cámara dentro de la app */
+.cam-wrap { position: fixed; inset: 0; z-index: 200; background: #000; display: flex; align-items: center; justify-content: center; }
+.cam-v, .cam-p { max-width: 100%; max-height: 100%; width: 100%; height: 100%; object-fit: contain; background: #000; }
+.cam-bar { position: absolute; left: 0; right: 0; bottom: calc(24px + env(safe-area-inset-bottom)); display: flex; justify-content: space-around; align-items: center; }
+.cam-bar2 { position: absolute; left: 0; right: 0; bottom: calc(24px + env(safe-area-inset-bottom)); display: flex; justify-content: center; gap: 12px; }
+.cam-b { width: 54px; height: 54px; border-radius: 50%; border: 0; background: rgba(255,255,255,.18); color: #fff; font-size: 22px; }
+.cam-shot { width: 78px; height: 78px; border-radius: 50%; border: 5px solid #fff; background: rgba(255,255,255,.85); box-shadow: 0 0 0 3px rgba(0,0,0,.25); }
+.cam-gal { position: absolute; top: calc(14px + env(safe-area-inset-top)); right: 14px; border: 0; border-radius: 999px; padding: 9px 14px; background: rgba(255,255,255,.2); color: #fff; font-weight: 800; }
+.cam-msg { position: absolute; left: 16px; right: 16px; top: 35%; background: #fff; color: #0F172A; border-radius: 14px; padding: 16px; text-align: center; }
+.sp-tramo { background: #FFF7ED; } .plan-speeds small { color: #64748B; font-weight: 600; }

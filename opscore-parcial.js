@@ -41,10 +41,21 @@ registerModule('parcial', (() => {
             const h = e.target.closest('[data-h]'); if (h) { hora = h.dataset.h === 'Otro' ? (prompt('¿De qué hora es el parcial? (ej. 11:00 a. m.)', '') || hora) : h.dataset.h; $$('[data-h]', v).forEach(x => x.classList.toggle('active', x.dataset.h === h.dataset.h)); upd(); }
         };
         v.oninput = upd; v.onchange = upd;
-        $('#pc-copy').onclick = async () => { const t = msg(); try { await navigator.clipboard.writeText(t); toast('Mensaje copiado: pégalo en el grupo', 'ok'); } catch (e) { const r = document.createRange(); r.selectNodeContents($('#pc-msg')); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); toast('Selecciona y copia el mensaje', 'info'); } };
-        $('#pc-wa').onclick = async () => { const t = msg(); if (navigator.share) { try { await navigator.share({ text: t }); return; } catch (e) { if (e.name === 'AbortError') return; } } window.open('https://wa.me/?text=' + encodeURIComponent(t), '_blank'); };
+        $('#pc-copy').onclick = async () => { const t = msg(); logEnvio('copiado'); try { await navigator.clipboard.writeText(t); toast('Mensaje copiado: pégalo en el grupo', 'ok'); } catch (e) { const r = document.createRange(); r.selectNodeContents($('#pc-msg')); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); toast('Selecciona y copia el mensaje', 'info'); } };
+        $('#pc-wa').onclick = async () => { const t = msg(); if (navigator.share) { try { await navigator.share({ text: t }); logEnvio('whatsapp'); return; } catch (e) { if (e.name === 'AbortError') return; } } window.open('https://wa.me/?text=' + encodeURIComponent(t), '_blank'); logEnvio('whatsapp'); };
         $('#pc-clear').onclick = () => { if (!confirm('¿Poner todo en cero para empezar el día?')) return; $$('#view input.num').forEach(i => { i.value = 0; }); upd(); };
         upd();
+    }
+    // Auditoría: cada envío (WhatsApp) o copia del parcial queda en la nube con la hora real del envío
+    async function logEnvio(via) {
+        const s = st(); if (!s) return;
+        const d = collect(), f = todayStr(), tInf = sum(Object.values(d.inf)), tot = tInf + sum(Object.values(d.mar));
+        const slot = PARCIAL_HORAS.slice(0, 3).includes(d.hora) ? d.hora : 'Otro', id = `parc_${s.id}_${f}`;
+        const prev = (await Data.get(COL.zoneReports, id).catch(() => null)) || {};
+        const env = { ...(prev.envios || {}) }, cur = env[slot];
+        // Si ya lo envió por WhatsApp, una copia posterior no cambia el registro; si antes solo copió, el envío lo actualiza
+        if (!(cur && cur.via === 'whatsapp' && via === 'copiado')) env[slot] = { via, at: Date.now(), hora: d.hora, inf: tInf, tot, n: (cur ? int(cur.n) : 0) + 1, asesores: d.asesores };
+        await Data.set(COL.zoneReports, id, { id, kind: 'parcial', storeId: s.id, zona: s.zona, tienda: s.tienda, fecha: f, envios: env, updatedAt: Date.now() }, true).catch(() => { });
     }
     const stp = (id, v) => `<div class="stp"><button type="button" data-d="-1">−</button><input class="input num" type="number" inputmode="numeric" min="0" id="${id}" value="${int(v)}"><button type="button" data-d="1">+</button></div>`;
     function collect() {

@@ -59,6 +59,10 @@ const ZoneData = (() => {
         await wb.xlsx.load(await file.arrayBuffer());
         let best = null;
         wb.eachSheet(ws => { if (!best || ws.rowCount > best.rowCount) best = ws; });   // la hoja con más filas es la data
+        if (!best && typeof XL !== 'undefined') {          // archivos que ExcelJS no abre: lector alterno
+            const S = (await XL.sheetsAlt(await file.arrayBuffer())).sort((a, b) => b.rows.length - a.rows.length)[0];
+            if (S && S.rows.length) return splitHeader(S.rows.filter(r => r.some(x => x !== '' && x != null)).map(r => r.map(v => v instanceof Date ? v.toISOString().slice(0, 10) : v)));
+        }
         if (!best) throw new Error('El archivo no tiene hojas con datos.');
         const grid = [];
         best.eachRow({ includeEmpty: false }, (row, n) => {

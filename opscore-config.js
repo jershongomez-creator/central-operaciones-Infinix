@@ -3,7 +3,7 @@
 // Todo lo editable por negocio vive en este archivo.
 // ============================================================================
 
-const OPS_VERSION = '1.19.0';
+const OPS_VERSION = '1.20.0';
 const APP_NAME = 'Central de Operaciones';
 
 // --- Firebase: proyecto propio de OpsCore -------------------------------------
@@ -209,6 +209,7 @@ const DEFAULT_COMISIONES = {
 // Términos y condiciones del plan (se muestran en la calculadora, la central de la tienda y la tarjeta del asesor)
 const PLAN_TERMINOS = [
     ['ROI 1 · Llave', 'Al llegar al ROI 1 (ROI base de tu tienda) se habilita la llave de los speeds: cobras el incentivo de cada modelo vendido. Todos los IMEI deben estar activos en DCR dentro del mismo mes.'],
+    ['Note 60 Pro · cambio de valor', 'El Note 60 Pro vendido del 1 al 22 de noviembre paga $20.000 por unidad. El vendido del 23 al 30 de noviembre paga $10.000 por unidad. La calculadora ya lo descuenta según el día de cada venta en DCR.'],
     ['ROI 2 · $400.000', 'Comisión adicional de $400.000 al llegar al ROI 2 de tu tienda.'],
     ['ROI 3 · $700.000', 'Comisión adicional de $700.000 al llegar al ROI 3. No son acumulables: se gana $400.000 o $700.000 según el nivel alcanzado.'],
     ['Por referencia', 'La meta se evalúa por referencia según el peso de cada modelo; una referencia no reemplaza otra, salvo quiebre de inventario aprobado.'],
@@ -236,7 +237,25 @@ function kpiPlan(st) {
 // Speeds (incentivo por unidad) de un mix de ventas por referencia; solo se pagan con la llave abierta (ROI 1)
 const planValores = () => ({ ...DEFAULT_COMISIONES.valores, ...((typeof State !== 'undefined' && State.comisiones && State.comisiones.plan === PLAN_ID && State.comisiones.valores) || {}) });
 const planValoresAcc = () => ({ ...DEFAULT_COMISIONES.valoresAcc, ...((typeof State !== 'undefined' && State.comisiones && State.comisiones.plan === PLAN_ID && State.comisiones.valoresAcc) || {}) });
-function speedsOf(ventas) { const v = planValores(); return INFINIX_MODELS.reduce((s, m) => s + (Math.round(+((ventas || {})[m.key]) || 0)) * (v[m.key] || 0), 0); }
+// Tramos con otro valor de speed por fechas: Note 60 Pro vendido del 23 al 30 de noviembre paga $10.000 (del 1 al 22, $20.000)
+const SPEED_TRAMOS = [{ key: 'note-60-pro', desde: '2026-11-23', hasta: '2026-11-30', valor: 10000, label: 'del 23 al 30 de nov.' }];
+const tramoTag = t => t.key + '@' + t.desde;
+// Unidades de cada tramo, de la venta diaria por referencia ({ 'AAAA-MM-DD': { ref: uds } })
+function tramoUnits(drr) { const o = {}; SPEED_TRAMOS.forEach(t => { o[tramoTag(t)] = Object.entries(drr || {}).filter(([d]) => d >= t.desde && d <= t.hasta).reduce((s, [, r]) => s + (Math.round(+((r || {})[t.key]) || 0)), 0); }); return o; }
+// Proyección: las unidades que se sumen después del corte caen en el tramo según cuántos días restantes están dentro de él
+function tramoProj(base, nuevo, corte) {
+    const out = { ...nuevo }, ym = (corte || '').slice(0, 7); if (!ym) return out;
+    const dim = new Date(+ym.slice(0, 4), +ym.slice(5, 7), 0).getDate(), rest = []; for (let d = +corte.slice(8) + 1; d <= dim; d++) rest.push(`${ym}-${String(d).padStart(2, '0')}`);
+    SPEED_TRAMOS.forEach(t => { const extra = Math.max(0, (Math.round(+nuevo[t.key]) || 0) - (Math.round(+base[t.key]) || 0)), dentro = rest.filter(d => d >= t.desde && d <= t.hasta).length; out[tramoTag(t)] = (Math.round(+base[tramoTag(t)]) || 0) + (rest.length ? Math.round(extra * dentro / rest.length) : 0); });
+    return out;
+}
+// Speed de una referencia con sus tramos: unidades × valor, y las del tramo al valor del tramo
+function speedRef(key, ventas) {
+    const v = planValores(), u = Math.round(+((ventas || {})[key]) || 0); let s = u * (v[key] || 0);
+    SPEED_TRAMOS.filter(t => t.key === key).forEach(t => { const ut = Math.min(u, Math.round(+((ventas || {})[tramoTag(t)]) || 0)); s -= ut * ((v[key] || 0) - t.valor); });
+    return s;
+}
+function speedsOf(ventas) { return INFINIX_MODELS.reduce((s, m) => s + speedRef(m.key, ventas), 0); }
 function accOf(acc) { const v = planValoresAcc(); return INFINIX_ACCESSORIES.reduce((s, a) => s + (Math.round(+((acc || {})[a.key]) || 0)) * (v[a.key] || 0), 0); }
 // Liquidación completa: speeds (si abrió la llave) + KPI ($400.000 o $700.000) + accesorios (desde la primera unidad)
 function incentivo(ventas, P, acc) {

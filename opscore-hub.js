@@ -21,6 +21,7 @@ registerModule('reportes', (() => {
         ]],
         ['🧾 Cierres y control', [
             ['m4', 'cierres', '🧾', 'Auditoría de cierres', 'Quién no ha cerrado, qué días le faltan y la imagen de cada cierre.'],
+            ['m4', 'parciales', '⏱️', 'Auditoría de parciales de venta', 'Qué tiendas envían el parcial de la 1, 3 y 5 p. m., a qué hora y por WhatsApp o copiado.'],
             ['ventas', 'imei', '📵', 'IMEI sin activar y facturas', 'IMEI inactivos por asesor, con la factura que subió para descargarla.'],
             ['m4', 'obsequios', '🎁', 'Legalizaciones de obsequios', 'Merchandising recibido por tienda, legalizaciones pendientes y descarga de archivos.']
         ]],

@@ -1832,3 +1832,69 @@ document.addEventListener('DOMContentLoaded', () => {
     boot();
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => { });
 });
+
+// ---------- Cámara dentro de la app (v1.20) ----------------------------------------------------
+// En muchos Android, al abrir la cámara del teléfono (input con "capture") el sistema cierra Chrome por memoria y la app
+// vuelve al inicio sin la foto. Por eso los botones 📷 abren la cámara AQUÍ MISMO (sin salir de la app). Si el teléfono
+// no lo permite, se usa la cámara del teléfono como antes, y siempre queda el botón de galería.
+const InAppCam = (() => {
+    let stream = null, facing = 'environment';
+    const ok = () => !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) && window.isSecureContext !== false;
+    const stop = () => { if (stream) stream.getTracks().forEach(t => t.stop()); stream = null; };
+    async function start(video) {
+        stop();
+        stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1440 } } });
+        video.srcObject = stream; await video.play().catch(() => { });
+    }
+    function open(input) {
+        return new Promise(res => {
+            const wrap = document.createElement('div'); wrap.className = 'cam-wrap';
+            wrap.innerHTML = `<video class="cam-v" playsinline muted autoplay></video><img class="cam-p" hidden alt="Foto">
+                <div class="cam-msg" hidden></div>
+                <div class="cam-bar"><button type="button" class="cam-b" data-c="x">✕</button><button type="button" class="cam-shot" data-c="shot" aria-label="Tomar foto"></button><button type="button" class="cam-b" data-c="flip">🔄</button></div>
+                <div class="cam-bar2" hidden><button type="button" class="btn btn-ghost" data-c="again">↺ Repetir</button><button type="button" class="btn btn-primary" data-c="use">✅ Usar foto</button></div>
+                <button type="button" class="cam-gal" data-c="gal">🖼️ Galería</button>`;
+            document.body.appendChild(wrap); document.body.classList.add('no-scroll');
+            const v = $('.cam-v', wrap), p = $('.cam-p', wrap), msg = $('.cam-msg', wrap); let blob = null;
+            const close = f => { stop(); wrap.remove(); if (!$('#modal-root').children.length) document.body.classList.remove('no-scroll'); res(f); };
+            const fail = e => { msg.hidden = false; msg.innerHTML = `No se pudo abrir la cámara aquí (${esc(e && (e.name || e.message) || 'permiso')}). Toca <b>🖼️ Galería</b> o <b>Usar la cámara del teléfono</b>.<br><button type="button" class="btn btn-primary" data-c="native" style="margin-top:10px">📷 Usar la cámara del teléfono</button>`; };
+            start(v).catch(fail);
+            wrap.onclick = async e => {
+                const c = e.target.closest('[data-c]'); if (!c) return;
+                const k = c.dataset.c;
+                if (k === 'x') return close(null);
+                if (k === 'flip') { facing = facing === 'environment' ? 'user' : 'environment'; start(v).catch(fail); return; }
+                if (k === 'shot') {
+                    if (!v.videoWidth) return;
+                    const cv = document.createElement('canvas'); cv.width = v.videoWidth; cv.height = v.videoHeight; cv.getContext('2d').drawImage(v, 0, 0);
+                    blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.9));
+                    if (!blob) return toast('No se pudo tomar la foto. Intenta de nuevo.', 'error');
+                    p.src = URL.createObjectURL(blob); p.hidden = false; v.hidden = true; stop();
+                    $('.cam-bar', wrap).hidden = true; $('.cam-bar2', wrap).hidden = false; return;
+                }
+                if (k === 'again') { p.hidden = true; v.hidden = false; $('.cam-bar', wrap).hidden = false; $('.cam-bar2', wrap).hidden = true; start(v).catch(fail); return; }
+                if (k === 'use') return close(new File([blob], `foto_${Date.now()}.jpg`, { type: 'image/jpeg' }));
+                if (k === 'gal' || k === 'native') {
+                    stop(); wrap.remove(); document.body.classList.remove('no-scroll');
+                    const cap = input.getAttribute('capture');
+                    if (k === 'gal') input.removeAttribute('capture');
+                    input.dataset.native = '1'; input.click();
+                    setTimeout(() => { if (cap && k === 'gal') input.setAttribute('capture', cap); delete input.dataset.native; }, 1500);
+                    res(undefined);
+                }
+            };
+        });
+    }
+    // Todo botón con input[capture] usa la cámara de la app y entrega la foto al mismo campo (el resto del flujo no cambia)
+    document.addEventListener('click', async e => {
+        const lab = e.target.closest('label'); if (!lab) return;
+        const input = lab.querySelector('input[type=file][capture]') || (lab.htmlFor && document.getElementById(lab.htmlFor));
+        if (!input || !input.hasAttribute('capture') || input.dataset.native || !ok() || e.target === input) return;
+        e.preventDefault();
+        const f = await open(input);
+        if (!f) return;
+        try { const dt = new DataTransfer(); dt.items.add(f); input.files = dt.files; input.dispatchEvent(new Event('change', { bubbles: true })); }
+        catch (err) { toast('Este teléfono no permite pasar la foto: usa 🖼️ Galería.', 'warn'); }
+    }, true);
+    return { open, ok };
+})();

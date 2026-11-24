@@ -29,71 +29,136 @@ const RealData = (() => {
     // Nombre corto de la referencia: sin marca, memoria, color ni palabras de relleno ("GALAXY A16 128GB NEGRO" → "GALAXY A16")
     const COLORS = /\b(NEGRO|NEGRA|BLANCO|BLANCA|AZUL|VERDE|ROJO|ROJA|GRIS|DORADO|DORADA|PLATEADO|PLATEADA|MORADO|LILA|ROSADO|ROSA|PURPURA|VIOLETA|CELESTE|PLATA|ORO|GRAFITO|TITANIO|NARANJA|AMARILLO|BLACK|WHITE|BLUE|GREEN|GOLD|SILVER|PURPLE|GRAY|GREY|MINT|CYAN|OCEAN|SKY|MIDNIGHT|STARLIGHT|BEIGE|COBRE)\b.*$/;
     function refName(t, marca) {
+        // "Redmi 15C 8+256GB Negro" → "REDMI 15C" (RAM + memoria fuera); 4G/5G fuera para juntar variantes
+        t = String(t ?? '').replace(/\s\d{1,2}\s*\+\s*\d{2,4}.*$/, '').replace(/\b[45]G\b/gi, ' ');
         let n = N(t).replace(/\b(CELULAR|CELULARES|SMARTPHONE|TELEFONO|MOVIL|EQUIPO|LIBRE|DUAL SIM|DUALSIM|DS|CEL|KIT|PREPAGO|POSPAGO)\b/g, ' ');
         n = n.replace(/\b\d+\s*(GB|TB|G|MB|RAM|ROM)\b.*$/, '').replace(/\b\d+\s*\+\s*\d+.*$/, '').replace(/\b\d+\s*\/\s*\d+.*$/, '').replace(COLORS, '');
         n = n.replace(new RegExp('\\b(' + BRANDS.concat(['APPLE', 'MOTOROLA']).join('|') + ')\\b', 'g'), ' ').replace(/\s+/g, ' ').trim();
-        return n.split(' ').filter(Boolean).slice(0, 4).join(' ') || (marca || 'OTROS');
+        n = n.split(' ').filter(Boolean).slice(0, 4).join(' ');
+        return !n ? (marca || 'OTROS') : /^\d/.test(n) && marca && marca !== 'OTROS' ? `${marca} ${n}` : n;     // "Xiaomi 17T" → "XIAOMI 17T
     };
     const isBrandHeader = h => { const n = N(h); return !!n && (BRANDS.some(b => n === b || n.startsWith(b + ' ')) || /^IPHONE|^APPLE|^REDMI|^OTROS|^OTRAS/.test(n)); };
-    // Lee el archivo: formato largo (tienda, marca y/o modelo, unidades) o ancho (tienda + una columna por marca)
+    // Lee el archivo: formato largo (tienda, marca y/o modelo, unidades) o ancho (tienda + una columna por marca).
+    // Formato Éxito (VENTAS MOBILE CAT): títulos y filtro arriba; el encabezado está en la fila 6 y varias columnas vienen
+    // en pareja código + nombre bajo un solo título (Marca: 6986 | MOTOROLA; Plu: 3499946 | "Moto G34 256Gb Azul";
+    // Dependencia: 71 | EXITO BUCARAMANGA; Categoría: 501 | 50115 | CELULARES). La app toma siempre la columna con el texto.
+    // Unidades = "# Unidades Totales" (las devoluciones vienen negativas y se restan). Día = columna "Dia".
+    // Se suman todos los tipos de transacción (tienda, kioscos, app, Exito.com, Rappi…): todo es venta de la tienda.
+    const STORE_RE = /NOMBRE TIENDA|DEPENDENCIA|TIENDA|ALMACEN|PDV|PUNTO DE VENTA|PUNTO|SUCURSAL|LOCAL|STORE/;
     function parse(sheets, chainKey) {
         const sh = sheets.slice().sort((a, b) => b.rows.length - a.rows.length)[0]; if (!sh) throw new Error('El archivo no tiene datos.');
         let hi = -1;
-        for (let i = 0; i < Math.min(25, sh.rows.length); i++) {
-            const H = (sh.rows[i] || []).map(N);
-            const store = H.some(h => /TIENDA|ALMACEN|PDV|PUNTO|SUCURSAL|LOCAL|NOMBRE TIENDA|STORE/.test(h));
-            if (store && (H.some(h => /MARCA|BRAND|FABRICANTE|MODELO|REFERENCIA|DESCRIPCION|PRODUCTO|ARTICULO|MATERIAL/.test(h)) || H.filter((h, j) => isBrandHeader(sh.rows[i][j])).length >= 3)) { hi = i; break; }
+        for (let i = 0; i < Math.min(30, sh.rows.length); i++) {
+            const H = (sh.rows[i] || []).map(N), filled = H.filter(Boolean).length;
+            if (filled < 3) continue;
+            const store = H.some(h => STORE_RE.test(h) && !/^TIPO /.test(h));
+            if (store && (H.some(h => /MARCA|BRAND|FABRICANTE|MODELO|REFERENCIA|DESCRIPCION|PRODUCTO|ARTICULO|MATERIAL|PLU/.test(h)) || H.filter((h, j) => isBrandHeader(sh.rows[i][j])).length >= 3)) { hi = i; break; }
         }
-        if (hi < 0) throw new Error('No encontré la tabla: debe tener una columna de tienda y una de marca o modelo (o una columna por marca) con las unidades.');
-        const raw = sh.rows[hi], H = raw.map(N);
+        if (hi < 0) throw new Error('No encontré la tabla: debe tener una columna de tienda (o dependencia) y una de marca o modelo (o una columna por marca) con las unidades.');
+        const raw = sh.rows[hi], H = raw.map(N), data = sh.rows.slice(hi + 1, hi + 200).filter(r => r && r.length);
+        const isNum = v => v instanceof Date || (v !== '' && v != null && !isNaN(+String(v).replace(/[ ,.]/g, '')));
+        // Título que cubre varias columnas (código | nombre): se usa la primera columna con texto
+        const textCol = j => {
+            if (j < 0) return j;
+            for (let k = j; k < Math.min(raw.length + 3, j + 4); k++) {
+                if (k > j && H[k]) break;
+                const vals = data.map(r => r[k]).filter(v => v !== '' && v != null);
+                if (vals.length && vals.filter(v => !isNum(v)).length >= vals.length * .6) return k;
+            }
+            return j;
+        };
         const col = re => H.findIndex(h => re.test(h));
-        const cS = col(/NOMBRE TIENDA|TIENDA|ALMACEN|PDV|PUNTO DE VENTA|SUCURSAL|LOCAL|STORE/), cB = col(/^MARCA|BRAND|FABRICANTE/);
-        const cM = col(/MODELO|REFERENCIA|DESCRIPCION|DESC ARTICULO|PRODUCTO|ARTICULO|MATERIAL|SKU|ITEM/);
-        const cQ = col(/UNIDADES|CANTIDAD|UND|UDS|QTY|PIEZAS|VENTA UN|SELL OUT|SELLOUT/), cD = col(/FECHA|DATE|DIA$/), cC = col(/CATEGORIA|CATEGORY|LINEA|FAMILIA|SUBCATEGORIA/);
+        const first = res => { for (const re of res) { const j = col(re); if (j >= 0) return j; } return -1; };
+        const cS = textCol(first([/^NOMBRE TIENDA/, /^DEPENDENCIA$/, /^DEPENDENCIA/, /TIENDA|ALMACEN|PDV|PUNTO DE VENTA|SUCURSAL|LOCAL|STORE/].map(re => new RegExp(re.source)))), cB = textCol(col(/^MARCA$|^MARCA |BRAND|FABRICANTE/));
+        const cM = textCol(first([/DESCRIPCION|DESC ARTICULO/, /^PLU$/, /MODELO/, /PRODUCTO/, /REFERENCIA/, /ARTICULO|MATERIAL|SKU|ITEM/]));
+        const cQ = first([/UNIDADES|CANTIDAD/, /^UND|^UDS|QTY|PIEZAS|VENTA UN|SELL OUT|SELLOUT/]), cD = col(/FECHA|DATE|^DIA$/);
+        const cC = textCol(first([/^CATEGORIA$/, /CATEGORIA|CATEGORY|FAMILIA/])), cT = col(/TIPO TRANSACCION|CANAL/);
         const wide = cB < 0 && cM < 0 ? raw.map((h, j) => isBrandHeader(h) ? [j, brandOf(h)] : null).filter(Boolean) : [];
-        const rows = [];
+        const rows = [], tx = {};
         for (let i = hi + 1; i < sh.rows.length; i++) {
             const r = sh.rows[i] || [], tienda = String(r[cS] ?? '').trim();
             if (!tienda || /^TOTAL|GRAN TOTAL/.test(N(tienda))) continue;
-            if (cC >= 0 && r[cC] && !/CEL|SMART|MOVIL|TELEF|PHONE|TELEFONIA|EQUIPO/.test(N(r[cC]))) continue;      // solo celulares
+            if (cC >= 0 && r[cC] && !isNum(r[cC]) && !/CEL|SMART|MOVIL|TELEF|PHONE|TELEFONIA|EQUIPO/.test(N(r[cC]))) continue;      // solo celulares
             const fecha = cD >= 0 ? XL.iso(r[cD]) : '';
             if (wide.length) wide.forEach(([j, b]) => { const q = Math.round(XL.num(r[j])); if (q) rows.push({ tienda, marca: b, q, fecha }); });
             else {
                 const q = cQ >= 0 ? Math.round(XL.num(r[cQ])) : 1; if (!q) continue;
                 const mod = cM >= 0 ? String(r[cM] ?? '').trim() : '', marca = cB >= 0 && String(r[cB] ?? '').trim() ? brandOf(r[cB]) : brandOf(mod);
                 rows.push({ tienda, marca, q, fecha, ref: mod ? refName(mod, marca) : '' });
+                if (cT >= 0) { const t = String(r[cT] ?? '').trim() || 'Sin tipo'; tx[t] = (tx[t] || 0) + q; }
             }
         }
         if (!rows.length) throw new Error('No encontré unidades en el archivo.');
         const fechas = rows.map(r => r.fecha).filter(Boolean).sort();
-        return { chain: chainKey, sheet: sh.name, rows, desde: fechas[0] || '', hasta: fechas[fechas.length - 1] || '', formato: wide.length ? 'columnas por marca' : cM >= 0 ? 'filas por modelo' : 'filas por marca', conRef: rows.some(r => r.ref) };
+        const cols = { tienda: raw[first([/^NOMBRE TIENDA/, /^DEPENDENCIA/, /TIENDA|ALMACEN|PDV|PUNTO|SUCURSAL|LOCAL|STORE/])] || '', marca: cB >= 0 ? (raw[cB] || raw[col(/^MARCA/)] || 'Marca') : '', modelo: cM >= 0 ? (raw[cM] || raw[first([/DESCRIPCION|DESC ARTICULO/, /^PLU$/, /MODELO/, /PRODUCTO/, /REFERENCIA/])] || 'Modelo') : '', unidades: cQ >= 0 ? raw[cQ] : '', fecha: cD >= 0 ? raw[cD] : '' };
+        return { chain: chainKey, sheet: sh.name, rows, tx, cols, devol: rows.filter(r => r.q < 0).length, desde: fechas[0] || '', hasta: fechas[fechas.length - 1] || '', formato: wide.length ? 'columnas por marca' : cM >= 0 ? 'filas por modelo' : 'filas por marca', conRef: rows.some(r => r.ref) };
     }
+    // Cruce de tiendas: primero el nombre exacto; luego parecido (≥ 80) solo con tiendas de la app que no cruzaron exacto.
+    // Así "EXITO BUCARAMANGA CABECERA" no cae en "EXITO BUCARAMANGA". Las tiendas de la cadena que no están en la app se ignoran.
+    const wkKey = f => f ? `${f.slice(0, 7)}|W${pad2(isoWeek(f))}` : 'MES';
     function match(P) {
-        const hint = { exito: 'EXITO', falabella: 'FALABELLA', cencosud: 'CENCOSUD', wom: 'WOM', olimpica: 'OLIMPICA' }[P.chain] || '';
         const keys = REAL_POOL[P.chain] || (['alkosto', 'ktronix'].includes(P.chain) ? REAL_POOL.corbeta : [P.chain]);
         const pool = State.stores.filter(s => keys.includes(normLogoKey(s.logoKey)));
-        const cache = {}, stores = {}, refs = {}, unm = {};
+        const names = [...new Set(P.rows.map(r => r.tienda))], cache = {}, taken = new Set();
+        names.forEach(n => { const st = pool.find(s => N(s.tienda) === N(n) || (s.usuario && N(s.usuario) === N(n))); if (st) { cache[n] = st; taken.add(st.id); } });
+        names.forEach(n => {
+            if (cache[n]) return;
+            let b = null, bs = 0; pool.filter(s => !taken.has(s.id)).forEach(s => { const sc = Match.score ? Match.score(n, s) : 0; if (sc > bs) { bs = sc; b = s; } });
+            cache[n] = bs >= 80 ? b : null; if (cache[n]) taken.add(cache[n].id);
+        });
+        const stores = {}, refs = {}, unm = {}, weeks = {};
         P.rows.forEach(r => {
-            const k = N(r.tienda); if (!(k in cache)) cache[k] = Match.store(r.tienda, { cadena: hint, zona: '', stores: pool.length ? pool : State.stores });
-            const st = cache[k];
+            const st = cache[r.tienda];
             if (!st) { unm[r.tienda] = (unm[r.tienda] || 0) + r.q; return; }
             const S = stores[st.id] = stores[st.id] || {}; S[r.marca] = (S[r.marca] || 0) + r.q;
-            if (r.ref) { const R = refs[st.id] = refs[st.id] || {}, rk = `${r.marca}|${r.ref}`; R[rk] = (R[rk] || 0) + r.q; }
+            const W = weeks[wkKey(r.fecha)] = weeks[wkKey(r.fecha)] || { desde: r.fecha, hasta: r.fecha, stores: {}, refs: {} };
+            if (r.fecha && (!W.desde || r.fecha < W.desde)) W.desde = r.fecha; if (r.fecha && r.fecha > W.hasta) W.hasta = r.fecha;
+            const WS = W.stores[st.id] = W.stores[st.id] || {}; WS[r.marca] = (WS[r.marca] || 0) + r.q;
+            if (r.ref) {
+                const rk = `${r.marca}|${r.ref}`, R = refs[st.id] = refs[st.id] || {}; R[rk] = (R[rk] || 0) + r.q;
+                const WR = W.refs[st.id] = W.refs[st.id] || {}; WR[rk] = (WR[rk] || 0) + r.q;
+            }
         });
-        P.stores = stores; P.refs = refs; P.unmatched = unm;
+        P.stores = stores; P.refs = refs; P.unmatched = unm; P.weeks = weeks;
+        P.fuera = Object.keys(unm).length; P.sumFuera = sum(Object.values(unm));
         return P;
     }
     const docId = (chain, ym) => `real_${chain}_${ym}`;
     let cache = {}, loaded = {};
-    async function save(P, month, desde, hasta, fileName) {
-        const s = State.session || {};
-        // Las referencias de cada tienda se recortan a las 60 más vendidas (cabe en un documento)
-        const refs = {}; Object.entries(P.refs || {}).forEach(([id, R]) => { refs[id] = Object.fromEntries(Object.entries(R).sort((a, b) => b[1] - a[1]).slice(0, 60)); });
-        const doc = { id: docId(P.chain, month), kind: 'real', chain: P.chain, month, desde: desde || P.desde || month + '-01', hasta: hasta || P.hasta || todayStr(), file: fileName, by: s.nombre || '', at: Date.now(), stores: P.stores, refs, unmatched: P.unmatched };
-        cache[doc.id] = doc;
-        // La carga unificada de Corbeta reemplaza las que se hubieran hecho por separado (Alkosto o Ktronix) ese mes
-        if (P.chain === 'corbeta') ['alkosto', 'ktronix'].forEach(k => { const id = docId(k, month); if (cache[id]) { delete cache[id]; Data.del(COL.zoneData, id).catch(() => { }); } });
-        return Data.set(COL.zoneData, doc.id, doc, false);
+    const trimRefs = (R, n) => { const o = {}; Object.entries(R || {}).forEach(([id, M]) => { o[id] = Object.fromEntries(Object.entries(M).filter(([, q]) => q > 0).sort((a, b) => b[1] - a[1]).slice(0, n)); }); return o; };
+    const addMap = (a, b) => { Object.entries(b || {}).forEach(([k, v]) => { a[k] = (a[k] || 0) + v; }); return a; };
+    // Suma de las semanas guardadas del mes (lo que se ve con "Mes completo")
+    function rollup(doc) {
+        const stores = {}, refs = {}; let desde = '', hasta = '';
+        Object.values(doc.weeks || {}).forEach(W => {
+            Object.entries(W.stores || {}).forEach(([id, M]) => { stores[id] = addMap(stores[id] || {}, M); });
+            Object.entries(W.refs || {}).forEach(([id, M]) => { refs[id] = addMap(refs[id] || {}, M); });
+            if (W.desde && (!desde || W.desde < desde)) desde = W.desde; if (W.hasta && W.hasta > hasta) hasta = W.hasta;
+        });
+        doc.stores = stores; doc.refs = trimRefs(refs, 60); doc.desde = desde || doc.desde; doc.hasta = hasta || doc.hasta;
+        return doc;
+    }
+    // Guardar: la data se acumula por semana. Cargar la semana 16 al 22 no borra la del 9 al 15; recargar una semana la reemplaza.
+    async function save(P, monthDef, desde, hasta, fileName) {
+        const s = State.session || {}, by = s.nombre || '', at = Date.now();
+        const W = P.weeks && Object.keys(P.weeks).length ? P.weeks : { MES: { desde, hasta, stores: P.stores, refs: P.refs } };
+        const byMonth = {};
+        Object.entries(W).forEach(([k, w]) => { const m = k === 'MES' ? monthDef : k.slice(0, 7); (byMonth[m] = byMonth[m] || {})[k === 'MES' ? 'MES' : k.slice(8)] = { ...w, refs: trimRefs(w.refs, 40), file: fileName, by, at }; });
+        const ids = [];
+        for (const [month, weeks] of Object.entries(byMonth)) {
+            const id = docId(P.chain, month);
+            let old = cache[id] || await Data.get(COL.zoneData, id).catch(() => null);
+            const prevW = old && old.weeks ? { ...old.weeks } : {};
+            if (!weeks.MES) delete prevW.MES;                           // una carga por semanas reemplaza una carga vieja sin fechas
+            const doc = rollup({ id, kind: 'real', chain: P.chain, month, file: fileName, by, at, weeks: { ...prevW, ...weeks }, unmatched: Object.fromEntries(Object.entries(P.unmatched || {}).slice(0, 40)) });
+            let n = 40; while (JSON.stringify(doc).length > 900000 && n > 10) { n -= 10; Object.values(doc.weeks).forEach(w => { w.refs = trimRefs(w.refs, n); }); doc.refs = trimRefs(doc.refs, n + 20); }
+            cache[id] = doc; ids.push(id);
+            // La carga unificada de Corbeta reemplaza las que se hubieran hecho por separado (Alkosto o Ktronix) ese mes
+            if (P.chain === 'corbeta') ['alkosto', 'ktronix'].forEach(k => { const x = docId(k, month); if (cache[x]) { delete cache[x]; Data.del(COL.zoneData, x).catch(() => { }); } });
+            const r = await Data.set(COL.zoneData, id, doc, false);
+            if (r && r.error) throw new Error('La nube no aceptó la data (' + r.error + ').');
+        }
+        return ids;
     }
     async function load(month) {
         month = month || todayStr().slice(0, 7);
@@ -103,11 +168,16 @@ const RealData = (() => {
     }
     const ensure = async month => { month = month || todayStr().slice(0, 7); if (!loaded[month] || Date.now() - loaded[month] > 120000) await load(month).catch(() => { }); };
     const docsFor = month => Object.values(cache).filter(d => d.kind === 'real' && d.month === month);
-    // Venta real de una tienda (por marca y referencia) en el mes, o null si no hay data real de su cadena
-    function forStore(st, month) {
+    // Semanas con data real en el mes (W46, W47…), para elegir el periodo
+    const weeksOf = month => [...new Set(docsFor(month).flatMap(d => Object.keys(d.weeks || {}).filter(k => k !== 'MES')))].sort();
+    const weekRange = (month, w) => { const L = docsFor(month).map(d => (d.weeks || {})[w]).filter(Boolean); return L.length ? { desde: L.map(x => x.desde).sort()[0], hasta: L.map(x => x.hasta).sort().pop() } : null; };
+    // Venta real de una tienda (por marca y referencia) en el mes o en una semana, o null si no hay data real de su cadena
+    function forStore(st, month, wk) {
         month = month || todayStr().slice(0, 7);
-        const D = docsFor(month).filter(d => d.stores && d.stores[st.id]).sort((a, b) => (b.at || 0) - (a.at || 0))[0];
-        return D ? { marcas: D.stores[st.id], refs: (D.refs || {})[st.id] || {}, desde: D.desde, hasta: D.hasta, file: D.file, by: D.by, at: D.at, chain: D.chain } : null;
+        const D = docsFor(month).filter(d => wk ? d.weeks && d.weeks[wk] && d.weeks[wk].stores[st.id] : d.stores && d.stores[st.id]).sort((a, b) => (b.at || 0) - (a.at || 0))[0];
+        if (!D) return null;
+        if (wk) { const w = D.weeks[wk]; return { marcas: w.stores[st.id], refs: (w.refs || {})[st.id] || {}, desde: w.desde, hasta: w.hasta, file: w.file, by: w.by, at: w.at, chain: D.chain }; }
+        return { marcas: D.stores[st.id], refs: (D.refs || {})[st.id] || {}, desde: D.desde, hasta: D.hasta, file: D.file, by: D.by, at: D.at, chain: D.chain };
     }
     // Share, participación y puesto: data real primero; si no hay, el reporte de los asesores (cierres)
     function shareOf(marcas) {
@@ -116,7 +186,7 @@ const RealData = (() => {
         const pos = inf > 0 ? rank.findIndex(([b]) => b === 'INFINIX') + 1 : null;
         return { tot, inf, share: tot ? inf / tot : null, pos, rank };
     }
-    return { parse, match, save, load, ensure, forStore, shareOf, docsFor, brandOf, refName };
+    return { parse, match, save, load, ensure, forStore, shareOf, docsFor, weeksOf, weekRange, brandOf, refName };
 })();
 
 // Lo que más vende cada marca en una tienda (data real): para comparativos, role play y focos de ataque
@@ -129,13 +199,13 @@ function versusFor(st, month) {
 }
 
 // Compara la data real con lo que reportaron los asesores en los cierres del mismo periodo
-async function realVsReporte(stores, month) {
+async function realVsReporte(stores, month, wk) {
     await RealData.load(month);
     const keys = [...new Set(stores.map(s => `${s.id}_${month}`))];
     let cl = [];
     for (let i = 0; i < keys.length; i += 10) cl = cl.concat(await Data.list(COL.closures, [['storeMonth', 'in', keys.slice(i, i + 10)]]).catch(() => []));
     return stores.map(st => {
-        const R = RealData.forStore(st, month);
+        const R = RealData.forStore(st, month, wk);
         const mine = cl.filter(c => c.storeId === st.id && (!R || ((!R.desde || c.fecha >= R.desde) && (!R.hasta || c.fecha <= R.hasta))));
         const rep = {}; mine.forEach(c => { rep.INFINIX = (rep.INFINIX || 0) + closureInfinix(c); Object.entries(c.competencia || {}).forEach(([b, v]) => { rep[b] = (rep[b] || 0) + int(v); }); });
         const real = R ? RealData.shareOf(R.marcas) : null, rp = mine.length ? RealData.shareOf(rep) : null;
@@ -158,8 +228,8 @@ function realUploadHTML() {
     return `<section class="card up-card" id="up-real">
         <div class="up-h"><span class="up-ico">🏬</span><div><h3 class="h3">Data real por cadena · sell-out</h3><p class="mute">Lo que vendió cada marca (y cada referencia, si el archivo trae el modelo) en cada tienda según la cadena. Con esto salen el share real, la participación y el puesto de Infinix, las referencias que más vende la competencia y las alertas cuando el reporte del asesor no coincide. <b>Alkosto y Ktronix van en un solo archivo (Corbeta):</b> la app reparte cada tienda a su cadena. Solo la ven los líderes.</p></div></div>
         <div class="up-real-grid">${REAL_CHAINS.map(([k, l]) => { const d = docOf(k); return `<div class="up-real ${d ? 'on' : ''}"><div class="row between"><span>${realChainLogo(k, l, 'sm')}</span>${d ? `<i class="pill ok">✓ ${Object.keys(d.stores || {}).length} PDV</i>` : '<i class="pill">Sin cargar</i>'}</div>
-            <small class="mute">${d ? `${esc(d.desde)} a ${esc(d.hasta)} · ${esc(d.by || '')}${d.refs && Object.keys(d.refs).length ? ' · con referencias' : ''}` : esc(l) + ' · mes en curso'}</small>
-            <label class="btn btn-ghost sm">📂 ${d ? 'Reemplazar' : 'Cargar'}<input type="file" data-real="${k}" accept=".xlsx,.xls,.csv" hidden></label></div>`; }).join('')}</div>
+            <small class="mute">${d ? `${esc(d.desde)} a ${esc(d.hasta)}${d.weeks && Object.keys(d.weeks).filter(k => k !== 'MES').length ? ' · ' + Object.keys(d.weeks).filter(k => k !== 'MES').sort().join(', ') : ''} · ${esc(d.by || '')}${d.refs && Object.keys(d.refs).length ? ' · con referencias' : ''}` : esc(l) + ' · mes en curso'}</small>
+            <label class="btn btn-ghost sm">📂 ${d ? 'Cargar otra semana' : 'Cargar'}<input type="file" data-real="${k}" accept=".xlsx,.xls,.csv" hidden></label></div>`; }).join('')}</div>
         <div id="up-real-out"></div></section>`;
 }
 async function onRealFile(chain, file, after) {
@@ -174,20 +244,29 @@ async function onRealFile(chain, file, after) {
         const inf = sum(Object.values(P.stores).map(s => int(s.INFINIX))), all = sum(Object.values(P.stores).map(s => sum(Object.values(s))));
         const month = todayStr().slice(0, 7);
         const porCadena = chain === 'corbeta' ? ['alkosto', 'ktronix'].map(k => `${CHAINS[k].name} ${Object.keys(P.stores).filter(id => normLogoKey((storeById(id) || {}).logoKey) === k).length}`).join(' · ') : '';
-        out.innerHTML = `<div class="up-sum"><b>${esc((REAL_CHAINS.find(c => c[0] === chain) || [])[1])}</b> · ${P.rows.length} filas (${esc(P.formato)}) · ${tot} uds · <b>${Object.keys(P.stores).length}</b> PDV cruzados${porCadena ? ` (${esc(porCadena)})` : ''} · share Infinix <b>${all ? Math.round(inf / all * 100) : 0}%</b>${P.conRef ? ' · con referencias ✓' : ' · <span class="warn-t">sin columna de modelo (no habrá ranking de referencias)</span>'}${unm.length ? ` · <b class="warn-t">${unm.length} tiendas sin cruzar</b>` : ''}</div>
-            ${unm.length ? `<p class="hint">Sin cruzar: ${unm.slice(0, 12).map(([t, q]) => esc(t) + ' (' + q + ')').join(', ')}${unm.length > 12 ? '…' : ''}</p>` : ''}
-            <div class="row wrap end" style="gap:8px"><label class="lbl" style="margin:0">Periodo</label><input type="date" class="input" id="rl-d" value="${P.desde || month + '-01'}"><span>a</span><input type="date" class="input" id="rl-h" value="${P.hasta || todayStr()}">
+        const wks = Object.entries(P.weeks || {}).filter(([k]) => k !== 'MES').sort();
+        const mine = Object.keys(P.stores).map(storeById).filter(st => st && inScope(st.zona));
+        const mineA = RealData.shareOf(mine.reduce((m, st) => { Object.entries(P.stores[st.id]).forEach(([b, v]) => { m[b] = (m[b] || 0) + v; }); return m; }, {}));
+        out.innerHTML = `<div class="up-sum"><b>${esc((REAL_CHAINS.find(c => c[0] === chain) || [])[1])}</b> · ${P.rows.length} filas (${esc(P.formato)}) · ${tot} uds en el archivo
+            <div class="rl-cols"><span>🏬 Tienda: <b>${esc(P.cols.tienda || '—')}</b></span><span>🏷️ Marca: <b>${esc(P.cols.marca || 'por nombre del modelo')}</b></span><span>📱 Modelo: <b>${esc(P.cols.modelo || '—')}</b></span><span>🔢 Unidades: <b>${esc(P.cols.unidades || '1 por fila')}</b></span><span>📅 Día: <b>${esc(P.cols.fecha || '—')}</b></span></div>
+            <p>✅ <b>${Object.keys(P.stores).length}</b> tiendas de la app cruzadas${porCadena ? ` (${esc(porCadena)})` : ''}${P.conRef ? ' · con referencias por modelo' : ''} · ${all} uds · share Infinix <b>${all ? Math.round(inf / all * 100) : 0}%</b>${mine.length && mine.length < Object.keys(P.stores).length ? ` · tu alcance: ${mine.length} tiendas, share <b>${mineA.share == null ? '—' : Math.round(mineA.share * 100) + '%'}</b>` : ''}</p>
+            ${wks.length ? `<p>📅 Semanas en el archivo: ${wks.map(([k, w]) => `<b>${esc(k.slice(8))}</b> (${int(w.desde.slice(8))} al ${int(w.hasta.slice(8))} ${MESES[+k.slice(5, 7) - 1]})`).join(', ')}. Se guardan por semana: cargar otra semana no borra esta.</p>` : ''}
+            ${Object.keys(P.tx || {}).length ? `<p class="hint">Se suman todos los canales de venta: ${Object.entries(P.tx).sort((a, b) => b[1] - a[1]).map(([t, q]) => `${esc(t)} ${q}`).join(' · ')}${P.devol ? ` · ${P.devol} devoluciones restadas` : ''}.</p>` : ''}
+            ${unm.length ? `<p class="hint">${unm.length} tiendas de la cadena no están en la app y se ignoran (${sum(unm.map(x => x[1]))} uds): ${unm.slice(0, 8).map(([t]) => esc(t)).join(', ')}${unm.length > 8 ? '…' : ''}</p>` : ''}</div>
+            <div class="row wrap end" style="gap:8px">${wks.length ? '' : `<label class="lbl" style="margin:0">Periodo</label><input type="date" class="input" id="rl-d" value="${P.desde || month + '-01'}"><span>a</span><input type="date" class="input" id="rl-h" value="${P.hasta || todayStr()}">`}
             <button class="btn btn-primary" id="rl-ok">✅ Guardar data real</button></div>`;
         $('#rl-ok').onclick = async e => {
             if (!canWrite()) return; busy(e.currentTarget, true);
-            try { await RealData.save(P, month, $('#rl-d').value, $('#rl-h').value, file.name); toast('Data real guardada: ya la ven todos los líderes', 'ok'); if (after) after(); } finally { busy(e.currentTarget, false); }
+            try { await RealData.save(P, month, ($('#rl-d') || {}).value, ($('#rl-h') || {}).value, file.name); toast('Data real guardada: ya la ven todos los líderes', 'ok'); if (after) after(); }
+            catch (err) { toast(err.message || 'No se pudo guardar', 'error'); }
+            finally { const b = $('#rl-ok'); if (b) busy(b, false); }
         };
     } catch (e) { console.error(e); out.innerHTML = `<p class="err">${esc(e.message || e)}</p>`; }
 }
 
 // ---------- Explorador de share real y de Infinix vs. competencia (Análisis de zona) ----------
 // Filtros en cascada (regional → zona → cadena → tienda) y nivel de agrupación (tienda, cadena, zona, regional).
-const RS = { regional: '', zona: '', cadena: '', tienda: '', nivel: 'tienda', cache: null, src: 'real', wk: '' };
+const RS = { regional: '', zona: '', cadena: '', tienda: '', nivel: 'tienda', cache: null, src: 'real', wk: '', rwk: '' };
 const rsPc = v => v == null ? '—' : Math.round(v * 100) + '%';
 function rsScope(L) {
     return L.filter(x => (!RS.regional || zoneRegional(x.st.zona) === RS.regional) && (!RS.zona || x.st.zona === RS.zona) && (!RS.cadena || chainGroup(x.st).key === RS.cadena) && (!RS.tienda || x.st.id === RS.tienda));
@@ -229,19 +308,27 @@ const brandBars = (rank, tot, n = 8) => `<div class="rs-bars">${rank.slice(0, n)
 async function paintRealShare(box, stores, label) {
     if (!box) return;
     box.innerHTML = '<p class="hint">Leyendo la data real de las cadenas…</p>';
-    const month = todayStr().slice(0, 7), L = await realVsReporte(stores, month);
+    const month = todayStr().slice(0, 7);
+    await RealData.load(month);
+    const weeks = RealData.weeksOf(month); if (RS.rwk && !weeks.includes(RS.rwk)) RS.rwk = '';
+    const L = await realVsReporte(stores, month, RS.rwk);
     if (!box.isConnected) return;
     if (!RS.cache || RS.cache.label !== label) Object.assign(RS, { regional: '', zona: '', cadena: '', tienda: '' });
     RS.cache = { L, label, month };
+    const wTxt = w => { const r = RealData.weekRange(month, w); return `${w} · ${r ? int(r.desde.slice(8)) + '–' + int(r.hasta.slice(8)) : ''}`; };
+    const perTxt = RS.rwk ? wTxt(RS.rwk) + ' ' + mesLargo(month).split(' ')[0].toLowerCase() : 'Mes de ' + mesLargo(month);
+    const wkSel = weeks.length ? `<div class="vs-wk"><span class="lbl">Periodo</span><div class="seg sm">${[['', 'Mes completo']].concat(weeks.map(w => [w, wTxt(w)])).map(([k, l]) => `<button class="seg-btn ${(RS.rwk || '') === k ? 'active' : ''}" data-rswr="${k}">${esc(l)}</button>`).join('')}</div></div>` : '';
+    const bindWk = () => $$('[data-rswr]', box).forEach(b => b.onclick = () => { RS.rwk = b.dataset.rswr; paintRealShare(box, stores, label); });
     const paint = () => {
         RS.src = 'real';
         const Ls = rsScope(L), A = rsAgg(Ls), alertas = Ls.filter(x => x.alerta && x.real), G = rsGroups(Ls, RS.nivel), lider = A.rank[0], lbl = rsLabel(label);
         const V = refsOf(Ls), infRank = V.all.findIndex(r => r.marca === 'INFINIX'), atk = ataques(V, RS.tienda ? storeById(RS.tienda) : null);
         const porCadena = rsGroups(Ls, 'cadena').map(g => ({ g, V: refsOf(g.L) })).filter(x => x.V.all.length);
-        if (!A.tot) { box.innerHTML = rsFiltersHTML(L) + `<div class="card empty" style="margin-top:10px">${RealData.docsFor(month).length ? 'No hay data real para este filtro.' : 'Aún no hay data real este mes. La carga el coordinador en <b>Cargar datos › Data real por cadena</b>.'} Lo que reportan los asesores en sus cierres está en <b>⚔️ Infinix vs competencia</b>.</div>`; rsBind(box, paint); return; }
+        if (!A.tot) { box.innerHTML = rsFiltersHTML(L) + wkSel + `<div class="card empty" style="margin-top:10px">${RealData.docsFor(month).length ? 'No hay data real para este filtro.' : 'Aún no hay data real este mes. La carga el coordinador en <b>Cargar datos › Data real por cadena</b>.'} Lo que reportan los asesores en sus cierres está en <b>⚔️ Infinix vs competencia</b>.</div>`; rsBind(box, paint); bindWk(); return; }
         box.innerHTML = `
-        ${rsFiltersHTML(L)}
+        ${rsFiltersHTML(L)}${wkSel}
         <div class="seg sm" style="margin:8px 0">${[['tienda', 'Por tienda'], ['cadena', 'Por cadena'], ['zona', 'Por zona'], ['regional', 'Por regional']].map(([k, l]) => `<button class="seg-btn ${RS.nivel === k ? 'active' : ''}" data-rsn="${k}">${l}</button>`).join('')}</div>
+        <p class="hint" style="margin:0 0 6px">📅 ${esc(perTxt)}</p>
         <div class="zg-kpis">
             <div class="hl"><span>Share real Infinix · ${esc(lbl)}</span><b>${rsPc(A.share)}</b><em>${A.inf} de ${A.tot} uds</em></div>
             <div><span>Puesto de Infinix</span><b>${A.pos ? '#' + A.pos : '—'}</b><em>de ${A.rank.length} marcas</em></div>
@@ -271,12 +358,12 @@ async function paintRealShare(box, stores, label) {
             ${alertas.length ? `<div class="ds-list">${alertas.map(x => `<div class="ds-row"><span>${storeLogo(x.st, 'xs')} <b>${esc(x.st.tienda)}</b> <small class="mute">${x.cierres} cierres</small></span><em class="rv-dias r">${esc(x.alerta)}</em></div>`).join('')}</div>` : '<p class="mute">✅ Sin inconsistencias para este filtro.</p>'}
             <p class="hint">Alerta: Infinix reportado distinto en 3 uds y 15% o más, share con 10 puntos de diferencia, venta de la tienda muy distinta, o tienda sin cierres en el periodo de la data real.</p></details>
         <p class="hint">Share real = unidades Infinix ÷ unidades de la tienda según el sell-out de cada cadena (lo carga el coordinador). Solo la ven los líderes.</p>`;
-        rsBind(box, paint);
+        rsBind(box, paint); bindWk();
         ReportActions.bind($('#rs-act', box), {
             title: 'Market share real · Central de Operaciones', noStore: true,
             validate: () => A.tot ? null : 'No hay data para este filtro.',
-            filename: () => `Share_real_${slug(lbl)}_${month}.png`,
-            build: stage => buildShareCanvas(stage, { lbl, A, G, nivel: RS.nivel, alertas, month, autor: State.session, V })
+            filename: () => `Share_real_${slug(lbl)}_${RS.rwk || month}.png`,
+            build: stage => buildShareCanvas(stage, { lbl, A, G, nivel: RS.nivel, alertas, month, autor: State.session, V, per: perTxt })
         });
     };
     paint();
@@ -284,11 +371,11 @@ async function paintRealShare(box, stores, label) {
 
 function buildShareCanvas(stage, d) {
     const nivelTxt = { tienda: 'POR TIENDA', cadena: 'POR CADENA', zona: 'POR ZONA', regional: 'POR REGIONAL' }[d.nivel];
-    const docs = RealData.docsFor(d.month), per = docs.length ? `${docs.map(x => x.desde).sort()[0]} a ${docs.map(x => x.hasta).sort().pop()}` : '';
+    const docs = RealData.docsFor(d.month), per = d.per || (docs.length ? `${docs.map(x => x.desde).sort()[0]} a ${docs.map(x => x.hasta).sort().pop()}` : '');
     const el = document.createElement('div'); el.className = 'rp sp rs-rep';
     el.innerHTML = `<div class="rp-bar"></div>
     <header class="rp-head"><img class="rp-logo" src="${LOGO_INFINIX}" alt="Infinix">
-        <div class="rp-head-mid"><div class="rp-kicker">MARKET SHARE REAL · SELL-OUT DE LAS CADENAS</div><div class="rp-title">${esc(d.lbl.toUpperCase())}</div><div class="rp-sub">${esc(mesLargo(d.month))}${per ? ' · venta del ' + esc(per) : ''}</div></div>
+        <div class="rp-head-mid"><div class="rp-kicker">MARKET SHARE REAL · SELL-OUT DE LAS CADENAS</div><div class="rp-title">${esc(d.lbl.toUpperCase())}</div><div class="rp-sub">${esc(per || mesLargo(d.month))}</div></div>
         <div class="pl-who"><b>${esc((d.autor || {}).nombre || '')}</b><small>${ROLES[(d.autor || {}).rol] ? ROLES[d.autor.rol].label : ''}</small></div></header>
     <div class="sp-band">
         <div class="hero"><span>SHARE INFINIX</span><b>${rsPc(d.A.share)}</b><em>${d.A.inf} de ${d.A.tot} uds vendidas</em></div>

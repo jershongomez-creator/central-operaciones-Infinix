@@ -237,7 +237,7 @@ registerModule('m4', (() => {
         Charts.destroyAll('view');
         const byRoi = a.rows.slice().sort((x, y) => (y.roi ?? -1) - (x.roi ?? -1));
         const maxRoi = Math.max(1, ...byRoi.map(r => r.roi || 0));
-        const TABS = [['resumen', '📊 Resumen de venta'], ['cierres', '🧾 Cierres de las tiendas'], ['inventario', '📦 Inventario'], ['obsequios', '🎁 Obsequios'], ['equipo', '👥 Visitas y planes']];
+        const TABS = [['resumen', '📊 Resumen de venta'], ['cierres', '🧾 Cierres de las tiendas'], ['inventario', '📦 Inventario'], ['parciales', '⏱️ Parciales'], ['obsequios', '🎁 Obsequios'], ['equipo', '👥 Visitas y planes']];
         out.innerHTML = `
         <nav class="ztabs m4-tabs" id="m4-tabs">${TABS.map(([k, l]) => `<button class="ztab ${m4tab === k ? 'on' : ''}" data-m4t="${k}">${l}</button>`).join('')}</nav>
         <div class="zpanel" data-m4p="resumen" ${m4tab === 'resumen' ? '' : 'hidden'}>
@@ -338,6 +338,10 @@ registerModule('m4', (() => {
             <div class="actions" style="margin-top:10px"><button class="btn btn-ghost" data-act="preview">👁️ Vista previa</button><button class="btn btn-wa" data-act="share">📲 WhatsApp</button><button class="btn btn-primary" data-act="save">⬇️ Descargar</button></div>
         </section>
         </div>
+        <div class="zpanel" data-m4p="parciales" ${m4tab === 'parciales' ? '' : 'hidden'}>
+        <p class="hint m4-help">⏱️ Qué tiendas envían el parcial de venta de la 1, las 3 y las 5 p. m., a qué hora y por dónde (WhatsApp o mensaje copiado). A tiempo = enviado hasta 45 minutos después de la hora del corte.</p>
+        <section class="card"><div class="row between wrap" style="gap:8px"><h3 class="h3">⏱️ Auditoría de parciales de venta</h3><label class="field-inline"><span class="lbl">Día</span><input type="date" class="input" id="m4-pc-f" value="${todayStr()}" max="${todayStr()}"></label></div><div id="m4-pc-out"></div></section>
+        </div>
         <div class="zpanel" data-m4p="obsequios" ${m4tab === 'obsequios' ? '' : 'hidden'}>
         <p class="hint m4-help">🎁 Merchandising que recibió cada tienda, cuántas entregas ya legalizó y cuántas le faltan. Descarga las legalizaciones por tienda para subirlas a la otra plataforma.</p>
         <section class="card"><h3 class="h3">🎁 Obsequios y legalizaciones</h3><div id="m4-obs-out"></div></section>
@@ -351,7 +355,9 @@ registerModule('m4', (() => {
             </tbody></table></div>
         </section>
         </div>`;
-        $$('[data-m4t]', out).forEach(b => b.onclick = () => { m4tab = b.dataset.m4t; $$('[data-m4t]', out).forEach(x => x.classList.toggle('on', x === b)); $$('[data-m4p]', out).forEach(p => { p.hidden = p.dataset.m4p !== m4tab; }); if (m4tab === 'obsequios') paintObseqLeaders($('#m4-obs-out'), agg.rows.map(r => r.st)); });
+        $$('[data-m4t]', out).forEach(b => b.onclick = () => { m4tab = b.dataset.m4t; $$('[data-m4t]', out).forEach(x => x.classList.toggle('on', x === b)); $$('[data-m4p]', out).forEach(p => { p.hidden = p.dataset.m4p !== m4tab; }); if (m4tab === 'obsequios') paintObseqLeaders($('#m4-obs-out'), agg.rows.map(r => r.st)); if (m4tab === 'parciales') paintParciales(); });
+        const pcf = $('#m4-pc-f'); if (pcf) pcf.onchange = () => paintParciales();
+        if (m4tab === 'parciales') paintParciales();
         if (m4tab === 'obsequios' && typeof paintObseqLeaders === 'function') paintObseqLeaders($('#m4-obs-out'), agg.rows.map(r => r.st));
 
         // Auditoría: filtro, imagen y cierres del día
@@ -604,6 +610,29 @@ registerModule('m4', (() => {
             porRef: keys.map(k => ({ k, name: (INFINIX_MODELS.find(m => m.key === k) || {}).name, inv: sum(S.map(x => x.inv[k])), vm: sum(S.map(x => x.vm[k])), sin: S.filter(x => x.meta[k] > 0 && !x.inv[k]).length, dias: dias(sum(S.map(x => x.inv[k])), sum(S.map(x => x.vm[k])), day) })).sort((a, b) => b.vm - a.vm) };
     }
     const invCls = d => d == null ? 'inv-x' : d === 0 ? 'inv-0' : d > 30 ? 'inv-hi' : d < 7 ? 'inv-lo' : 'inv-ok';
+    // ---- Auditoría de parciales: por tienda, los cortes de 1, 3 y 5 p. m. del día y lo enviado en la semana
+    async function paintParciales() {
+        const box = $('#m4-pc-out'); if (!box || !agg) return;
+        const f = ($('#m4-pc-f') || {}).value || todayStr(), S = agg.rows.map(r => r.st), zs = [...new Set(S.map(s => s.zona))];
+        box.innerHTML = '<p class="hint">Buscando parciales…</p>';
+        const wk = weekDays(f).filter(d => d <= todayStr()), all = [];
+        for (let i = 0; i < zs.length; i += 10) all.push(...await Data.list(COL.zoneReports, [['kind', '==', 'parcial'], ['zona', 'in', zs.slice(i, i + 10)]]).catch(() => []));
+        if (!box.isConnected) return;
+        const SL = PARCIAL_HORAS.slice(0, 3), slotH = { [SL[0]]: 13, [SL[1]]: 15, [SL[2]]: 17 };
+        const of = (st, d) => all.find(x => x.storeId === st.id && x.fecha === d);
+        const aTiempo = (sl, e) => { const t = new Date(e.at), m = t.getHours() * 60 + t.getMinutes(); return m <= slotH[sl] * 60 + 45; };
+        const cell = (sl, e) => !e ? '<td class="pc-no">✗</td>' : `<td class="${aTiempo(sl, e) ? 'pc-ok' : 'pc-late'}">${e.via === 'whatsapp' ? '📲' : '📋'} ${new Date(e.at).toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit' })}${aTiempo(sl, e) ? '' : '<small> tarde</small>'}</td>`;
+        const R = S.map(st => { const D = of(st, f), E = (D && D.envios) || {}, n = SL.filter(sl => E[sl]).length, wa = SL.filter(sl => E[sl] && E[sl].via === 'whatsapp').length, sem = sum(wk.map(d => { const x = of(st, d); return x ? SL.filter(sl => x.envios && x.envios[sl]).length : 0; })); return { st, E, n, wa, sem }; })
+            .sort((a, b) => a.n - b.n || a.sem - b.sem || a.st.tienda.localeCompare(b.st.tienda, 'es'));
+        const hoyH = f === todayStr() ? new Date().getHours() : 24, venc = SL.filter(sl => slotH[sl] <= hoyH);
+        const env = sl => R.filter(r => r.E[sl]).length;
+        box.innerHTML = `<div class="zg-kpis">${SL.map(sl => `<div class="${slotH[sl] > hoyH ? '' : env(sl) === R.length ? 'hl' : ''}"><span>Corte ${esc(sl)}</span><b>${env(sl)}<small>/${R.length}</small></b><em>${slotH[sl] > hoyH ? 'aún no es la hora' : `${R.filter(r => r.E[sl] && aTiempo(sl, r.E[sl])).length} a tiempo · ${R.filter(r => r.E[sl] && r.E[sl].via === 'whatsapp').length} por WhatsApp`}</em></div>`).join('')}<div><span>Sin ningún parcial</span><b class="${R.filter(r => !r.n).length ? 'r' : 'g'}">${R.filter(r => !r.n).length}</b><em>tiendas en el día</em></div></div>
+            <label class="chip" style="margin:8px 0"><input type="checkbox" id="m4-pc-falta"><span>Solo tiendas que deben algún corte</span></label>
+            <div class="tbl-scroll"><table class="tbl compact" id="m4-pc-t"><thead><tr><th class="l">Tienda</th>${SL.map(sl => `<th>${esc(sl.replace(':00', ''))}</th>`).join('')}<th>Enviados</th><th>Semana</th></tr></thead><tbody>
+            ${R.map(r => `<tr data-falta="${venc.some(sl => !r.E[sl]) ? 1 : 0}"><td class="l">${storeLogo(r.st, 'xs')} <b>${esc(r.st.tienda)}</b><br><small class="mute">${esc(r.st.zona || '')}</small></td>${SL.map(sl => cell(sl, r.E[sl])).join('')}<td><b>${r.n}/3</b></td><td>${r.sem}/${wk.length * 3}</td></tr>`).join('')}</tbody></table></div>
+            <p class="hint">📲 = enviado por WhatsApp desde la app · 📋 = solo copió el mensaje · ✗ = no lo hizo desde la app. "Semana" = cortes enviados de lunes a ${esc(fechaLarga(wk[wk.length - 1] || f))}.</p>`;
+        const fa = $('#m4-pc-falta'); fa.onchange = () => $$('#m4-pc-t tbody tr').forEach(tr => { tr.hidden = fa.checked && tr.dataset.falta !== '1'; });
+    }
     function paintInv() {
         const box = $('#m4-inv-out'); if (!box || !agg) return;
         const I = invData(), nm = k => (INFINIX_MODELS.find(m => m.key === k) || {}).name || k;

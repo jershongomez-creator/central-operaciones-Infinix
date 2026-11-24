@@ -69,9 +69,9 @@ const Advisor = (() => {
         const brechaUds = Math.max(0, meta - venta), brechaEsperada = Math.max(0, Math.round(meta * esperado) - venta);
         const ritmoReq = meta > 0 ? +(brechaUds / Math.max(1, left)).toFixed(1) : 0;
         // Comisión (plan noviembre): ROI base abre incentivos; KPI $400.000 / $700.000 por unidades del asesor
-        const KP = kpiPlan(st), vAdv = adv.ventas || {}, fac = dim / day;
-        const vProy = Object.fromEntries(INFINIX_MODELS.map(m => [m.key, Math.round(int(vAdv[m.key]) * fac)]));
-        const vMeta = Object.fromEntries(INFINIX_MODELS.map(m => [m.key, Math.max(int(vAdv[m.key]), int(T.porRef[m.key]))]));
+        const KP = kpiPlan(st), vAdv = { ...(adv.ventas || {}), ...tramoUnits(adv.drr) }, fac = dim / day;
+        const vProy = tramoProj(vAdv, Object.fromEntries(INFINIX_MODELS.map(m => [m.key, Math.round(int(vAdv[m.key]) * fac)])), corte);
+        const vMeta = tramoProj(vAdv, Object.fromEntries(INFINIX_MODELS.map(m => [m.key, Math.max(int(vAdv[m.key]), int(T.porRef[m.key]))])), corte);
         const comHoy = incentivo(vAdv, KP), comProy = incentivo(vProy, KP), comMeta = incentivo(vMeta, KP);
         const porDia = u => left > 0 ? +(Math.max(0, u - venta) / left).toFixed(1) : Math.max(0, u - venta);
         const comision = { plan: KP, hoy: comHoy, proy: comProy, meta: comMeta, ritmoBase: porDia(KP.base), ritmo400: porDia(KP.k400), ritmo700: porDia(KP.k700) };
@@ -223,7 +223,7 @@ registerModule('calc', (() => {
     // Plan noviembre: el ROI base abre incentivos; KPI $400.000 y KPI $700.000 por unidades del mes (no acumulables)
     function calc(total) {
         const P = kpiPlan(currentStore()), I = incentivo(units, P, accU), V = planValores();
-        const porRef = INFINIX_MODELS.map(m => ({ ...m, u: int(units[m.key]), v: V[m.key] || 0, sub: int(units[m.key]) * (V[m.key] || 0) }));
+        const porRef = INFINIX_MODELS.map(m => ({ ...m, u: int(units[m.key]), v: V[m.key] || 0, sub: speedRef(m.key, units) }));
         return { P, k: I, I, ap: P.base, abierto: I.abierto, faltanAp: I.faltaBase, ganado: I.total, next: I.next ? { desde: I.next.meta, bono: I.next.premio, label: I.next.label } : null, porRef, base: I.abierto ? I.speeds : 0, bono: I.kpi, prom: total > 0 ? Math.round(speedsOf(units) / total) : 0, siAbre: I.speedsBloq };
     }
 
@@ -255,7 +255,7 @@ registerModule('calc', (() => {
                 ${INFINIX_MODELS.map(m => `<tr data-ref="${m.key}" ${refOn.has(m.key) ? '' : 'hidden'}><td><b>${esc(m.name)}</b></td>
                     <td><input class="input num" type="number" inputmode="numeric" min="0" id="cc-t-${m.key}" value="0" title="Target del asesor para esta referencia (se puede ajustar)"></td>
                     <td><div class="stp"><button type="button" data-d="-1">−</button><input class="input num" type="number" inputmode="numeric" min="0" id="cc-u-${m.key}" value="0"><button type="button" data-d="1">+</button></div></td>
-                    <td class="c" id="cc-p-${m.key}">—</td><td class="c">${money(planValores()[m.key] || 0)}</td><td class="c" id="cc-g-${m.key}">—</td></tr>`).join('')}
+                    <td class="c" id="cc-p-${m.key}">—</td><td class="c">${money(planValores()[m.key] || 0)}${SPEED_TRAMOS.filter(t => t.key === m.key).map(t => `<br><small class="mute">${money(t.valor)} ${esc(t.label)}</small>`).join('')}</td><td class="c" id="cc-g-${m.key}">—</td></tr>`).join('')}
                 <tr data-acchead ${accOn.size ? '' : 'hidden'}><td colspan="6" class="l"><b>Accesorios</b> <small class="mute">· pagan desde la primera unidad y no suman al ROI</small></td></tr>
                 ${INFINIX_ACCESSORIES.map(a => `<tr data-acc="${a.key}" ${accOn.has(a.key) ? '' : 'hidden'}><td><b>${esc(a.name)}</b></td><td></td><td><div class="stp"><button type="button" data-d="-1">−</button><input class="input num" type="number" inputmode="numeric" min="0" id="cc-a-${a.key}" value="0"><button type="button" data-d="1">+</button></div></td><td></td><td class="c">${money(planValoresAcc()[a.key] || 0)}</td><td class="c" id="cc-ag-${a.key}">—</td></tr>`).join('')}
             </tbody></table></div>
@@ -269,7 +269,11 @@ registerModule('calc', (() => {
         view.addEventListener('click', e => { const b = e.target.closest('.stp button'); if (!b) return; const i = $('input', b.parentElement); i.value = Math.max(0, int(i.value) + int(b.dataset.d)); i.dispatchEvent(new Event('input', { bubbles: true })); });
         view.addEventListener('input', e => {
             const id = e.target.id || '';
-            if (id.startsWith('cc-u-')) { units[id.slice(5)] = int(e.target.value); src = 'manual'; paint(); }
+            if (id.startsWith('cc-u-')) {
+                const k = id.slice(5), nv = int(e.target.value), dv = nv - int(units[k]), hoy = todayStr();
+                SPEED_TRAMOS.filter(t => t.key === k && hoy >= t.desde && hoy <= t.hasta).forEach(t => { units[tramoTag(t)] = Math.max(0, Math.min(nv, int(units[tramoTag(t)]) + dv)); });
+                units[k] = nv; src = 'manual'; paint();
+            }
             if (id.startsWith('cc-a-')) { accU[id.slice(5)] = int(e.target.value); paint(); }
             if (id.startsWith('cc-t-')) { targets[id.slice(5)] = int(e.target.value); paint(); saveTargets(); }
         });
@@ -318,7 +322,7 @@ registerModule('calc', (() => {
         const Z = ZoneData.forStore(st.id);
         if (Z && Z.asesores) {
             const key = Object.keys(Z.asesores).find(k => sameName(k, asesor));
-            if (key) { units = { ...Z.asesores[key].ventas }; src = `data de zona del ${Z.corte} (${esc(key)})`; }
+            if (key) { units = { ...Z.asesores[key].ventas, ...tramoUnits(Z.asesores[key].drr) }; src = `data de zona del ${Z.corte} (${esc(key)})`; }
         }
         if (!src) {
             const c = computeStore(st, closures, todayStr());
@@ -333,7 +337,7 @@ registerModule('calc', (() => {
     function paint() {
         const t = total(), tt = totalT(), r = calc(t), P = plan();
         $('#cc-tot').textContent = `${t} uds · target ${tt}`;
-        INFINIX_MODELS.forEach(m => { const p = $('#cc-p-' + m.key), g = $('#cc-g-' + m.key); const tg = int(targets[m.key]), u = int(units[m.key]); if (p) p.innerHTML = tg > 0 ? `<i class="pill ${semaforo(u / tg).cls}">${Math.round(u / tg * 100)}%</i>` : '—'; if (g) g.innerHTML = `<b style="color:${r.abierto ? '#047857' : '#94A3B8'}">${money(u * (planValores()[m.key] || 0))}</b>`; });
+        INFINIX_MODELS.forEach(m => { const p = $('#cc-p-' + m.key), g = $('#cc-g-' + m.key); const tg = int(targets[m.key]), u = int(units[m.key]); if (p) p.innerHTML = tg > 0 ? `<i class="pill ${semaforo(u / tg).cls}">${Math.round(u / tg * 100)}%</i>` : '—'; if (g) g.innerHTML = `<b style="color:${r.abierto ? '#047857' : '#94A3B8'}">${money(speedRef(m.key, units))}</b>${SPEED_TRAMOS.some(t => t.key === m.key && int(units[tramoTag(t)])) ? `<br><small class="mute">${SPEED_TRAMOS.filter(t => t.key === m.key).map(t => `${int(units[tramoTag(t)])} a ${money(t.valor)}`).join('')}</small>` : ''}`; });
         INFINIX_ACCESSORIES.forEach(a => { const g = $('#cc-ag-' + a.key); if (g) g.innerHTML = `<b>${money(int(accU[a.key]) * (planValoresAcc()[a.key] || 0))}</b>`; });
         const K = r.I, P2 = r.P, left = Math.max(0, daysInMonth(todayStr().slice(0, 7)) - new Date().getDate() + 1);
         const perDay = n => left > 0 ? fmt1(Math.max(0, n - t) / left) : Math.max(0, n - t);
@@ -345,7 +349,7 @@ registerModule('calc', (() => {
             <div class="kpi"><span>Siguiente premio</span><b>${K.next ? K.next.meta + ' uds' : '🏆'}</b><small>${K.next ? `Faltan ${K.falta} · ${esc(K.next.label)}` : 'Alcanzaste el ROI 3'}</small></div>`;
         // Mi dinero del mes: lo ya ganado, lo acumulado sin desbloquear (en gris) y cuánto quedaría si sigue a este ritmo
         const dIdx = new Date().getDate(), dim = daysInMonth(todayStr().slice(0, 7)), f = t > 0 ? Math.max(1, dim / Math.max(1, dIdx)) : 1;
-        const uP = Object.fromEntries(INFINIX_MODELS.map(m => [m.key, Math.round(int(units[m.key]) * f)])), aP = Object.fromEntries(Object.entries(accU).map(([k, v]) => [k, Math.round(int(v) * f)]));
+        const uP = tramoProj(units, Object.fromEntries(INFINIX_MODELS.map(m => [m.key, Math.round(int(units[m.key]) * f)])), todayStr()), aP = Object.fromEntries(Object.entries(accU).map(([k, v]) => [k, Math.round(int(v) * f)]));
         const KP = incentivo(uP, P2, aP), tP = sum(Object.values(uP)), pctLl = P2.base ? Math.min(100, Math.round(t / P2.base * 100)) : 100;
         $('#cc-money').innerHTML = `<h3 class="h3">💰 Mi dinero del mes</h3>
             <div class="mm-bar"><div style="width:${pctLl}%"></div></div>
@@ -490,7 +494,7 @@ function buildAdvisorCanvas(stage, D, autor) {
 function planTerminosHTML(open) {
     const V = planValores(), A = planValoresAcc();
     return `<details class="acc plan-tc" ${open ? 'open' : ''}><summary><span>📜 Incentivos por modelo y términos del plan</span></summary>
-        <div class="plan-speeds">${INFINIX_MODELS.filter(m => V[m.key]).map(m => `<div><span>${esc(m.name)}</span><b>${money(V[m.key])}</b></div>`).join('')}${INFINIX_ACCESSORIES.map(a => `<div class="acc-i"><span>${esc(a.name)}</span><b>${money(A[a.key])}</b></div>`).join('')}</div>
+        <div class="plan-speeds">${INFINIX_MODELS.filter(m => V[m.key]).map(m => { const T = SPEED_TRAMOS.filter(t => t.key === m.key); return T.length ? `<div><span>${esc(m.name)} <small>del 1 al 22 nov.</small></span><b>${money(V[m.key])}</b></div>${T.map(t => `<div class="sp-tramo"><span>${esc(m.name)} <small>${esc(t.label)}</small></span><b>${money(t.valor)}</b></div>`).join('')}` : `<div><span>${esc(m.name)}</span><b>${money(V[m.key])}</b></div>`; }).join('')}${INFINIX_ACCESSORIES.map(a => `<div class="acc-i"><span>${esc(a.name)}</span><b>${money(A[a.key])}</b></div>`).join('')}</div>
         <ul class="plan-terms">${PLAN_TERMINOS.map(([k, v]) => `<li><b>${esc(k)}:</b> ${esc(v)}</li>`).join('')}</ul></details>`;
 }
 
