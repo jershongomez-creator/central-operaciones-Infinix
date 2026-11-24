@@ -3,7 +3,7 @@
 // Todo lo editable por negocio vive en este archivo.
 // ============================================================================
 
-const OPS_VERSION = '1.20.1';
+const OPS_VERSION = '1.20.2';
 const APP_NAME = 'Central de Operaciones';
 
 // --- Firebase: proyecto propio de OpsCore -------------------------------------
@@ -209,7 +209,7 @@ const DEFAULT_COMISIONES = {
 // Términos y condiciones del plan (se muestran en la calculadora, la central de la tienda y la tarjeta del asesor)
 const PLAN_TERMINOS = [
     ['ROI 1 · Llave', 'Al llegar al ROI 1 (ROI base de tu tienda) se habilita la llave de los speeds: cobras el incentivo de cada modelo vendido. Todos los IMEI deben estar activos en DCR dentro del mismo mes.'],
-    ['Note 60 Pro · cambio de valor', 'El Note 60 Pro vendido del 1 al 22 de noviembre paga $20.000 por unidad. El vendido del 23 al 30 de noviembre paga $10.000 por unidad. La calculadora ya lo descuenta según el día de cada venta en DCR.'],
+    ['Note 60 Pro · cambio de valor (solo Éxito)', 'Solo para asesores de tiendas Éxito: el Note 60 Pro vendido del 1 al 22 de noviembre paga $20.000 por unidad y el vendido del 23 al 30 de noviembre paga $10.000 por unidad. La calculadora ya lo descuenta según el día de cada venta en DCR. En las demás cadenas el Note 60 Pro sigue pagando $20.000 todo el mes.', ['exito']],
     ['ROI 2 · $400.000', 'Comisión adicional de $400.000 al llegar al ROI 2 de tu tienda.'],
     ['ROI 3 · $700.000', 'Comisión adicional de $700.000 al llegar al ROI 3. No son acumulables: se gana $400.000 o $700.000 según el nivel alcanzado.'],
     ['Por referencia', 'La meta se evalúa por referencia según el peso de cada modelo; una referencia no reemplaza otra, salvo quiebre de inventario aprobado.'],
@@ -232,13 +232,15 @@ const KPI_DEFAULT = {
 };
 function kpiPlan(st) {
     const d = KPI_DEFAULT[normLogoKey(st && st.logoKey)] || { base: 50, k400: 90, k700: 120 }, k = (st && st.kpi) || {}, pay = (typeof State !== 'undefined' && State.comisiones && State.comisiones.kpiPay) || KPI_PAY;
-    return { base: int(k.base) || d.base, k400: int(k.k400) || d.k400, k700: int(k.k700) || d.k700, pay400: int(pay.k400) || KPI_PAY.k400, pay700: int(pay.k700) || KPI_PAY.k700 };
+    return { base: int(k.base) || d.base, k400: int(k.k400) || d.k400, k700: int(k.k700) || d.k700, pay400: int(pay.k400) || KPI_PAY.k400, pay700: int(pay.k700) || KPI_PAY.k700, chain: normLogoKey(st && st.logoKey) };
 }
 // Speeds (incentivo por unidad) de un mix de ventas por referencia; solo se pagan con la llave abierta (ROI 1)
 const planValores = () => ({ ...DEFAULT_COMISIONES.valores, ...((typeof State !== 'undefined' && State.comisiones && State.comisiones.plan === PLAN_ID && State.comisiones.valores) || {}) });
 const planValoresAcc = () => ({ ...DEFAULT_COMISIONES.valoresAcc, ...((typeof State !== 'undefined' && State.comisiones && State.comisiones.plan === PLAN_ID && State.comisiones.valoresAcc) || {}) });
-// Tramos con otro valor de speed por fechas: Note 60 Pro vendido del 23 al 30 de noviembre paga $10.000 (del 1 al 22, $20.000)
-const SPEED_TRAMOS = [{ key: 'note-60-pro', desde: '2026-11-23', hasta: '2026-11-30', valor: 10000, label: 'del 23 al 30 de nov.' }];
+// Tramos con otro valor de speed por fechas y cadena: SOLO en Éxito, el Note 60 Pro vendido del 23 al 30 de noviembre paga
+// $10.000 (del 1 al 22, $20.000). En las demás cadenas sigue en $20.000 todo el mes.
+const SPEED_TRAMOS = [{ key: 'note-60-pro', desde: '2026-11-23', hasta: '2026-11-30', valor: 10000, label: 'del 23 al 30 de nov.', chains: ['exito'] }];
+const tramosFor = chain => SPEED_TRAMOS.filter(t => !t.chains || (chain && t.chains.includes(chain)));
 const tramoTag = t => t.key + '@' + t.desde;
 // Unidades de cada tramo, de la venta diaria por referencia ({ 'AAAA-MM-DD': { ref: uds } })
 function tramoUnits(drr) { const o = {}; SPEED_TRAMOS.forEach(t => { o[tramoTag(t)] = Object.entries(drr || {}).filter(([d]) => d >= t.desde && d <= t.hasta).reduce((s, [, r]) => s + (Math.round(+((r || {})[t.key]) || 0)), 0); }); return o; }
@@ -250,17 +252,17 @@ function tramoProj(base, nuevo, corte) {
     return out;
 }
 // Speed de una referencia con sus tramos: unidades × valor, y las del tramo al valor del tramo
-function speedRef(key, ventas) {
+function speedRef(key, ventas, chain) {
     const v = planValores(), u = Math.round(+((ventas || {})[key]) || 0); let s = u * (v[key] || 0);
-    SPEED_TRAMOS.filter(t => t.key === key).forEach(t => { const ut = Math.min(u, Math.round(+((ventas || {})[tramoTag(t)]) || 0)); s -= ut * ((v[key] || 0) - t.valor); });
+    tramosFor(chain).filter(t => t.key === key).forEach(t => { const ut = Math.min(u, Math.round(+((ventas || {})[tramoTag(t)]) || 0)); s -= ut * ((v[key] || 0) - t.valor); });
     return s;
 }
-function speedsOf(ventas) { return INFINIX_MODELS.reduce((s, m) => s + speedRef(m.key, ventas), 0); }
+function speedsOf(ventas, chain) { return INFINIX_MODELS.reduce((s, m) => s + speedRef(m.key, ventas, chain), 0); }
 function accOf(acc) { const v = planValoresAcc(); return INFINIX_ACCESSORIES.reduce((s, a) => s + (Math.round(+((acc || {})[a.key]) || 0)) * (v[a.key] || 0), 0); }
 // Liquidación completa: speeds (si abrió la llave) + KPI ($400.000 o $700.000) + accesorios (desde la primera unidad)
 function incentivo(ventas, P, acc) {
     const u = INFINIX_MODELS.reduce((s, m) => s + (Math.round(+((ventas || {})[m.key]) || 0)), 0);
-    const k = kpiPay(u, P), sp = speedsOf(ventas), ac = accOf(acc);
+    const k = kpiPay(u, P), sp = speedsOf(ventas, P && P.chain), ac = accOf(acc);
     return { ...k, speeds: k.abierto ? sp : 0, speedsBloq: k.abierto ? 0 : sp, kpi: k.ganado, acc: ac, total: (k.abierto ? sp : 0) + k.ganado + ac };
 }
 // Qué gana con u unidades: nivel 0 (sin abrir) · 1 (abrió incentivos) · 2 ($400.000) · 3 ($700.000)

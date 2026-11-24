@@ -223,7 +223,7 @@ registerModule('calc', (() => {
     // Plan noviembre: el ROI base abre incentivos; KPI $400.000 y KPI $700.000 por unidades del mes (no acumulables)
     function calc(total) {
         const P = kpiPlan(currentStore()), I = incentivo(units, P, accU), V = planValores();
-        const porRef = INFINIX_MODELS.map(m => ({ ...m, u: int(units[m.key]), v: V[m.key] || 0, sub: speedRef(m.key, units) }));
+        const porRef = INFINIX_MODELS.map(m => ({ ...m, u: int(units[m.key]), v: V[m.key] || 0, sub: speedRef(m.key, units, P.chain) }));
         return { P, k: I, I, ap: P.base, abierto: I.abierto, faltanAp: I.faltaBase, ganado: I.total, next: I.next ? { desde: I.next.meta, bono: I.next.premio, label: I.next.label } : null, porRef, base: I.abierto ? I.speeds : 0, bono: I.kpi, prom: total > 0 ? Math.round(speedsOf(units) / total) : 0, siAbre: I.speedsBloq };
     }
 
@@ -255,7 +255,7 @@ registerModule('calc', (() => {
                 ${INFINIX_MODELS.map(m => `<tr data-ref="${m.key}" ${refOn.has(m.key) ? '' : 'hidden'}><td><b>${esc(m.name)}</b></td>
                     <td><input class="input num" type="number" inputmode="numeric" min="0" id="cc-t-${m.key}" value="0" title="Target del asesor para esta referencia (se puede ajustar)"></td>
                     <td><div class="stp"><button type="button" data-d="-1">−</button><input class="input num" type="number" inputmode="numeric" min="0" id="cc-u-${m.key}" value="0"><button type="button" data-d="1">+</button></div></td>
-                    <td class="c" id="cc-p-${m.key}">—</td><td class="c">${money(planValores()[m.key] || 0)}${SPEED_TRAMOS.filter(t => t.key === m.key).map(t => `<br><small class="mute">${money(t.valor)} ${esc(t.label)}</small>`).join('')}</td><td class="c" id="cc-g-${m.key}">—</td></tr>`).join('')}
+                    <td class="c" id="cc-p-${m.key}">—</td><td class="c">${money(planValores()[m.key] || 0)}${tramosFor(normLogoKey(st.logoKey)).filter(t => t.key === m.key).map(t => `<br><small class="mute">${money(t.valor)} ${esc(t.label)}</small>`).join('')}</td><td class="c" id="cc-g-${m.key}">—</td></tr>`).join('')}
                 <tr data-acchead ${accOn.size ? '' : 'hidden'}><td colspan="6" class="l"><b>Accesorios</b> <small class="mute">· pagan desde la primera unidad y no suman al ROI</small></td></tr>
                 ${INFINIX_ACCESSORIES.map(a => `<tr data-acc="${a.key}" ${accOn.has(a.key) ? '' : 'hidden'}><td><b>${esc(a.name)}</b></td><td></td><td><div class="stp"><button type="button" data-d="-1">−</button><input class="input num" type="number" inputmode="numeric" min="0" id="cc-a-${a.key}" value="0"><button type="button" data-d="1">+</button></div></td><td></td><td class="c">${money(planValoresAcc()[a.key] || 0)}</td><td class="c" id="cc-ag-${a.key}">—</td></tr>`).join('')}
             </tbody></table></div>
@@ -335,9 +335,9 @@ registerModule('calc', (() => {
     }
 
     function paint() {
-        const t = total(), tt = totalT(), r = calc(t), P = plan();
+        const t = total(), tt = totalT(), r = calc(t), P = { ...plan(), chain: r.P.chain };
         $('#cc-tot').textContent = `${t} uds · target ${tt}`;
-        INFINIX_MODELS.forEach(m => { const p = $('#cc-p-' + m.key), g = $('#cc-g-' + m.key); const tg = int(targets[m.key]), u = int(units[m.key]); if (p) p.innerHTML = tg > 0 ? `<i class="pill ${semaforo(u / tg).cls}">${Math.round(u / tg * 100)}%</i>` : '—'; if (g) g.innerHTML = `<b style="color:${r.abierto ? '#047857' : '#94A3B8'}">${money(speedRef(m.key, units))}</b>${SPEED_TRAMOS.some(t => t.key === m.key && int(units[tramoTag(t)])) ? `<br><small class="mute">${SPEED_TRAMOS.filter(t => t.key === m.key).map(t => `${int(units[tramoTag(t)])} a ${money(t.valor)}`).join('')}</small>` : ''}`; });
+        INFINIX_MODELS.forEach(m => { const p = $('#cc-p-' + m.key), g = $('#cc-g-' + m.key); const tg = int(targets[m.key]), u = int(units[m.key]); if (p) p.innerHTML = tg > 0 ? `<i class="pill ${semaforo(u / tg).cls}">${Math.round(u / tg * 100)}%</i>` : '—'; if (g) g.innerHTML = `<b style="color:${r.abierto ? '#047857' : '#94A3B8'}">${money(speedRef(m.key, units, P.chain))}</b>${tramosFor(P.chain).some(t => t.key === m.key && int(units[tramoTag(t)])) ? `<br><small class="mute">${tramosFor(P.chain).filter(t => t.key === m.key).map(t => `${int(units[tramoTag(t)])} a ${money(t.valor)}`).join('')}</small>` : ''}`; });
         INFINIX_ACCESSORIES.forEach(a => { const g = $('#cc-ag-' + a.key); if (g) g.innerHTML = `<b>${money(int(accU[a.key]) * (planValoresAcc()[a.key] || 0))}</b>`; });
         const K = r.I, P2 = r.P, left = Math.max(0, daysInMonth(todayStr().slice(0, 7)) - new Date().getDate() + 1);
         const perDay = n => left > 0 ? fmt1(Math.max(0, n - t) / left) : Math.max(0, n - t);
@@ -491,11 +491,15 @@ function buildAdvisorCanvas(stage, D, autor) {
 }
 
 // Términos y condiciones del plan (desplegable)
-function planTerminosHTML(open) {
-    const V = planValores(), A = planValoresAcc();
+// Términos del plan: en una tienda solo se muestra lo que le aplica a su cadena (el cambio del Note 60 Pro es solo Éxito).
+// Sin tienda (líderes), se muestra todo indicando la cadena.
+function planTerminosHTML(open, st) {
+    const V = planValores(), A = planValoresAcc(), s = st || (typeof currentStore === 'function' ? currentStore() : null), ch = s ? normLogoKey(s.logoKey) : '';
+    const T = k => s ? tramosFor(ch).filter(t => t.key === k) : SPEED_TRAMOS.filter(t => t.key === k);
+    const solo = t => !s && t.chains ? ` · solo ${t.chains.map(c => CHAINS[c] ? CHAINS[c].name : c).join(', ')}` : '';
     return `<details class="acc plan-tc" ${open ? 'open' : ''}><summary><span>📜 Incentivos por modelo y términos del plan</span></summary>
-        <div class="plan-speeds">${INFINIX_MODELS.filter(m => V[m.key]).map(m => { const T = SPEED_TRAMOS.filter(t => t.key === m.key); return T.length ? `<div><span>${esc(m.name)} <small>del 1 al 22 nov.</small></span><b>${money(V[m.key])}</b></div>${T.map(t => `<div class="sp-tramo"><span>${esc(m.name)} <small>${esc(t.label)}</small></span><b>${money(t.valor)}</b></div>`).join('')}` : `<div><span>${esc(m.name)}</span><b>${money(V[m.key])}</b></div>`; }).join('')}${INFINIX_ACCESSORIES.map(a => `<div class="acc-i"><span>${esc(a.name)}</span><b>${money(A[a.key])}</b></div>`).join('')}</div>
-        <ul class="plan-terms">${PLAN_TERMINOS.map(([k, v]) => `<li><b>${esc(k)}:</b> ${esc(v)}</li>`).join('')}</ul></details>`;
+        <div class="plan-speeds">${INFINIX_MODELS.filter(m => V[m.key]).map(m => T(m.key).length ? `<div><span>${esc(m.name)} <small>del 1 al 22 nov.${s ? '' : ' (otras cadenas: todo el mes)'}</small></span><b>${money(V[m.key])}</b></div>${T(m.key).map(t => `<div class="sp-tramo"><span>${esc(m.name)} <small>${esc(t.label)}${solo(t)}</small></span><b>${money(t.valor)}</b></div>`).join('')}` : `<div><span>${esc(m.name)}</span><b>${money(V[m.key])}</b></div>`).join('')}${INFINIX_ACCESSORIES.map(a => `<div class="acc-i"><span>${esc(a.name)}</span><b>${money(A[a.key])}</b></div>`).join('')}</div>
+        <ul class="plan-terms">${PLAN_TERMINOS.filter(x => !x[2] || !s || x[2].includes(ch)).map(([k, v]) => `<li><b>${esc(k)}:</b> ${esc(v)}</li>`).join('')}</ul></details>`;
 }
 
 // ============================================================================
