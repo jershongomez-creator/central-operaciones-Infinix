@@ -274,6 +274,7 @@ Resultado: quién presentó, quién falta, quién repitió y con qué notas, pro
 - **Referencias**: nombre corto sin memoria, RAM+ROM, 4G/5G ni color ("Redmi 15C 8+256GB Negro" → REDMI 15C).
 - **Cámara dentro de la app**: los botones 📷 (samples, mesa, visibilidad, planillas, facturas, legalizaciones, fotos de asesores) abren la cámara dentro de la app. Antes abrían la cámara del teléfono y Android cerraba Chrome por memoria (la app volvía al inicio sin la foto). Si el teléfono no da permiso, se puede usar la cámara del teléfono o la galería.
 - **Auditoría de parciales**: cada envío por WhatsApp o copia del parcial queda registrado con la hora. Reportes › Auditoría de parciales de venta (Central de reportes › ⏱️ Parciales): por tienda los cortes de 1, 3 y 5 p. m. con 📲 WhatsApp / 📋 copiado / ✗, a tiempo (hasta 45 min después del corte) o tarde, y lo enviado en la semana.
+- **Tarjeta de parciales pendientes (v1.20.1)**: en la auditoría de parciales, botón para compartir o descargar una tarjeta con las tiendas y los asesores que deben el parcial de los cortes que ya pasaron, con la hora de lo enviado, para hacer seguimiento en el grupo.
 - **Note 60 Pro**: del 1 al 22 de noviembre paga $20.000; del 23 al 30, $10.000 por unidad. La calculadora, la tarjeta y el ranking lo calculan con la fecha de cada venta en DCR (SPEED_TRAMOS en opscore-config.js). Está en los términos del plan.
 
 ## 6. Calculadora (tienda)

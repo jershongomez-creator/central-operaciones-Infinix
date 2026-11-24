@@ -3,7 +3,7 @@
 // Todo lo editable por negocio vive en este archivo.
 // ============================================================================
 
-const OPS_VERSION = '1.20.0';
+const OPS_VERSION = '1.20.1';
 const APP_NAME = 'Central de Operaciones';
 
 // --- Firebase: proyecto propio de OpsCore -------------------------------------

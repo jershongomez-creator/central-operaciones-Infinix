@@ -630,8 +630,17 @@ registerModule('m4', (() => {
             <label class="chip" style="margin:8px 0"><input type="checkbox" id="m4-pc-falta"><span>Solo tiendas que deben algún corte</span></label>
             <div class="tbl-scroll"><table class="tbl compact" id="m4-pc-t"><thead><tr><th class="l">Tienda</th>${SL.map(sl => `<th>${esc(sl.replace(':00', ''))}</th>`).join('')}<th>Enviados</th><th>Semana</th></tr></thead><tbody>
             ${R.map(r => `<tr data-falta="${venc.some(sl => !r.E[sl]) ? 1 : 0}"><td class="l">${storeLogo(r.st, 'xs')} <b>${esc(r.st.tienda)}</b><br><small class="mute">${esc(r.st.zona || '')}</small></td>${SL.map(sl => cell(sl, r.E[sl])).join('')}<td><b>${r.n}/3</b></td><td>${r.sem}/${wk.length * 3}</td></tr>`).join('')}</tbody></table></div>
-            <p class="hint">📲 = enviado por WhatsApp desde la app · 📋 = solo copió el mensaje · ✗ = no lo hizo desde la app. "Semana" = cortes enviados de lunes a ${esc(fechaLarga(wk[wk.length - 1] || f))}.</p>`;
+            <p class="hint">📲 = enviado por WhatsApp desde la app · 📋 = solo copió el mensaje · ✗ = no lo hizo desde la app. "Semana" = cortes enviados de lunes a ${esc(fechaLarga(wk[wk.length - 1] || f))}.</p>
+            <div class="actions" id="m4-pc-act" style="margin-top:10px"><button class="btn btn-ghost" data-act="preview">👁️ Vista previa</button><button class="btn btn-wa" data-act="share">📲 Tarjeta de faltantes por WhatsApp</button><button class="btn btn-primary" data-act="save">⬇️ Descargar tarjeta</button></div>
+            <p class="hint">La tarjeta lista las tiendas y los asesores que deben el parcial de los cortes que ya pasaron (${venc.length ? esc(venc.join(', ')) : 'aún no pasa ningún corte'}), para hacerles seguimiento en el grupo.</p>`;
         const fa = $('#m4-pc-falta'); fa.onchange = () => $$('#m4-pc-t tbody tr').forEach(tr => { tr.hidden = fa.checked && tr.dataset.falta !== '1'; });
+        const deben = R.map(r => ({ ...r, faltan: venc.filter(sl => !r.E[sl]), ase: activeAdvisors(r.st).map(a => a.nombre) })).filter(r => r.faltan.length).sort((a, b) => b.faltan.length - a.faltan.length || a.st.tienda.localeCompare(b.st.tienda, 'es'));
+        ReportActions.bind($('#m4-pc-act'), {
+            title: 'Parciales de venta pendientes · Central de Operaciones', noStore: true,
+            validate: () => venc.length ? null : 'Aún no pasa ningún corte del día (1, 3 o 5 p. m.).',
+            filename: () => `Parciales_pendientes_${slug(scopeTitle())}_${f}.png`,
+            build: stage => buildParcialCanvas(stage, { titulo: scopeTitle(), f, SL, venc, R, deben, env, aTiempo, autor: me() })
+        });
     }
     function paintInv() {
         const box = $('#m4-inv-out'); if (!box || !agg) return;
@@ -719,6 +728,27 @@ function buildM4Visual(stage, a, scope, autor) {
 
 
 // ---------- Lienzo · auditoría de cierres ----------
+// Tarjeta de seguimiento: quién debe el parcial de venta (tiendas y asesores) en los cortes que ya pasaron
+function buildParcialCanvas(stage, d) {
+    const R = d.R, hora = e => new Date(e.at).toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit' });
+    const al = R.filter(r => d.venc.every(sl => r.E[sl]));
+    const el = document.createElement('div'); el.className = 'rp sp aud';
+    el.innerHTML = `<div class="rp-bar"></div>
+    <header class="rp-head"><img class="rp-logo" src="${LOGO_INFINIX}" alt="Infinix">
+        <div class="rp-head-mid"><div class="rp-kicker">PARCIALES DE VENTA · SEGUIMIENTO</div><div class="rp-title">${esc(d.titulo.toUpperCase())}</div><div class="rp-sub">${esc(fechaLarga(d.f))} · cortes vencidos: ${esc(d.venc.join(', '))} · ${R.length} PDV</div></div>
+        <div class="pl-who"><b>${esc(d.autor.nombre)}</b><small>${ROLES[d.autor.rol] ? ROLES[d.autor.rol].label : ''}</small></div></header>
+    <div class="sp-band">
+        <div class="hero ${d.deben.length ? 'r' : ''}"><span>TIENDAS QUE DEBEN PARCIAL</span><b>${d.deben.length}<small style="font-size:28px;color:#CBD5E1">/${R.length}</small></b><em>${sum(d.deben.map(r => r.faltan.length))} cortes sin enviar</em></div>
+        ${d.SL.map(sl => `<div class="${d.venc.includes(sl) ? (d.env(sl) === R.length ? 'ok' : 'bad') : ''}"><span>Corte ${esc(sl)}</span><b>${d.venc.includes(sl) ? `${d.env(sl)}<small style="font-size:20px">/${R.length}</small>` : '—'}</b><em>${d.venc.includes(sl) ? `${R.filter(r => r.E[sl] && d.aTiempo(sl, r.E[sl])).length} a tiempo` : 'aún no es la hora'}</em></div>`).join('')}
+        <div class="ok"><span>Al día</span><b>${al.length}</b><em>todos los cortes enviados</em></div>
+    </div>
+    <div class="rp-sec">${d.deben.length ? 'FALTAN POR ENVIAR EL PARCIAL' : '✅ TODAS LAS TIENDAS ENVIARON SUS PARCIALES'}</div>
+    ${d.deben.length ? `<table class="rp-tbl sp-tbl"><thead><tr><th class="l">#</th><th class="l">PUNTO DE VENTA</th><th class="l">ASESORES</th>${d.SL.map(sl => `<th>${esc(sl.replace(':00', ''))}</th>`).join('')}<th class="c-tot">FALTAN</th></tr></thead><tbody>
+    ${d.deben.map((r, i) => `<tr><td class="l">${i + 1}</td><td class="l"><div class="sp-pdv">${storeLogo(r.st, 'xs')}<b>${esc(r.st.tienda)}</b></div></td><td class="l small">${esc(r.ase.map(n => n.split(' ').slice(0, 2).join(' ')).join(', ') || '—')}</td>${d.SL.map(sl => !d.venc.includes(sl) ? '<td class="mute">·</td>' : r.E[sl] ? `<td class="${d.aTiempo(sl, r.E[sl]) ? 'g' : 'a'}">${r.E[sl].via === 'whatsapp' ? '📲' : '📋'} ${hora(r.E[sl])}</td>` : '<td class="r"><b>✗</b></td>').join('')}<td class="c-tot r"><b>${r.faltan.length}</b></td></tr>`).join('')}</tbody></table>` : ''}
+    ${al.length && d.deben.length ? `<div class="rp-sec">AL DÍA (${al.length})</div><p class="rp-pad small">${al.map(r => esc(r.st.tienda)).join(' · ')}</p>` : ''}
+    <footer class="rp-foot"><span>Parcial de venta de la 1, las 3 y las 5 p. m. enviado desde la app (📲 WhatsApp · 📋 copiado). A tiempo = hasta 45 minutos después del corte. ✗ = aún no lo envían: por favor enviarlo al grupo.</span><b>Infinix · Central de Operaciones</b></footer><div class="rp-bar"></div>`;
+    stage.appendChild(el); return el;
+}
 function buildAuditCanvas(stage, d) {
     const R = d.rows, dash = '—', exp = sum(R.map(r => r.expected)), cie = sum(R.map(r => r.cierres)), pc = v => v == null ? dash : Math.round(v * 100) + '%';
     const el = document.createElement('div'); el.className = 'rp sp aud';
