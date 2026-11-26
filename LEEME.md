@@ -283,6 +283,11 @@ Resultado: quién presentó, quién falta, quién repitió y con qué notas, pro
 - **Evaluaciones iniciales de producto** (formador y admin, en Evaluaciones, debajo de las semanales): 12 casillas, una por producto (EVAL_INICIAL en opscore-config.js). Mismo cruce por cédula y nombre y nota más alta. Cuentan todos los asesores que estuvieron en el mes, también los retirados (franja roja clara con la fecha de retiro). Muestra al día, faltantes por asesor y por producto, edición manual de notas e imagen. Si las carga el administrador quedan nacionales y todos los formadores ven "Última carga".
 - **🔎 Explorador de venta (piloto)** en Reportes de venta: agrupa por asesor, tienda, cadena, zona o referencia; elige referencias, asesor y rango de fechas (con los filtros de zona/cadena/tienda). Columnas por referencia o solo total, más vendida y más rezagada contra la meta por grupo, "quién más vende" por referencia, e imagen del reporte.
 
+## 5q. Novedades v1.21.1
+- **Evaluaciones para todos**: quien cargue las evaluaciones (semanales o iniciales), sea formador, supervisor, coordinador o admin, las deja nacionales y las ven todos los perfiles con "Última carga: fecha · quién". Las que antes quedaron guardadas por zona también se leen para todos (se cargan las de todas las zonas).
+- **Reportes de venta**: filtro **Asesores** con selección múltiple (por ejemplo los dos asesores de una tienda); aplica a Por referencia, Día a día y Explorador.
+- **Visita del coordinador**: imagen visual como el análisis de zona: anillos de cumplimiento del PDV, share real, share de cierres y evaluaciones; tarjeta por asesor con anillos de cumplimiento y proyección, llaves ROI 1 / $400K / $700K, lo que le falta y su promedio de evaluaciones; dona de Infinix vs competencia; barras de venta vs meta por referencia; top 5 de la data real y fotos.
+
 ## 6. Calculadora (tienda)
 
 El asesor elige su nombre. Su target por referencia sale del target de la tienda dividido entre los asesores y lo puede ajustar a mano; sus unidades llegan de la data de zona (o se escriben). Muestra apertura (KPI), lo ganado y el siguiente bono según el **plan comisional general**, que el Administrador configura en Gestión › Configuración › Plan comisional (valor por referencia y accesorio, apertura y bonos).

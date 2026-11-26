@@ -212,7 +212,10 @@ const Evals = (() => {
     // por semana para todo el país (todas las filas, crucen o no) y lo ven todos. Si la sube un formador, queda en su zona.
     const nacId = (month, w) => `nacional_${month}_${w}`;
     const nac = {};                                 // mes → { W45: semana nacional }
-    const canNacional = () => !!State.session && ['admin', 'coordinador', 'gerente'].includes(State.session.rol);
+    // v1.21.1: las evaluaciones son de todos. Cualquiera que las cargue (formador, supervisor, coordinador, admin…) las deja
+    // nacionales y a todos les aparece "Última carga por …".
+    const canNacional = () => !!State.session && State.session.type === 'staff';
+    const allZ = () => State.zones.map(z => z.nombre);
     async function loadNac(month) {
         const ws = String(month).endsWith('~ini') ? EVAL_INICIAL.map(x => x[0]) : evalWeeksOfMonth(month).map(n => 'W' + n), out = {};
         await Promise.all(ws.map(async w => {
@@ -223,10 +226,12 @@ const Evals = (() => {
         }));
         nac[month] = out; return out;
     }
+    // Se leen las cargas de TODAS las zonas (las que alguien dejó por zona antes de v1.21.1 también las ven todos)
     async function load(zonas, month) {
-        const [docs] = await Promise.all([Promise.all(zonas.map(z => Data.get(COL.evalData, docId(z, month)).catch(() => null))), loadNac(month).catch(() => ({})), loadMan(month).catch(() => ({}))]);
-        zonas.forEach((z, i) => { if (docs[i]) cache[docId(z, month)] = docs[i]; });
-        return Object.fromEntries(zonas.map((z, i) => [z, docs[i] || cache[docId(z, month)] || null]));
+        const Z = allZ();
+        const [docs] = await Promise.all([Promise.all(Z.map(z => Data.get(COL.evalData, docId(z, month)).catch(() => null))), loadNac(month).catch(() => ({})), loadMan(month).catch(() => ({}))]);
+        Z.forEach((z, i) => { if (docs[i]) cache[docId(z, month)] = docs[i]; });
+        return Object.fromEntries(zonas.map(z => [z, cache[docId(z, month)] || null]));
     }
     // Semanas del alcance: la nacional manda (es el archivo completo); si no hay, se juntan las de las zonas
     const rowSig = r => `${r.cedula}|${norm(r.nombre)}|${r.nota}|${r.fecha}`;
@@ -234,6 +239,7 @@ const Evals = (() => {
     function weeksFor(zonas, month) {
         const out = {}, N = nac[month] || {};
         Object.entries(N).forEach(([w, W]) => { out[w] = W; });
+        zonas = allZ();                         // todas las zonas: lo que cargue cualquiera lo ven todos
         zonas.forEach(z => {
             const d = cache[docId(z, month)]; if (!d || !d.weeks) return;
             Object.entries(d.weeks).forEach(([w, W]) => {
@@ -282,7 +288,7 @@ const Evals = (() => {
     }
     // Quita una semana guardada (en las zonas del alcance y, si quien la quita puede, también la nacional)
     async function removeWeek(zonas, month, w) {
-        const ops = [];
+        const ops = []; zonas = allZ();
         zonas.forEach(z => { const d = cache[docId(z, month)]; if (!d || !d.weeks || !d.weeks[w]) return; const weeks = { ...d.weeks }; delete weeks[w]; const doc = { ...d, weeks, updatedAt: Date.now() }; cache[doc.id] = doc; ops.push({ op: 'set', col: COL.evalData, id: doc.id, data: doc, merge: false }); });
         if (canNacional() && nac[month] && nac[month][w]) { for (let i = 1; i <= Math.max(1, int(nac[month][w].parts)); i++) ops.push({ op: 'del', col: COL.evalData, id: nacId(month, w) + (i > 1 ? '_p' + i : '') }); delete nac[month][w]; }
         return ops.length ? Data.batch(ops) : { synced: true };
@@ -384,7 +390,7 @@ registerModule('evals', (() => {
         $('#ev-slots').addEventListener('change', e => { if (e.target.dataset.w) onFile(e.target.dataset.w, e.target.files[0]); });
         $('#ev-slots').addEventListener('click', async e => { const b = e.target.closest('[data-del]'); if (!b) return; const w = b.dataset.del; if (!confirm(`¿Quitar la evaluación ${w}? Se borra también de lo guardado.`)) return; delete weeks[w]; paintSlots(); compute(); await Evals.removeWeek(viewZonas(), month, w); toast(`${w} quitada.`, 'ok'); });
         await start();
-        if (['formador', 'admin'].includes(me().rol) && $('#ev-ini')) EvalsIni.mount($('#ev-ini')).catch(e => console.error(e));
+        if ($('#ev-ini')) EvalsIni.mount($('#ev-ini')).catch(e => console.error(e));
     }
     async function start() {
         weekKeys = evalWeeksOfMonth(month).map(w => 'W' + w);

@@ -10,7 +10,7 @@
 // ============================================================================
 
 registerModule('ventas', (() => {
-    let F = { zona: '', cadena: '', tienda: '', preset: 'hoy', desde: todayStr(), hasta: todayStr() }, tab = 'refs', view = null, refDet = false;
+    let F = { zona: '', cadena: '', tienda: '', asesores: [], preset: 'hoy', desde: todayStr(), hasta: todayStr() }, tab = 'refs', view = null, refDet = false;
     const me = () => State.session;
     const HORA_ABRE = 10, HORA_CIERRA = 21;                  // jornada comercial para "a esta hora debería llevar"
 
@@ -33,8 +33,10 @@ registerModule('ventas', (() => {
     const snapOf = z => (State.zoneSnaps || {})[z] || null;
     const corteOf = () => { const S = zonasF().map(snapOf).filter(Boolean); const up = S.map(s => s.maxUpload || '').sort().pop() || ''; return { up, fecha: up.slice(0, 10) || S.map(s => s.corte || '').sort().pop() || '', hora: up.slice(11, 16), conHora: S.some(s => s.maxUpload), file: (S[0] || {}).fileName || '', owner: (S[0] || {}).ownerName || (S[0] || {}).uploadedBy || '' }; };
     const hasDr = () => storesF().some(st => { const Z = ZoneData.forStore(st.id); return Z && Z.dr; });
+    // Varios asesores a la vez (por ejemplo los 2 de una tienda); vacío = todos
+    const advOn = (st, a) => !F.asesores.length || F.asesores.includes(st.id + '|' + a.nombre);
     function advisorsF() {
-        return storesF().flatMap(st => activeAdvisors(st).map(a => ({ st, a, nombre: a.nombre, dr: a.dr || {}, drr: a.drr || {}, lastAt: a.lastAt || '' })));
+        return storesF().flatMap(st => activeAdvisors(st).filter(a => advOn(st, a)).map(a => ({ st, a, nombre: a.nombre, dr: a.dr || {}, drr: a.drr || {}, lastAt: a.lastAt || '' })));
     }
     const ventaRango = (x, D) => sum(D.map(d => int(x.dr[d])));
     const lastSale = x => Object.keys(x.dr).filter(d => x.dr[d] > 0).sort().pop() || '';
@@ -89,7 +91,7 @@ registerModule('ventas', (() => {
     function refsData(D) {
         const dim = daysInMonth(D[D.length - 1].slice(0, 7)), C = corteOf(), day = Math.max(1, int((C.fecha || D[D.length - 1]).slice(8)));
         const groups = storesF().map(st => {
-            const A = activeAdvisors(st).map(a => { const v = {}; let tot = 0; D.forEach(d => Object.entries((a.drr || {})[d] || {}).forEach(([k, q]) => { v[k] = (v[k] || 0) + q; tot += q; })); const x = { st, nombre: a.nombre, dr: a.dr || {}, drr: a.drr || {} }; return { nombre: a.nombre, v, tot, md: metaDia(x, D[D.length - 1]), w: wow(a.dr, D[D.length - 1]), ds: typeof DayStatus !== 'undefined' ? DayStatus.ofAdvisor(st, a.nombre, D[D.length - 1]) : null }; }).sort((a, b) => b.tot - a.tot);
+            const A = activeAdvisors(st).filter(a => advOn(st, a)).map(a => { const v = {}; let tot = 0; D.forEach(d => Object.entries((a.drr || {})[d] || {}).forEach(([k, q]) => { v[k] = (v[k] || 0) + q; tot += q; })); const x = { st, nombre: a.nombre, dr: a.dr || {}, drr: a.drr || {} }; return { nombre: a.nombre, v, tot, md: metaDia(x, D[D.length - 1]), w: wow(a.dr, D[D.length - 1]), ds: typeof DayStatus !== 'undefined' ? DayStatus.ofAdvisor(st, a.nombre, D[D.length - 1]) : null }; }).sort((a, b) => b.tot - a.tot);
             const venta = {}; A.forEach(a => Object.entries(a.v).forEach(([k, q]) => { venta[k] = (venta[k] || 0) + q; }));
             const Z = ZoneData.forStore(st.id);
             return { st, A, venta, inv: st.inventario || {}, mes: (Z && Z.ventas) || {}, tot: sum(Object.values(venta)) };
@@ -143,6 +145,7 @@ registerModule('ventas', (() => {
                 ${zs.length > 1 ? `<label><span class="lbl">Zona</span><select class="input" id="rv-zona"><option value="">Todas (${zs.length})</option>${zs.map(z => `<option ${F.zona === z ? 'selected' : ''}>${esc(z)}</option>`).join('')}</select></label>` : ''}
                 <label><span class="lbl">Cadena</span><select class="input" id="rv-cad"></select></label>
                 <label><span class="lbl">Tienda</span><select class="input" id="rv-tie"></select></label>
+                <label><span class="lbl">Asesores</span><button type="button" class="input" id="rv-ase">👥 Todos</button></label>
             </div>
             <div class="rv-pre">${[['hoy', 'Hoy'], ['ayer', 'Ayer'], ['finde', 'Fin de semana'], ['3d', 'Últimos 3 días'], ['semana', 'Esta semana'], ['mes', 'Mes'], ['rango', 'Rango']].map(([k, l]) => `<button class="chip-b ${F.preset === k ? 'on' : ''}" data-pre="${k}">${l}</button>`).join('')}
                 <span class="rv-dates"><input type="date" class="input" id="rv-d" value="${F.desde}" max="${todayStr()}"><span>a</span><input type="date" class="input" id="rv-h" value="${F.hasta}" max="${todayStr()}"></span></div>
@@ -161,6 +164,15 @@ registerModule('ventas', (() => {
             if (id === 'rv-d' || id === 'rv-h') { F.preset = 'rango'; F.desde = $('#rv-d').value || todayStr(); F.hasta = $('#rv-h').value || F.desde; if (F.hasta < F.desde) [F.desde, F.hasta] = [F.hasta, F.desde]; }
             paint();
         });
+        $('#rv-ase', v).onclick = () => {
+            const L = storesF().flatMap(st => activeAdvisors(st).map(a => ({ k: st.id + '|' + a.nombre, n: a.nombre, t: st.tienda }))).sort((a, b) => (a.t + a.n).localeCompare(b.t + b.n, 'es'));
+            const m = openModal(`<h3 class="modal-title">👥 Asesores</h3><p class="mute">Marca uno o varios (por ejemplo los dos de una tienda). Sin marcar = todos.</p>
+                <input class="input" id="ra-q" placeholder="🔎 Buscar asesor o tienda"><div class="ra-list">${L.map(x => `<label class="chip" data-q="${esc(slug(x.n + ' ' + x.t))}"><input type="checkbox" value="${esc(x.k)}" ${F.asesores.includes(x.k) ? 'checked' : ''}><span>${esc(x.n)} <small class="mute">${esc(x.t)}</small></span></label>`).join('')}</div>
+                <div class="actions"><button class="btn btn-ghost" data-ra="all">Todos</button><button class="btn btn-primary" data-ra="ok">Aplicar</button></div>`);
+            $('#ra-q', m).oninput = e => { const t = slug(e.target.value); $$('.ra-list [data-q]', m).forEach(c => { c.hidden = !!t && !c.dataset.q.includes(t); }); };
+            $('[data-ra="all"]', m).onclick = () => { F.asesores = []; closeModal(m); paint(); };
+            $('[data-ra="ok"]', m).onclick = () => { F.asesores = $$('.ra-list input:checked', m).map(i => i.value); closeModal(m); paint(); };
+        };
         v.addEventListener('click', e => {
             const p = e.target.closest('[data-pre]'); if (p) { F.preset = p.dataset.pre; if (F.preset !== 'rango') [F.desde, F.hasta] = presetRange(F.preset); paint(); return; }
             const t = e.target.closest('[data-tab2]'); if (t) { tab = t.dataset.tab2; paint(); return; }
@@ -190,6 +202,8 @@ registerModule('ventas', (() => {
         $('#rv-cad').innerHTML = `<option value="">Todas</option>${cads.map(c => `<option value="${esc(c.key)}" ${F.cadena === c.key ? 'selected' : ''}>${esc(c.label)}</option>`).join('')}`;
         const tiendas = scopedStores().filter(st => zonasF().includes(st.zona)).filter(st => !F.cadena || chainGroup(st).key === F.cadena);
         $('#rv-tie').innerHTML = `<option value="">Todas (${tiendas.length})</option>${tiendas.map(st => `<option value="${esc(st.id)}" ${F.tienda === st.id ? 'selected' : ''}>${esc(st.tienda)}</option>`).join('')}`;
+        const vigentes = new Set(storesF().flatMap(st => activeAdvisors(st).map(a => st.id + '|' + a.nombre))); F.asesores = F.asesores.filter(k => vigentes.has(k));
+        $('#rv-ase').textContent = F.asesores.length ? `👥 ${F.asesores.length} asesor(es)` : '👥 Todos';
         $$('[data-pre]').forEach(b => b.classList.toggle('on', b.dataset.pre === F.preset));
         $$('[data-tab2]').forEach(b => b.classList.toggle('on', b.dataset.tab2 === tab));
         $('#rv-d').value = F.desde; $('#rv-h').value = F.hasta;
@@ -259,7 +273,7 @@ registerModule('ventas', (() => {
     function explorerData(D) {
         const set = new Set(D), mes = F.preset === 'mes';
         const unitsOf = x => { const o = {}; Object.entries(x.drr || {}).forEach(([d, r]) => { if (!set.has(d)) return; Object.entries(r).forEach(([k, q]) => { o[k] = (o[k] || 0) + int(q); }); }); return o; };
-        const A = advisorsF().filter(x => !X.asesor || x.st.id + '|' + x.nombre === X.asesor).map(x => ({ ...x, u: unitsOf(x) }));
+        const A = advisorsF().map(x => ({ ...x, u: unitsOf(x) }));
         const usados = INFINIX_MODELS.filter(m => A.some(x => x.u[m.key]) || storesF().some(st => int((st.metas || {})[m.key]) > 0));
         const refs = X.refs.length ? INFINIX_MODELS.filter(m => X.refs.includes(m.key)) : usados;
         const tot = u => sum(refs.map(m => int(u[m.key])));
@@ -286,7 +300,6 @@ registerModule('ventas', (() => {
         return { rows, refs, total, by: X.by, asesores: A.length, mes };
     }
     function explorerHTML(E) {
-        const ases = advisorsF().sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
         const refCols = X.cols === 'refs' && E.by !== 'ref';
         const head = E.by === 'ref' ? '<th class="l">Referencia</th><th>Unidades</th><th>Asesores que la venden</th><th>Tiendas</th><th class="l">Quién más vende</th>' + (E.mes ? '<th>Meta mes</th><th>Cumpl.</th>' : '')
             : `<th class="l">${{ asesor: 'Asesor', tienda: 'Tienda', cadena: 'Cadena', zona: 'Zona' }[E.by]}</th>${E.by === 'asesor' ? '<th class="l">Tienda</th><th class="l">Cadena</th>' : E.by === 'tienda' ? '<th class="l">Cadena</th>' : ''}${E.by !== 'asesor' && E.by !== 'zona' ? '' : ''}${refCols ? E.refs.map(m => `<th title="${esc(m.name)}">${esc(m.name.replace(/^(NOTE|Note|HOT|SMART|GT) /, x => x.charAt(0) + '. '))}</th>`).join('') : ''}<th>Total</th><th>%</th>${E.by !== 'asesor' ? '<th>Asesores</th><th class="l">Más vendida</th><th class="l">Más rezagada (vs meta)</th>' : ''}`;
@@ -297,7 +310,7 @@ registerModule('ventas', (() => {
             <div class="xp-f"><span class="lbl">Ver por</span><div class="seg sm">${XBY.map(([k, l]) => `<label class="seg-btn ${X.by === k ? 'active' : ''}"><input type="radio" name="xp-by" value="${k}" data-xby ${X.by === k ? 'checked' : ''} hidden>${l}</label>`).join('')}</div></div>
             <div class="xp-f"><span class="lbl">Referencias</span><div class="chips"><button class="chip-b ${X.refs.length ? '' : 'on'}" data-xref="*">Todas</button>${INFINIX_MODELS.map(m => `<button class="chip-b ${X.refs.includes(m.key) ? 'on' : ''}" data-xref="${m.key}">${esc(m.name)}</button>`).join('')}</div></div>
             <div class="row wrap" style="gap:8px;margin:6px 0 10px;align-items:flex-end">
-                <label class="field-inline grow"><span class="lbl">Asesor</span><select class="input" id="xp-ase"><option value="">Todos los asesores (${ases.length})</option>${ases.map(x => `<option value="${esc(x.st.id + '|' + x.nombre)}" ${X.asesor === x.st.id + '|' + x.nombre ? 'selected' : ''}>${esc(x.nombre)} · ${esc(x.st.tienda)}</option>`).join('')}</select></label>
+                <span class="hint" style="flex:1">👥 Para ver uno o varios asesores usa el filtro <b>Asesores</b> de arriba.</span>
                 ${E.by !== 'ref' ? `<label class="field-inline"><span class="lbl">Columnas</span><select class="input" id="xp-cols"><option value="refs" ${X.cols === 'refs' ? 'selected' : ''}>Una por referencia</option><option value="tot" ${X.cols === 'tot' ? 'selected' : ''}>Solo el total</option></select></label>` : ''}
                 <label class="chip"><input type="checkbox" id="xp-sin" ${X.sinVenta ? 'checked' : ''}><span>Incluir los que no han vendido (los de menos venta primero)</span></label>
             </div>

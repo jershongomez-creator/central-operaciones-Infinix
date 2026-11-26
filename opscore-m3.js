@@ -587,31 +587,52 @@ function buildVisitCanvas(stage, doc, fotos) {
     return el;
 }
 
-// Lienzo · visita del coordinador (una sola imagen, corta)
+// Lienzo · visita del coordinador: visual como el análisis de zona (anillos, colores y tarjetas por asesor)
 function buildCoordVisitCanvas(stage, C, fotos, o) {
-    const pc = v => v == null ? '—' : Math.round(v * 100) + '%', st = C.st, cls = v => v == null ? '' : v >= 1 ? 'g' : v >= .85 ? 'g2' : v >= .7 ? 'a' : 'r';
-    const el = document.createElement('div'); el.className = 'rp sp cvr';
+    const pc = v => v == null ? '—' : Math.round(v * 100) + '%', st = C.st, dash = '—';
+    const col = v => v == null ? '#94A3B8' : v >= 1 ? THEME.green : v >= .85 ? '#16A34A' : v >= .7 ? THEME.amber : THEME.red;
+    const BC = typeof BRAND_COL !== 'undefined' ? BRAND_COL : {};
+    const ev = d => { try { return typeof Evals !== 'undefined' ? Evals.forAdvisor(st.id, d.nombre, d.cedula || '') : null; } catch (e) { return null; } };
+    const A = C.D.map(d => ({ d, e: ev(d) }));
+    const conEv = A.filter(x => x.e && x.e.cargadas && x.e.cargadas.length), hechas = conEv.filter(x => x.e.hecha), notas = conEv.map(x => x.e.promedio).filter(n => n != null);
+    const pEv = conEv.length ? hechas.length / conEv.length : null, promEv = notas.length ? Math.round(sum(notas) / notas.length) : null;
+    const refs = storeRefs(st).map(m => { const mt = int((st.metas || {})[m.key]), v = int(((C.Z || {}).ventas || {})[m.key]); return { name: m.name, mt, v, c: mt ? v / mt : null }; }).filter(r => r.mt || r.v).sort((a, b) => b.v - a.v);
+    const maxR = Math.max(1, ...refs.map(r => Math.max(r.v, r.mt)));
+    const vsRank = C.vs.rank.slice(0, 7);
+    const el = document.createElement('div'); el.className = 'rp rp-m1 rp-zona cvr';
     el.innerHTML = `<div class="rp-bar"></div>
     <header class="rp-head"><img class="rp-logo" src="${LOGO_INFINIX}" alt="Infinix">
-        <div class="rp-head-mid"><div class="rp-kicker">VISITA DEL COORDINADOR · RADIOGRAFÍA DEL PDV</div><div class="rp-title">${esc(st.tienda.toUpperCase())}</div><div class="rp-sub">${esc(fechaLarga(o.fecha))} · ${esc(st.zona || '')}${C.corte ? ' · venta DCR al ' + esc(C.corte.slice(8)) + '/' + esc(C.corte.slice(5, 7)) : ''}</div></div>
-        <div class="pl-who"><b>${esc(o.autor.nombre)}</b><small>${ROLES[o.autor.rol] ? ROLES[o.autor.rol].label : ''}</small></div></header>
-    <div class="sp-band">
-        <div class="hero"><span>VENTA DEL MES</span><b>${C.venta}<small style="font-size:26px;color:#CBD5E1">/${C.meta || '—'}</small></b><em>${pc(C.cumpl)} de la meta · proyección ${C.proy} (${pc(C.cumplP)})</em></div>
-        <div><span>ROI</span><b>${fmt1(C.roi)}</b><em>proyectado ${fmt1(C.roiP)}</em></div>
-        <div><span>Share cierres</span><b>${pc(C.vs.share)}</b><em>${C.vs.pos ? 'Infinix #' + C.vs.pos + ' de ' + C.vs.rank.length : 'sin cierres'}</em></div>
-        ${C.real ? `<div><span>Share real</span><b>${pc(C.real.share)}</b><em>Infinix #${C.real.pos || '—'} de ${C.real.rank.length}</em></div>` : ''}
-        <div><span>Más vendida</span><b style="font-size:20px">${C.top && C.top.v ? esc(C.top.name) : '—'}</b><em>${C.top && C.top.v ? C.top.v + ' uds' : ''}</em></div>
-        <div class="bad"><span>Más rezagada</span><b style="font-size:20px">${C.rez ? esc(C.rez.name) : '—'}</b><em>${C.rez ? `${C.rez.v} de ${C.rez.meta}` : ''}</em></div>
-    </div>
-    <div class="rp-sec">ASESORES</div>
-    <table class="rp-tbl sp-tbl"><thead><tr><th class="l">ASESOR</th><th>META</th><th>VENTA</th><th>CUMPL.</th><th>PROY.</th><th class="l">INCENTIVOS</th></tr></thead><tbody>
-    ${C.D.map(d => `<tr><td class="l"><div class="sp-pdv">${advisorAvatar(st.id, d.nombre, 34)}<b>${esc(d.nombre.split(' ').slice(0, 3).join(' '))}</b></div></td><td>${d.pacing.meta || '—'}</td><td><b>${d.pacing.venta}</b></td><td class="c-tot ${cls(d.pacing.cumpl)}">${pc(d.pacing.cumpl)}</td><td>${Math.round(d.pacing.proy || 0)} <small>(${pc(d.pacing.proyCumpl)})</small></td><td class="l">${typeof incentivoTag === 'function' ? incentivoTag(d) : ''}</td></tr>`).join('')}</tbody></table>
+        <div class="rp-head-mid"><div class="rp-kicker">VISITA DEL COORDINADOR · RADIOGRAFÍA DEL PDV</div><div class="rp-title">${esc(st.tienda.toUpperCase())}</div>
+        <div class="rp-sub">${esc(fechaLarga(o.fecha))} · ${esc(st.ciudad || '')} · zona ${esc(st.zona || '')}${C.corte ? ' · venta DCR al ' + esc(C.corte.slice(8)) + '/' + esc(C.corte.slice(5, 7)) : ''}</div>
+        <div class="rp-sub">Elaborado por <b>${esc(o.autor.nombre)}</b> · ${ROLES[o.autor.rol] ? ROLES[o.autor.rol].label : ''}</div></div>
+        <div class="rp-chain">${storeLogo(st)}</div></header>
+    <section class="rp-dash">
+        <div class="dcard hero"><div class="dcard-t">🎯 CUMPLIMIENTO DEL PDV</div>
+            <div class="row" style="gap:22px">${ringCardHTML('cv-cum', 140, pc(C.cumpl), 'de la meta')}
+            <div class="dlist"><div><span>Venta</span><b>${C.venta}</b></div><div><span>Target</span><b>${C.meta || dash}</b></div><div><span>Proyección</span><b style="color:${col(C.cumplP)}">${C.proy} · ${pc(C.cumplP)}</b></div><div><span>ROI</span><b>${fmt1(C.roi)} <small>proy. ${fmt1(C.roiP)}</small></b></div><div><span>HC</span><b>${fmt1(C.hc)}</b></div></div></div></div>
+        <div class="dcard"><div class="dcard-t">📊 SHARE REAL</div><div class="center">${ringCardHTML('cv-real', 112, C.real ? pc(C.real.share) : dash, C.real ? `Infinix #${C.real.pos || '—'} de ${C.real.rank.length}` : 'sin data real')}</div><div class="dfoot">${C.real ? `Marca #1: <b>${esc(C.real.rank[0] ? C.real.rank[0][0] : dash)}</b>` : 'La cadena no envía data real'}</div></div>
+        <div class="dcard"><div class="dcard-t">⚔️ SHARE CIERRES</div><div class="center">${ringCardHTML('cv-vs', 112, C.vs.tot ? pc(C.vs.share) : dash, C.vs.pos ? `Infinix #${C.vs.pos} de ${C.vs.rank.length}` : 'sin cierres')}</div><div class="dfoot">${C.vs.tot ? `${C.vs.inf} de ${C.vs.tot} uds reportadas` : 'Sin competencia reportada'}</div></div>
+        <div class="dcard"><div class="dcard-t">🎓 EVALUACIONES</div><div class="center">${ringCardHTML('cv-ev', 112, pEv == null ? dash : `${hechas.length}/${conEv.length}`, pEv == null ? 'sin cargar' : 'al día')}</div><div class="dfoot">Promedio <b>${promEv == null ? dash : promEv}</b></div></div>
+    </section>
+    <div class="rp-sec">ASESORES DEL PDV</div>
+    <div class="cv-adg">${A.map((x, i) => { const p = x.d.pacing, H = (x.d.comision || {}).hoy || {}, n = H.nivel || 0; return `<div class="cv-adc">
+        <div class="cv-adh">${advisorAvatar(st.id, x.d.nombre, 54)}<div><b>${esc(x.d.nombre.split(' ').slice(0, 2).join(' '))}</b><small>${p.venta} de ${p.meta || dash} uds · proy. ${Math.round(p.proy || 0)}</small></div></div>
+        <div class="cv-adr">${ringCardHTML('cv-a' + i, 92, pc(p.cumpl), 'cumpl.')}${ringCardHTML('cv-p' + i, 92, pc(p.proyCumpl), 'proyección')}</div>
+        <div class="cv-roi">${[['ROI 1', 1], ['$400K', 2], ['$700K', 3]].map(([l, k]) => `<i class="${n >= k ? 'on' : ''}">${n >= k ? '✓' : '🔒'} ${l}</i>`).join('')}</div>
+        <div class="cv-adf"><span>${n >= 3 ? '🏆 ROI 3 logrado' : `Faltan <b>${Math.max(0, (n === 0 ? (H.faltaBase ?? 0) : n === 1 ? H.falta400 : H.falta700) || 0)}</b> para ${n === 0 ? 'ROI 1' : n === 1 ? '$400K' : '$700K'}`}</span><span>🎓 ${x.e && x.e.promedio != null ? `<b class="${x.e.promedio >= 80 ? 'g' : x.e.promedio >= 70 ? 'a' : 'r'}">${x.e.promedio}</b>` : dash}${x.e && x.e.cargadas && x.e.cargadas.length ? (x.e.hecha ? ' · al día' : ' · <b class="r">pendiente</b>') : ''}</span></div></div>`; }).join('') || '<p class="rp-pad mute">Sin asesores con venta en la data.</p>'}</div>
     <div class="cv-two">
-        <div><div class="rp-sec">INFINIX VS COMPETENCIA · CIERRES</div>${C.vs.tot ? brandBars(C.vs.rank, C.vs.tot, 6) : '<p class="rp-pad mute">Sin cierres con competencia.</p>'}</div>
-        ${C.topReal.length ? `<div><div class="rp-sec">TOP 5 REFERENCIAS · DATA REAL</div><ol class="cv-top rp-pad">${C.topReal.map(r => `<li class="${r.marca === 'INFINIX' ? 'inf' : ''}"><b>${esc(r.ref)}</b> <small>${esc(r.marca)}</small> <em>${r.q}</em></li>`).join('')}</ol></div>` : ''}
+        <div><div class="rp-sec">⚔️ INFINIX VS COMPETENCIA · CIERRES</div>${C.vs.tot ? `<div class="cv-donut"><canvas id="cv-brands" width="170" height="170"></canvas><div class="cv-leg">${vsRank.map(([b, v]) => `<div class="${b === 'INFINIX' ? 'inf' : ''}"><i style="background:${BC[b] || '#94A3B8'}"></i><span>${esc(b)}</span><b>${pc(v / C.vs.tot)}</b><small>${v}</small></div>`).join('')}</div></div>` : '<p class="rp-pad mute">Sin cierres con competencia este mes.</p>'}</div>
+        <div><div class="rp-sec">📱 REFERENCIAS INFINIX · VENTA VS META</div><div class="cv-refs">${refs.map(r => `<div><span>${esc(r.name)}</span><div class="cv-tr"><i style="width:${r.v / maxR * 100}%;background:${col(r.c)}"></i>${r.mt ? `<em style="left:${r.mt / maxR * 100}%"></em>` : ''}</div><b>${r.v}<small>/${r.mt || dash}</small></b></div>`).join('')}</div>
+            <p class="rp-pad small">🏆 Más vendida: <b>${C.top && C.top.v ? esc(C.top.name) : dash}</b> · 🐢 Más rezagada: <b class="r">${C.rez ? `${esc(C.rez.name)} (${C.rez.v}/${C.rez.meta})` : dash}</b></p></div>
     </div>
-    ${(fotos || []).filter(Boolean).length ? `<div class="rp-sec">FOTOS DE LA VISITA</div><div class="cv-fotos">${fotos.filter(Boolean).map(f => `<img src="${f}" alt="Foto">`).join('')}</div>` : ''}
+    ${C.topReal.length ? `<div class="rp-sec">🏆 TOP 5 REFERENCIAS DEL PDV · DATA REAL</div><div class="cv-top5">${C.topReal.map((r, i) => `<div class="${r.marca === 'INFINIX' ? 'inf' : ''}"><em>#${i + 1}</em><b>${esc(r.ref)}</b><small>${esc(r.marca)}</small><strong>${r.q}</strong></div>`).join('')}</div>` : ''}
+    ${(fotos || []).filter(Boolean).length ? `<div class="rp-sec">📷 FOTOS DE LA VISITA</div><div class="cv-fotos">${fotos.filter(Boolean).map(f => `<img src="${f}" alt="Foto">`).join('')}</div>` : ''}
     ${o.nota ? `<p class="rp-pad"><b>Comentario:</b> ${esc(o.nota)}</p>` : ''}
-    <footer class="rp-foot"><span>Venta y ROI de la data DCR; share de los cierres de los asesores y, si la cadena la envía, de la data real.</span><b>Infinix · Central de Operaciones</b></footer><div class="rp-bar"></div>`;
-    stage.appendChild(el); return el;
+    <footer class="rp-foot"><span>Venta, ROI e incentivos: data DCR. Share cierres: lo que reportan los asesores. Share real y top 5: data de la cadena. Evaluaciones: semanas cargadas del mes.</span><b>Infinix · Central de Operaciones</b></footer><div class="rp-bar"></div>`;
+    stage.appendChild(el);
+    const ring = (id, p, c) => { const cv = $('#' + id, el); if (cv) Charts.ring(cv, [Math.min(1, p || 0), Math.max(0, 1 - (p || 0))], [c, THEME.line], { cutout: '76%' }); };
+    ring('cv-cum', C.cumpl, col(C.cumplP)); ring('cv-real', C.real ? C.real.share : 0, THEME.green); ring('cv-vs', C.vs.share, '#0EA5E9'); ring('cv-ev', pEv, pEv == null ? '#94A3B8' : pEv >= 1 ? THEME.green : pEv >= .7 ? THEME.amber : THEME.red);
+    A.forEach((x, i) => { ring('cv-a' + i, x.d.pacing.cumpl, col(x.d.pacing.indice)); ring('cv-p' + i, x.d.pacing.proyCumpl, col(x.d.pacing.proyCumpl)); });
+    const bc = $('#cv-brands', el); if (bc) Charts.ring(bc, vsRank.map(x => x[1]), vsRank.map(x => BC[x[0]] || '#94A3B8'), { cutout: '58%', gap: true });
+    return el;
 }
