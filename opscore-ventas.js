@@ -148,7 +148,7 @@ registerModule('ventas', (() => {
                 <span class="rv-dates"><input type="date" class="input" id="rv-d" value="${F.desde}" max="${todayStr()}"><span>a</span><input type="date" class="input" id="rv-h" value="${F.hasta}" max="${todayStr()}"></span></div>
         </section>
         <section id="rv-status"></section>
-        <nav class="ztabs" id="rv-tabs">${[['refs', '📱 Por referencia'], ['dia', '📅 Día a día'], ['imei', '📵 IMEI inactivos']].map(([k, l]) => `<button class="ztab ${tab === k ? 'on' : ''}" data-tab2="${k}">${l}</button>`).join('')}</nav>
+        <nav class="ztabs" id="rv-tabs">${[['refs', '📱 Por referencia'], ['dia', '📅 Día a día'], ['explorar', '🔎 Explorador'], ['imei', '📵 IMEI inactivos']].map(([k, l]) => `<button class="ztab ${tab === k ? 'on' : ''}" data-tab2="${k}">${l}</button>`).join('')}</nav>
         <section class="card" id="rv-body"></section>
         ${actionBarHTML()}`;
         $('#rv-load', v).onclick = () => { navigate('zona'); setTimeout(() => { const f = $('#z-file'); if (f) f.click(); }, 500); };
@@ -170,9 +170,17 @@ registerModule('ventas', (() => {
         ReportActions.bind(v, {
             title: 'Reporte de venta · Central de Operaciones',
             validate: () => hasDr() ? null : 'Carga primero la data plana del día para generar el reporte.',
-            filename: () => `Reporte_${tab === 'refs' ? 'Referencias' : tab === 'dia' ? 'DiaADia' : 'IMEI'}_${slug(F.tienda ? storeById(F.tienda).tienda : F.zona || zonasF().join('_'))}_${F.desde}${F.hasta !== F.desde ? '_' + F.hasta : ''}.png`,
-            build: stage => buildVentasCanvas(stage, reportData(), me())
+            filename: () => `Reporte_${tab === 'refs' ? 'Referencias' : tab === 'dia' ? 'DiaADia' : tab === 'explorar' ? 'Explorador_' + X.by : 'IMEI'}_${slug(F.tienda ? storeById(F.tienda).tienda : F.zona || zonasF().join('_'))}_${F.desde}${F.hasta !== F.desde ? '_' + F.hasta : ''}.png`,
+            build: stage => tab === 'explorar' ? buildExplorerCanvas(stage, explorerData(days(F.desde, F.hasta)), me(), { rango: rangoTxt(), scope: F.tienda ? storeById(F.tienda).tienda : F.zona || zonasF().join(', ') }) : buildVentasCanvas(stage, reportData(), me())
         });
+        v.addEventListener('change', e => {
+            const t = e.target;
+            if (t.dataset.xby !== undefined) { X.by = t.value; paint(); }
+            if (t.id === 'xp-ase') { X.asesor = t.value; paint(); }
+            if (t.id === 'xp-sin') { X.sinVenta = t.checked; paint(); }
+            if (t.id === 'xp-cols') { X.cols = t.value; paint(); }
+        });
+        v.addEventListener('click', e => { const r = e.target.closest('[data-xref]'); if (!r) return; const k = r.dataset.xref; X.refs = k === '*' ? [] : X.refs.includes(k) ? X.refs.filter(x => x !== k) : X.refs.concat(k); paint(); });
         paint();
     }
     function paint() {
@@ -192,7 +200,7 @@ registerModule('ventas', (() => {
         const S = status(F.hasta);
         $('#rv-status').innerHTML = (C.fecha && F.hasta > C.fecha ? `<div class="ds-nomalla">⚠️ Tu data llega hasta el <b>${esc(C.fecha)}${C.hora ? ' ' + esc(C.hora) : ''}</b>: lo de ${F.hasta === todayStr() ? 'hoy' : 'después'} aún no está cargado. Carga la data plana del momento para ver el corte real.</div>` : '') + statusHTML(S);
         const D = days(F.desde, F.hasta);
-        $('#rv-body').innerHTML = tab === 'refs' ? refsHTML(refsData(D)) : tab === 'cero' ? ceroHTML(cero(D), D) : tab === 'dia' ? diaHTML(D) : imeiHTML(imei(D), D);
+        $('#rv-body').innerHTML = tab === 'refs' ? refsHTML(refsData(D)) : tab === 'cero' ? ceroHTML(cero(D), D) : tab === 'dia' ? diaHTML(D) : tab === 'explorar' ? explorerHTML(explorerData(D)) : imeiHTML(imei(D), D);
     }
     const rangoTxt = () => F.desde === F.hasta ? fechaLarga(F.desde) : `${fechaLarga(F.desde)} a ${fechaLarga(F.hasta)}`;
     function statusHTML(S) {
@@ -244,6 +252,60 @@ registerModule('ventas', (() => {
             ${A.map(x => `<tr><td class="l"><b>${esc(x.nombre)}</b></td><td class="l"><small>${esc(x.st.tienda)}</small></td>${cols.map(d => { const n = int(x.dr[d]), ds = typeof DayStatus !== 'undefined' ? DayStatus.ofAdvisor(x.st, x.nombre, d) : null; return `<td class="${n ? 'g' : ds && ds.off ? 'off' : 'z'}" title="${ds ? esc(ds.label) : ''}">${n || (ds && ds.off ? '—' : 0)}</td>`; }).join('')}<td><b>${x.v}</b></td><td>${x.md && x.md.tot != null ? x.md.tot : '—'}</td><td>${x.md && x.md.tot ? `<i class="pill ${x.hoy >= x.md.tot ? 'ok' : x.hoy ? 'warn' : 'bad'}">${x.hoy}/${x.md.tot} · ${Math.round(x.hoy / x.md.tot * 100)}%</i>` : '—'}</td><td>${wowCell(x.w)}</td></tr>`).join('')}
             </tbody></table></div><p class="hint">Ordenado del que más vende al que menos. Meta día = lo que le falta para su meta del mes ÷ días que quedan (redondeado hacia arriba). 0 en rojo = día sin venta · — = compensando o con novedad (malla). vs sem. ant. = lunes a la fecha contra los mismos días de la semana pasada.</p>`;
     }
+    // ---- 🔎 Explorador (piloto): el líder arma su propio reporte con filtros. Filas = asesores (o tienda, cadena, zona,
+    // referencia) y columnas = unidades de cada referencia elegida en el rango de fechas. Sale de la venta diaria DCR.
+    const X = { by: 'asesor', refs: [], asesor: '', sinVenta: false, cols: 'refs' };
+    const XBY = [['asesor', '👤 Asesor'], ['tienda', '🏬 Tienda'], ['cadena', '🏷️ Cadena'], ['zona', '📍 Zona'], ['ref', '📱 Referencia']];
+    function explorerData(D) {
+        const set = new Set(D), mes = F.preset === 'mes';
+        const unitsOf = x => { const o = {}; Object.entries(x.drr || {}).forEach(([d, r]) => { if (!set.has(d)) return; Object.entries(r).forEach(([k, q]) => { o[k] = (o[k] || 0) + int(q); }); }); return o; };
+        const A = advisorsF().filter(x => !X.asesor || x.st.id + '|' + x.nombre === X.asesor).map(x => ({ ...x, u: unitsOf(x) }));
+        const usados = INFINIX_MODELS.filter(m => A.some(x => x.u[m.key]) || storesF().some(st => int((st.metas || {})[m.key]) > 0));
+        const refs = X.refs.length ? INFINIX_MODELS.filter(m => X.refs.includes(m.key)) : usados;
+        const tot = u => sum(refs.map(m => int(u[m.key])));
+        let rows;
+        if (X.by === 'ref') {
+            rows = refs.map(m => { const V = A.filter(x => x.u[m.key] > 0).sort((a, b) => b.u[m.key] - a.u[m.key]); const meta = sum(storesF().map(st => int((st.metas || {})[m.key]))); return { k: m.key, nombre: m.name, total: sum(V.map(x => x.u[m.key])), asesores: V.length, top: V[0] ? `${V[0].nombre} (${V[0].u[m.key]})` : '—', tiendas: new Set(V.map(x => x.st.id)).size, meta, cumpl: mes && meta ? sum(V.map(x => x.u[m.key])) / meta : null }; });
+        } else if (X.by === 'asesor') {
+            rows = A.map(x => ({ k: x.st.id + '|' + x.nombre, nombre: x.nombre, st: x.st, u: x.u, total: tot(x.u) }));
+        } else {
+            const keyOf = x => X.by === 'tienda' ? x.st.id : X.by === 'cadena' ? chainGroup(x.st).key : x.st.zona;
+            const nameOf = x => X.by === 'tienda' ? x.st.tienda : X.by === 'cadena' ? chainGroup(x.st).label : x.st.zona;
+            const G = {};
+            A.forEach(x => { const k = keyOf(x), g = G[k] = G[k] || { k, nombre: nameOf(x), st: x.st, u: {}, asesores: 0, stores: new Set() }; g.asesores++; g.stores.add(x.st.id); Object.entries(x.u).forEach(([r, q]) => { g.u[r] = (g.u[r] || 0) + q; }); });
+            rows = Object.values(G).map(g => {
+                const metas = {}; [...g.stores].map(storeById).forEach(st => Object.entries(st.metas || {}).forEach(([r, q]) => { metas[r] = (metas[r] || 0) + int(q); }));
+                const conMeta = refs.filter(m => metas[m.key] > 0).map(m => ({ m, c: int(g.u[m.key]) / metas[m.key] })).sort((a, b) => a.c - b.c);
+                const best = refs.map(m => [m, int(g.u[m.key])]).sort((a, b) => b[1] - a[1])[0];
+                return { ...g, total: tot(g.u), metas, mejor: best && best[1] ? `${best[0].name} (${best[1]})` : '—', rezagada: conMeta[0] ? `${conMeta[0].m.name} (${int(g.u[conMeta[0].m.key])}/${metas[conMeta[0].m.key]})` : '—' };
+            });
+        }
+        if (!X.sinVenta) rows = rows.filter(r => r.total > 0); else rows = rows.filter(r => X.by === 'ref' || true);
+        rows.sort((a, b) => X.sinVenta && X.by === 'asesor' ? a.total - b.total : b.total - a.total);
+        const total = sum(rows.map(r => r.total));
+        return { rows, refs, total, by: X.by, asesores: A.length, mes };
+    }
+    function explorerHTML(E) {
+        const ases = advisorsF().sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+        const refCols = X.cols === 'refs' && E.by !== 'ref';
+        const head = E.by === 'ref' ? '<th class="l">Referencia</th><th>Unidades</th><th>Asesores que la venden</th><th>Tiendas</th><th class="l">Quién más vende</th>' + (E.mes ? '<th>Meta mes</th><th>Cumpl.</th>' : '')
+            : `<th class="l">${{ asesor: 'Asesor', tienda: 'Tienda', cadena: 'Cadena', zona: 'Zona' }[E.by]}</th>${E.by === 'asesor' ? '<th class="l">Tienda</th><th class="l">Cadena</th>' : E.by === 'tienda' ? '<th class="l">Cadena</th>' : ''}${E.by !== 'asesor' && E.by !== 'zona' ? '' : ''}${refCols ? E.refs.map(m => `<th title="${esc(m.name)}">${esc(m.name.replace(/^(NOTE|Note|HOT|SMART|GT) /, x => x.charAt(0) + '. '))}</th>`).join('') : ''}<th>Total</th><th>%</th>${E.by !== 'asesor' ? '<th>Asesores</th><th class="l">Más vendida</th><th class="l">Más rezagada (vs meta)</th>' : ''}`;
+        const row = r => E.by === 'ref' ? `<tr><td class="l"><b>${esc(r.nombre)}</b></td><td><b>${r.total}</b></td><td>${r.asesores}</td><td>${r.tiendas}</td><td class="l"><small>${esc(r.top)}</small></td>${E.mes ? `<td>${r.meta || '—'}</td><td>${r.cumpl == null ? '—' : `<i class="pill ${r.cumpl >= .85 ? 'ok' : r.cumpl >= .6 ? 'warn' : 'bad'}">${Math.round(r.cumpl * 100)}%</i>`}</td>` : ''}</tr>`
+            : `<tr><td class="l"><b>${esc(r.nombre)}</b></td>${E.by === 'asesor' ? `<td class="l"><small>${esc(r.st.tienda)}</small></td><td class="l"><small>${esc(chainGroup(r.st).label)}</small></td>` : E.by === 'tienda' ? `<td class="l"><small>${esc(chainGroup(r.st).label)}</small></td>` : ''}${refCols ? E.refs.map(m => `<td class="${int(r.u[m.key]) ? '' : 'z'}">${int(r.u[m.key]) || 0}</td>`).join('') : ''}<td><b>${r.total}</b></td><td><small>${E.total ? Math.round(r.total / E.total * 100) + '%' : '—'}</small></td>${E.by !== 'asesor' ? `<td>${r.asesores}</td><td class="l"><small>${esc(r.mejor)}</small></td><td class="l"><small class="r">${esc(r.rezagada)}</small></td>` : ''}</tr>`;
+        return `<div class="row between wrap"><h3 class="h3">🔎 Explorador de venta <small class="mute">· piloto · ${esc(rangoTxt())}</small></h3><b>${E.total} uds · ${E.rows.length} fila(s)</b></div>
+            <p class="hint">Arma tu reporte: elige cómo agrupar, las referencias y el asesor. Usa los filtros de arriba (zona, cadena, tienda y fechas). Sale de la venta diaria de la data plana DCR.</p>
+            <div class="xp-f"><span class="lbl">Ver por</span><div class="seg sm">${XBY.map(([k, l]) => `<label class="seg-btn ${X.by === k ? 'active' : ''}"><input type="radio" name="xp-by" value="${k}" data-xby ${X.by === k ? 'checked' : ''} hidden>${l}</label>`).join('')}</div></div>
+            <div class="xp-f"><span class="lbl">Referencias</span><div class="chips"><button class="chip-b ${X.refs.length ? '' : 'on'}" data-xref="*">Todas</button>${INFINIX_MODELS.map(m => `<button class="chip-b ${X.refs.includes(m.key) ? 'on' : ''}" data-xref="${m.key}">${esc(m.name)}</button>`).join('')}</div></div>
+            <div class="row wrap" style="gap:8px;margin:6px 0 10px;align-items:flex-end">
+                <label class="field-inline grow"><span class="lbl">Asesor</span><select class="input" id="xp-ase"><option value="">Todos los asesores (${ases.length})</option>${ases.map(x => `<option value="${esc(x.st.id + '|' + x.nombre)}" ${X.asesor === x.st.id + '|' + x.nombre ? 'selected' : ''}>${esc(x.nombre)} · ${esc(x.st.tienda)}</option>`).join('')}</select></label>
+                ${E.by !== 'ref' ? `<label class="field-inline"><span class="lbl">Columnas</span><select class="input" id="xp-cols"><option value="refs" ${X.cols === 'refs' ? 'selected' : ''}>Una por referencia</option><option value="tot" ${X.cols === 'tot' ? 'selected' : ''}>Solo el total</option></select></label>` : ''}
+                <label class="chip"><input type="checkbox" id="xp-sin" ${X.sinVenta ? 'checked' : ''}><span>Incluir los que no han vendido (los de menos venta primero)</span></label>
+            </div>
+            ${E.rows.length ? `<div class="tbl-scroll"><table class="tbl compact xp-t"><thead><tr><th>#</th>${head}</tr></thead><tbody>${E.rows.map((r, i) => row(r).replace('<tr>', `<tr><td>${i + 1}</td>`)).join('')}
+                <tr class="tot"><td></td><td class="l"><b>Total</b></td>${E.by === 'asesor' ? '<td></td><td></td>' : E.by === 'tienda' ? '<td></td>' : ''}${E.by !== 'ref' && X.cols === 'refs' ? E.refs.map(m => `<td><b>${sum(E.rows.map(r => int(r.u[m.key])))}</b></td>`).join('') : ''}<td><b>${E.total}</b></td>${E.by === 'ref' ? '' : '<td></td>'}${E.by !== 'asesor' && E.by !== 'ref' ? '<td></td><td></td><td></td>' : ''}</tr></tbody></table></div>` : '<p class="empty">Sin venta con estos filtros. Prueba otro rango de fechas o marca "Incluir los que no han vendido".</p>'}
+            <p class="hint">Es un panel piloto: dime qué otros cortes te sirven y los agrego.</p>`;
+    }
+
     // Facturas que subieron los asesores para sus IMEI sin activar (se borran solas cuando el IMEI aparece activo)
     let facs = null, facKey = '';
     async function loadFacs() {
@@ -326,3 +388,17 @@ function buildVentasCanvas(stage, d, autor) {
 }
 const advisorsAll = d => scopedStores().filter(st => d.zonas.includes(st.zona)).filter(st => !d.F.cadena || chainGroup(st).key === d.F.cadena).filter(st => !d.F.tienda || st.id === d.F.tienda)
     .flatMap(st => activeAdvisors(st).map(a => ({ st, nombre: a.nombre, dr: a.dr || {} }))).sort((a, b) => sum(Object.values(a.dr)) - sum(Object.values(b.dr)));
+
+// Lienzo del explorador: la tabla tal cual la armó el líder
+function buildExplorerCanvas(stage, E, autor, o) {
+    const by = { asesor: 'ASESOR', tienda: 'TIENDA', cadena: 'CADENA', zona: 'ZONA', ref: 'REFERENCIA' }[E.by], refCols = E.by !== 'ref' && E.refs.length <= 10;
+    const el = document.createElement('div'); el.className = 'rp sp aud';
+    el.innerHTML = `<div class="rp-bar"></div>
+    <header class="rp-head"><img class="rp-logo" src="${LOGO_INFINIX}" alt="Infinix">
+        <div class="rp-head-mid"><div class="rp-kicker">EXPLORADOR DE VENTA · POR ${by}</div><div class="rp-title">${esc(String(o.scope || '').toUpperCase())}</div><div class="rp-sub">${esc(o.rango)} · ${E.refs.length === INFINIX_MODELS.length ? 'todas las referencias' : E.refs.map(m => m.name).join(', ')} · ${E.total} uds</div></div>
+        <div class="pl-who"><b>${esc(autor.nombre)}</b><small>${ROLES[autor.rol] ? ROLES[autor.rol].label : ''}</small></div></header>
+    <table class="rp-tbl sp-tbl"><thead><tr><th class="l">#</th><th class="l">${by}</th>${E.by === 'asesor' ? '<th class="l">TIENDA</th>' : ''}${E.by === 'ref' ? '<th>UDS</th><th>ASESORES</th><th class="l">QUIÉN MÁS VENDE</th>' : `${refCols ? E.refs.map(m => `<th>${esc(m.name)}</th>`).join('') : ''}<th class="c-tot">TOTAL</th>${E.by !== 'asesor' ? '<th class="l">MÁS VENDIDA</th><th class="l">MÁS REZAGADA</th>' : ''}`}</tr></thead><tbody>
+    ${E.rows.slice(0, 80).map((r, i) => `<tr><td class="l">${i + 1}</td><td class="l"><b>${esc(r.nombre)}</b></td>${E.by === 'asesor' ? `<td class="l small">${esc(r.st.tienda)}</td>` : ''}${E.by === 'ref' ? `<td><b>${r.total}</b></td><td>${r.asesores}</td><td class="l small">${esc(r.top)}</td>` : `${refCols ? E.refs.map(m => `<td class="${int(r.u[m.key]) ? '' : 'mute'}">${int(r.u[m.key]) || 0}</td>`).join('') : ''}<td class="c-tot"><b>${r.total}</b></td>${E.by !== 'asesor' ? `<td class="l small">${esc(r.mejor)}</td><td class="l small r">${esc(r.rezagada)}</td>` : ''}`}</tr>`).join('')}</tbody></table>
+    <footer class="rp-foot"><span>Venta diaria de la data plana DCR en el rango elegido. Reporte armado con los filtros del Explorador.</span><b>Infinix · Central de Operaciones</b></footer><div class="rp-bar"></div>`;
+    stage.appendChild(el); return el;
+}

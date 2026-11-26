@@ -160,6 +160,15 @@ const RealData = (() => {
         }
         return ids;
     }
+    // Quita una semana cargada de una cadena (se recalcula el mes con las que quedan)
+    async function removeWeek(chain, month, wk) {
+        const id = docId(chain, month), d = cache[id] || await Data.get(COL.zoneData, id).catch(() => null);
+        if (!d || !d.weeks || !d.weeks[wk]) return;
+        const weeks = { ...d.weeks }; delete weeks[wk];
+        if (!Object.keys(weeks).length) { delete cache[id]; return Data.del(COL.zoneData, id); }
+        const doc = rollup({ ...d, weeks, at: Date.now() }); cache[id] = doc;
+        return Data.set(COL.zoneData, id, doc, false);
+    }
     async function load(month) {
         month = month || todayStr().slice(0, 7);
         const docs = (await Data.list(COL.zoneData, [['kind', '==', 'real'], ['month', '==', month]]).catch(() => [])) || [];
@@ -186,7 +195,7 @@ const RealData = (() => {
         const pos = inf > 0 ? rank.findIndex(([b]) => b === 'INFINIX') + 1 : null;
         return { tot, inf, share: tot ? inf / tot : null, pos, rank };
     }
-    return { parse, match, save, load, ensure, forStore, shareOf, docsFor, weeksOf, weekRange, brandOf, refName };
+    return { parse, match, save, removeWeek, load, ensure, forStore, shareOf, docsFor, weeksOf, weekRange, brandOf, refName };
 })();
 
 // Lo que más vende cada marca en una tienda (data real): para comparativos, role play y focos de ataque
@@ -226,10 +235,11 @@ function realUploadHTML() {
     const month = todayStr().slice(0, 7), docs = RealData.docsFor(month);
     const docOf = k => docs.find(x => x.chain === k) || (k === 'corbeta' ? docs.find(x => x.chain === 'alkosto' || x.chain === 'ktronix') : null);
     return `<section class="card up-card" id="up-real">
-        <div class="up-h"><span class="up-ico">🏬</span><div><h3 class="h3">Data real por cadena · sell-out</h3><p class="mute">Lo que vendió cada marca (y cada referencia, si el archivo trae el modelo) en cada tienda según la cadena. Con esto salen el share real, la participación y el puesto de Infinix, las referencias que más vende la competencia y las alertas cuando el reporte del asesor no coincide. <b>Alkosto y Ktronix van en un solo archivo (Corbeta):</b> la app reparte cada tienda a su cadena. Solo la ven los líderes.</p></div></div>
+        <div class="up-h"><span class="up-ico">🏬</span><div><h3 class="h3">Data real por cadena · sell-out</h3><p class="mute">Carga el archivo de cada semana (W44, W45, W46…): se van sumando y quedan guardadas para ver el mes completo y el crecimiento semana a semana; si vuelves a cargar una semana, se reemplaza. Lo que vendió cada marca (y cada referencia, si el archivo trae el modelo) en cada tienda según la cadena. Con esto salen el share real, la participación y el puesto de Infinix, las referencias que más vende la competencia y las alertas cuando el reporte del asesor no coincide. <b>Alkosto y Ktronix van en un solo archivo (Corbeta):</b> la app reparte cada tienda a su cadena. Solo la ven los líderes.</p></div></div>
         <div class="up-real-grid">${REAL_CHAINS.map(([k, l]) => { const d = docOf(k); return `<div class="up-real ${d ? 'on' : ''}"><div class="row between"><span>${realChainLogo(k, l, 'sm')}</span>${d ? `<i class="pill ok">✓ ${Object.keys(d.stores || {}).length} PDV</i>` : '<i class="pill">Sin cargar</i>'}</div>
             <small class="mute">${d ? `${esc(d.desde)} a ${esc(d.hasta)}${d.weeks && Object.keys(d.weeks).filter(k => k !== 'MES').length ? ' · ' + Object.keys(d.weeks).filter(k => k !== 'MES').sort().join(', ') : ''} · ${esc(d.by || '')}${d.refs && Object.keys(d.refs).length ? ' · con referencias' : ''}` : esc(l) + ' · mes en curso'}</small>
-            <label class="btn btn-ghost sm">📂 ${d ? 'Cargar otra semana' : 'Cargar'}<input type="file" data-real="${k}" accept=".xlsx,.xls,.csv" hidden></label></div>`; }).join('')}</div>
+            <div class="rl-wks">${[...new Set(evalWeeksOfMonth(month).map(n => 'W' + pad2(n)).concat(Object.keys((d && d.weeks) || {}).filter(x => x !== 'MES')))].sort().map(w => { const W = d && d.weeks && d.weeks[w]; return `<span class="rl-wk ${W ? 'on' : ''}" title="${W ? `${esc(W.file || '')} · ${esc(W.by || '')}` : 'Sin cargar'}">${W ? '✓' : '·'} ${w}${W ? ` <small>${int(W.desde.slice(8))}–${int(W.hasta.slice(8))}</small><button type="button" class="rl-wx" data-rwx="${k}|${w}" title="Quitar esta semana">✕</button>` : ''}</span>`; }).join('')}</div>
+            <label class="btn btn-ghost sm">📂 ${d ? 'Agregar semana' : 'Cargar semana'}<input type="file" data-real="${k}" accept=".xlsx,.xls,.csv" hidden></label></div>`; }).join('')}</div>
         <div id="up-real-out"></div></section>`;
 }
 async function onRealFile(chain, file, after) {
@@ -324,13 +334,17 @@ async function paintRealShare(box, stores, label) {
         const Ls = rsScope(L), A = rsAgg(Ls), alertas = Ls.filter(x => x.alerta && x.real), G = rsGroups(Ls, RS.nivel), lider = A.rank[0], lbl = rsLabel(label);
         const V = refsOf(Ls), infRank = V.all.findIndex(r => r.marca === 'INFINIX'), atk = ataques(V, RS.tienda ? storeById(RS.tienda) : null);
         const porCadena = rsGroups(Ls, 'cadena').map(g => ({ g, V: refsOf(g.L) })).filter(x => x.V.all.length);
+        // Semana a semana del alcance filtrado (crecimiento de Infinix y del share)
+        const evo = weeks.map(w => { const Lw = stores.map(st => { const Rw = RealData.forStore(st, month, w); return { st, real: Rw ? RealData.shareOf(Rw.marcas) : null }; }); return { w, A: rsAgg(rsScope(Lw)) }; }).filter(e => e.A.tot);
+        evo.forEach((e, i) => { const p = evo[i - 1]; e.dShare = p && e.A.share != null && p.A.share != null ? Math.round((e.A.share - p.A.share) * 1000) / 10 : null; e.dInf = p && p.A.inf ? (e.A.inf - p.A.inf) / p.A.inf : null; });
+        const evSel = RS.rwk ? evo.find(e => e.w === RS.rwk) : null;
         if (!A.tot) { box.innerHTML = rsFiltersHTML(L) + wkSel + `<div class="card empty" style="margin-top:10px">${RealData.docsFor(month).length ? 'No hay data real para este filtro.' : 'Aún no hay data real este mes. La carga el coordinador en <b>Cargar datos › Data real por cadena</b>.'} Lo que reportan los asesores en sus cierres está en <b>⚔️ Infinix vs competencia</b>.</div>`; rsBind(box, paint); bindWk(); return; }
         box.innerHTML = `
         ${rsFiltersHTML(L)}${wkSel}
         <div class="seg sm" style="margin:8px 0">${[['tienda', 'Por tienda'], ['cadena', 'Por cadena'], ['zona', 'Por zona'], ['regional', 'Por regional']].map(([k, l]) => `<button class="seg-btn ${RS.nivel === k ? 'active' : ''}" data-rsn="${k}">${l}</button>`).join('')}</div>
         <p class="hint" style="margin:0 0 6px">📅 ${esc(perTxt)}</p>
         <div class="zg-kpis">
-            <div class="hl"><span>Share real Infinix · ${esc(lbl)}</span><b>${rsPc(A.share)}</b><em>${A.inf} de ${A.tot} uds</em></div>
+            <div class="hl"><span>Share real Infinix · ${esc(lbl)}</span><b>${rsPc(A.share)}</b><em>${A.inf} de ${A.tot} uds${evSel && evSel.dShare != null ? ` · <b class="${evSel.dShare >= 0 ? 'g' : 'r'}">${evSel.dShare >= 0 ? '▲' : '▼'} ${Math.abs(evSel.dShare)} pts</b> vs sem. ant.` : ''}</em></div>
             <div><span>Puesto de Infinix</span><b>${A.pos ? '#' + A.pos : '—'}</b><em>de ${A.rank.length} marcas</em></div>
             <div><span>Marca #1</span><b style="font-size:20px">${lider ? esc(lider[0]) : '—'}</b><em>${lider ? `${lider[1]} uds · ${rsPc(lider[1] / A.tot)}` : ''}</em></div>
             <div><span>Ref. #1 del mercado</span><b style="font-size:17px">${V.all[0] ? esc(V.all[0].ref) : '—'}</b><em>${V.all[0] ? `${esc(V.all[0].marca)} · ${V.all[0].q} uds` : 'el archivo no trae modelo'}</em></div>
@@ -338,6 +352,10 @@ async function paintRealShare(box, stores, label) {
             <div><span>PDV con data real</span><b>${A.real}<small>/${Ls.length}</small></b><em>${RealData.docsFor(month).length} cadena(s) cargada(s)</em></div>
         </div>
         <details class="card acc" open><summary><span>🏁 Ranking de marcas · ${esc(lbl)}</span></summary>${brandBars(A.rank, A.tot, 11)}</details>
+        ${evo.length ? `<details class="card acc" open><summary><span>📈 Semana a semana · crecimiento</span></summary>
+            <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th class="l">Semana</th><th>Infinix</th><th>Crec. Infinix</th><th>Total</th><th>Share</th><th>Var. share</th><th>Puesto</th><th>Marca #1</th></tr></thead><tbody>
+            ${evo.map(e => `<tr class="${RS.rwk === e.w ? 'cur' : ''}"><td class="l"><b>${e.w}</b> <small class="mute">${(r => r ? int(r.desde.slice(8)) + '–' + int(r.hasta.slice(8)) : '')(RealData.weekRange(month, e.w))}</small></td><td><b>${e.A.inf}</b></td><td class="${e.dInf == null ? '' : e.dInf >= 0 ? 'g' : 'r'}">${e.dInf == null ? '—' : (e.dInf >= 0 ? '▲ ' : '▼ ') + Math.abs(Math.round(e.dInf * 100)) + '%'}</td><td>${e.A.tot}</td><td><b>${rsPc(e.A.share)}</b></td><td class="${e.dShare == null ? '' : e.dShare >= 0 ? 'g' : 'r'}">${e.dShare == null ? '—' : (e.dShare >= 0 ? '▲ ' : '▼ ') + Math.abs(e.dShare) + ' pts'}</td><td>${e.A.pos ? '#' + e.A.pos : '—'}</td><td>${e.A.rank[0] ? esc(e.A.rank[0][0]) : '—'}</td></tr>`).join('')}</tbody></table></div>
+            <p class="hint">Crecimiento = unidades Infinix de la semana contra la semana anterior; Var. share = puntos de share ganados o perdidos.</p></details>` : ''}
         <details class="card acc" open><summary><span>📊 Share real ${RS.nivel === 'tienda' ? 'por tienda' : RS.nivel === 'cadena' ? 'por cadena' : RS.nivel === 'zona' ? 'por zona' : 'por regional'} (${G.length})</span></summary>
             <div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>${RS.nivel === 'tienda' ? 'PDV' : RS.nivel === 'cadena' ? 'Cadena' : RS.nivel === 'zona' ? 'Zona' : 'Regional'}</th>${RS.nivel !== 'tienda' ? '<th>PDV</th>' : ''}<th>Infinix</th><th>Total</th><th>Share</th><th>Puesto</th><th>Marca #1</th><th>Ref. #1</th><th>Top marcas</th></tr></thead><tbody>
             ${G.map(g => { const v = refsOf(g.L).all[0]; return `<tr><td class="l">${RS.nivel === 'tienda' ? storeLogo(g.st, 'xs') + ' ' : RS.nivel === 'cadena' ? chainGroupLogo(chainGroup(g.st).key, 'xs') + ' ' : ''}<b>${esc(g.nombre)}</b></td>${RS.nivel !== 'tienda' ? `<td>${g.A.real}</td>` : ''}<td><b>${g.A.inf}</b></td><td>${g.A.tot}</td><td><b>${rsPc(g.A.share)}</b></td><td>${g.A.pos ? '#' + g.A.pos : '—'}</td><td>${g.A.rank[0] ? esc(g.A.rank[0][0]) : '—'}</td><td class="l"><small>${v ? `${esc(v.ref)} (${esc(v.marca)}) ${v.q}` : '—'}</small></td><td class="l"><small>${g.A.rank.slice(0, 4).map(([b, q]) => `${esc(b)} ${rsPc(q / g.A.tot)}`).join(' · ')}</small></td></tr>`; }).join('')}</tbody></table></div>
@@ -363,7 +381,7 @@ async function paintRealShare(box, stores, label) {
             title: 'Market share real · Central de Operaciones', noStore: true,
             validate: () => A.tot ? null : 'No hay data para este filtro.',
             filename: () => `Share_real_${slug(lbl)}_${RS.rwk || month}.png`,
-            build: stage => buildShareCanvas(stage, { lbl, A, G, nivel: RS.nivel, alertas, month, autor: State.session, V, per: perTxt })
+            build: stage => buildShareCanvas(stage, { lbl, A, G, nivel: RS.nivel, alertas, month, autor: State.session, V, per: perTxt, evo })
         });
     };
     paint();
@@ -386,6 +404,7 @@ function buildShareCanvas(stage, d) {
         <div class="${d.alertas.length ? 'bad' : 'ok'}"><span>Alertas de reporte</span><b>${d.alertas.length}</b><em>reporte asesor ≠ real</em></div>
     </div>
     <div class="rp-sec">RANKING DE MARCAS</div>${brandBars(d.A.rank, d.A.tot, 11)}
+    ${d.evo && d.evo.length > 1 ? `<div class="rp-sec">SEMANA A SEMANA</div><table class="rp-tbl sp-tbl"><thead><tr><th class="l">SEMANA</th><th>INFINIX</th><th>CREC.</th><th>TOTAL</th><th class="c-tot">SHARE</th><th>VAR.</th><th class="l">MARCA #1</th></tr></thead><tbody>${d.evo.map(e => `<tr><td class="l"><b>${e.w}</b></td><td>${e.A.inf}</td><td class="${e.dInf == null ? '' : e.dInf >= 0 ? 'g' : 'r'}">${e.dInf == null ? '—' : (e.dInf >= 0 ? '▲' : '▼') + Math.abs(Math.round(e.dInf * 100)) + '%'}</td><td>${e.A.tot}</td><td class="c-tot"><b>${rsPc(e.A.share)}</b></td><td class="${e.dShare == null ? '' : e.dShare >= 0 ? 'g' : 'r'}">${e.dShare == null ? '—' : (e.dShare >= 0 ? '▲' : '▼') + Math.abs(e.dShare) + ' pts'}</td><td class="l">${e.A.rank[0] ? esc(e.A.rank[0][0]) : '—'}</td></tr>`).join('')}</tbody></table>` : ''}
     <div class="rp-sec">SHARE ${nivelTxt}</div>
     <table class="rp-tbl sp-tbl"><thead><tr><th class="l">#</th><th class="l">${nivelTxt.replace('POR ', '')}</th><th>INFINIX</th><th>TOTAL</th><th class="c-tot">SHARE</th><th>PUESTO</th><th class="l">MARCA #1</th><th class="l">TOP MARCAS</th></tr></thead><tbody>
     ${d.G.map((g, i) => `<tr><td class="l">${i + 1}</td><td class="l"><div class="sp-pdv">${d.nivel === 'tienda' ? storeLogo(g.st, 'xs') : d.nivel === 'cadena' ? chainGroupLogo(chainGroup(g.st).key, 'xs') : ''}<b>${esc(g.nombre)}</b></div></td><td><b>${g.A.inf}</b></td><td>${g.A.tot}</td><td class="c-tot"><b>${rsPc(g.A.share)}</b></td><td>${g.A.pos ? '#' + g.A.pos : '—'}</td><td class="l">${g.A.rank[0] ? esc(g.A.rank[0][0]) : '—'}</td><td class="l small">${g.A.rank.slice(0, 4).map(([b, v]) => `${b === 'INFINIX' ? '<b>INFINIX</b>' : esc(b)} ${v}`).join(' · ')}</td></tr>`).join('')}</tbody></table>

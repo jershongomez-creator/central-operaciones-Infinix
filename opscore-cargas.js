@@ -366,6 +366,7 @@ registerModule('datos', (() => {
         if ($('#up-tgt', v)) $('#up-tgt', v).onchange = e => onTarget(e.target.files[0]);
         if ($('#up-mal', v)) $('#up-mal', v).onchange = e => onMalla(e.target.files[0]);
         $$('[data-real]', v).forEach(inp => inp.onchange = e => onRealFile(inp.dataset.real, e.target.files[0], () => render(view)));
+        $$('[data-rwx]', v).forEach(b => b.onclick = async () => { const [k, w] = b.dataset.rwx.split('|'); if (!await confirmBox(`¿Quitar la semana ${w} de la data real? Las demás semanas se conservan.`, 'Quitar')) return; await RealData.removeWeek(k, todayStr().slice(0, 7), w); toast(`${w} quitada`, 'ok'); render(view); });
         paintHoy();
         try { cargas = await Data.get(COL.config, 'cargas'); } catch (e) { cargas = null; }
         if ($('#up-tgt-last')) $('#up-tgt-last').innerHTML = lastTxt(cargas && cargas.target);

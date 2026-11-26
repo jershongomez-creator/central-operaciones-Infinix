@@ -35,9 +35,19 @@ const Evals = (() => {
     }
     // Universo de asesores del alcance: configurados en la tienda (con cédula si la hay) + los de la data de zona.
     // Se enriquece con la malla nacional: su nombre completo queda como alias y su cédula se usa si el asesor no la tiene.
-    function roster(zonas) {
+    // opts.retirados = 'AAAA-MM': incluye además a los asesores retirados en ese mes o después (estuvieron en el mes),
+    // marcados con retirado: true (evaluaciones iniciales: miden a todos los que estuvieron en el mes).
+    function roster(zonas, opts) {
         const out = [];
         State.stores.filter(s => zonas.includes(s.zona) && chainOn(s)).forEach(st => {
+            if (opts && opts.retirados) {
+                const ini = opts.retirados + '-01';
+                (st.bajas || []).filter(b => (b.fecha || (b.at ? dstr(new Date(b.at)) : '')) >= ini).forEach(b => {
+                    if (activeAdvisors(st).some(a => sameAdvisor(a, b)) || out.some(o => o.retirado && sameAdvisor(o, b))) return;
+                    const c = digits(b.cedula || '');
+                    out.push({ nombre: b.nombre, cedula: c, cedulas: c.length >= 5 ? [c] : [], alias: [...new Set([b.nombre].concat(b.nombres || []))], storeId: st.id, tienda: st.tienda, zona: st.zona, key: `${st.id}|${slug(b.nombre)}`, retirado: true, retiroFecha: b.fecha || '' });
+                });
+            }
             let M = {}; try { M = st.malla && st.malla.ced ? JSON.parse(st.malla.ced) : {}; } catch (e) { M = {}; }
             let MN = []; try { MN = st.malla && st.malla.data ? Object.keys(JSON.parse(st.malla.data)) : []; } catch (e) { MN = []; }
             const mallaNames = [...new Set(Object.keys(M).concat(MN))];
@@ -54,7 +64,8 @@ const Evals = (() => {
         return out;
     }
     let natR = null, natAt = 0;
-    const rosterAll = () => { if (!natR || Date.now() - natAt > 15000) { natR = roster(State.zones.map(z => z.nombre)); natAt = Date.now(); } return natR; };
+    // Para cruzar la data se incluyen también los retirados desde el mes pasado (las iniciales los cuentan; las semanales no)
+    const rosterAll = () => { if (!natR || Date.now() - natAt > 15000) { natR = roster(State.zones.map(z => z.nombre), { retirados: addDays(todayStr().slice(0, 7) + '-01', -1).slice(0, 7) }); natAt = Date.now(); } return natR; };
     const toks = s => norm(s).split(' ').filter(t => t.length > 2 && !['DEL', 'LAS', 'LOS'].includes(t));
     // Distancia de edición (Damerau: incluye dos caracteres invertidos)
     function digitDist(a, b) {
@@ -203,7 +214,7 @@ const Evals = (() => {
     const nac = {};                                 // mes → { W45: semana nacional }
     const canNacional = () => !!State.session && ['admin', 'coordinador', 'gerente'].includes(State.session.rol);
     async function loadNac(month) {
-        const ws = evalWeeksOfMonth(month).map(n => 'W' + n), out = {};
+        const ws = String(month).endsWith('~ini') ? EVAL_INICIAL.map(x => x[0]) : evalWeeksOfMonth(month).map(n => 'W' + n), out = {};
         await Promise.all(ws.map(async w => {
             const d = await Data.get(COL.evalData, nacId(month, w)).catch(() => null); if (!d || !d.rows) return;
             let rows = d.rows.slice();
@@ -357,7 +368,7 @@ registerModule('evals', (() => {
         month = todayStr().slice(0, 7); weeks = {}; dirty = false;
         v.innerHTML = `
         <section class="card">
-            <h2 class="h2">Evaluaciones de asesores</h2>
+            <h2 class="h2">📅 Evaluaciones semanales</h2>
             <p class="mute">Sube la data plana de cada semana (nombre, cédula y nota). La app cruza por cédula y, si no coincide, por nombre, aunque esté mal escrito. Verás quién presentó, quién falta, quién repitió y las notas.</p>
             <div class="row wrap" style="gap:10px;margin-top:10px;align-items:flex-end">
                 ${zonas.length > 1 ? `<label class="field-inline grow"><span class="lbl">Ámbito</span><select id="ev-zona" class="input"><option value="">${esc(label().replace(/^Zona .*/, 'Todo el alcance'))} · ${zonas.length} zonas</option>${zonas.map(z => `<option value="${esc(z)}" ${z === view ? 'selected' : ''}>${esc(z)}</option>`).join('')}</select></label>` : `<label class="field-inline grow"><span class="lbl">Zona</span><input class="input" value="${esc(zonas[0] || '')}" readonly></label>`}
@@ -366,12 +377,14 @@ registerModule('evals', (() => {
             <div id="ev-slots" class="ev-slots"></div>
             <p class="hint" id="ev-status"></p>
         </section>
-        <div id="ev-out"></div>`;
+        <div id="ev-out"></div>
+        <div id="ev-ini" style="margin-top:14px"></div>`;
         if ($('#ev-zona')) $('#ev-zona').onchange = e => { view = e.target.value; start(); };
         $('#ev-month').onchange = e => { month = e.target.value || month; start(); };
         $('#ev-slots').addEventListener('change', e => { if (e.target.dataset.w) onFile(e.target.dataset.w, e.target.files[0]); });
         $('#ev-slots').addEventListener('click', async e => { const b = e.target.closest('[data-del]'); if (!b) return; const w = b.dataset.del; if (!confirm(`¿Quitar la evaluación ${w}? Se borra también de lo guardado.`)) return; delete weeks[w]; paintSlots(); compute(); await Evals.removeWeek(viewZonas(), month, w); toast(`${w} quitada.`, 'ok'); });
         await start();
+        if (['formador', 'admin'].includes(me().rol) && $('#ev-ini')) EvalsIni.mount($('#ev-ini')).catch(e => console.error(e));
     }
     async function start() {
         weekKeys = evalWeeksOfMonth(month).map(w => 'W' + w);
@@ -466,6 +479,133 @@ registerModule('evals', (() => {
     }
     return { render };
 })());
+
+// ---------------------------------------------------------------------------
+// EVALUACIONES INICIALES DE PRODUCTO (12, una por producto) · misma lógica de cruce que las semanales.
+// Cuentan TODOS los asesores que estuvieron en el mes, también los retirados (salen con franja roja clara).
+// Si las sube el administrador (o coordinador/gerente) quedan nacionales y las ven todos los formadores.
+// ---------------------------------------------------------------------------
+const EvalsIni = (() => {
+    const me = () => State.session;
+    let zonas = [], view = '', month = '', keys = [], weeks = {}, R = [], S = null, box = null;
+    const mk = () => month + '~ini';
+    const viewZonas = () => view ? [view] : zonas;
+    const label = () => view ? `Zona ${view}` : (isAllZones() ? 'Nacional' : (myRegional() && ['coordinador', 'gerente'].includes(me().rol) ? `Regional ${myRegional()}` : `Zona ${zonas[0] || ''}`));
+    const nm = k => EVAL_INI_NAME(k);
+    async function mount(container) {
+        box = container; zonas = scopedZones(); view = zonas.length === 1 ? zonas[0] : (zonas.includes(me().zona) ? me().zona : '');
+        month = todayStr().slice(0, 7); weeks = {};
+        box.innerHTML = `<details class="card acc ei-card" open><summary><span>🧪 Evaluaciones iniciales de producto <small class="mute">· ${EVAL_INICIAL.length} productos · todos los asesores del mes, también los retirados</small></span></summary>
+            <p class="mute">Sube la data de cada producto (nombre, cédula y nota). Igual que las semanales: cruza por cédula y por nombre, toma la nota más alta y abajo ves quién las lleva y quién no. Si la carga el administrador, la ven todos los formadores.</p>
+            <div class="row wrap" style="gap:10px;margin-top:10px;align-items:flex-end">
+                ${zonas.length > 1 ? `<label class="field-inline grow"><span class="lbl">Ámbito</span><select id="ei-zona" class="input"><option value="">Todo el alcance · ${zonas.length} zonas</option>${zonas.map(z => `<option value="${esc(z)}" ${z === view ? 'selected' : ''}>${esc(z)}</option>`).join('')}</select></label>` : ''}
+                <label class="field-inline"><span class="lbl">Mes</span><input type="month" id="ei-month" class="input" value="${month}"></label>
+            </div>
+            <div id="ei-slots" class="ev-slots"></div>
+            <p class="hint" id="ei-status"></p>
+            <div id="ei-out"></div></details>`;
+        if ($('#ei-zona', box)) $('#ei-zona', box).onchange = e => { view = e.target.value; start(); };
+        $('#ei-month', box).onchange = e => { month = e.target.value || month; start(); };
+        $('#ei-slots', box).addEventListener('change', e => { if (e.target.dataset.wi) onFile(e.target.dataset.wi, e.target.files[0]); });
+        $('#ei-slots', box).addEventListener('click', async e => { const b = e.target.closest('[data-deli]'); if (!b) return; const k = b.dataset.deli; if (!confirm(`¿Quitar la evaluación de ${nm(k)}? Se borra también de lo guardado.`)) return; delete weeks[k]; paintSlots(); compute(); await Evals.removeWeek(viewZonas(), mk(), k); toast(`${nm(k)} quitada.`, 'ok'); });
+        await start();
+    }
+    async function start() {
+        keys = EVAL_INICIAL.map(x => x[0]);
+        R = Evals.roster(viewZonas(), { retirados: month });
+        await Evals.load(viewZonas(), mk());
+        weeks = { ...Evals.weeksFor(viewZonas(), mk()) };
+        paintSlots(); compute();
+    }
+    function paintSlots() {
+        $('#ei-slots', box).innerHTML = keys.map(k => { const W = weeks[k]; return `<div class="ev-slot ${W ? 'on' : ''}"><b>${esc(nm(k))}</b>${W ? `<span class="ev-file" title="${esc(W.fileName || '')}">📄 ${esc((W.fileName || 'guardada').slice(0, 26))}<br><small>${W.matchedN != null ? W.matchedN : '…'}/${W.total || W.rows.length} cruzadas${W.nac ? ' · 🇨🇴 nacional' : ''}${W.saved ? ' · guardada ✅' : ' · guardando…'}</small></span><small class="ev-when">Última carga: ${W.uploadedAt ? esc(fechaHora(W.uploadedAt)) : '—'}${W.uploadedBy ? ' · ' + esc(W.uploadedBy) : ''}</small><button class="icon-btn" title="Quitar" data-deli="${k}">🗑️</button>` : '<span class="mute">Sin data</span>'}<label class="btn btn-ghost sm">📂 ${W ? 'Reemplazar' : 'Adjuntar'}<input type="file" data-wi="${k}" accept=".xlsx,.xls,.csv,.txt" hidden></label></div>`; }).join('');
+    }
+    async function onFile(k, file) {
+        if (!file) return;
+        $('#ei-status', box).textContent = `Leyendo ${file.name}…`;
+        try {
+            const nacional = Evals.canNacional(), allZ = State.zones.map(z => z.nombre);
+            const W = await Evals.processFile(file, Evals.rosterAll());
+            W.uploadedAt = Date.now(); W.uploadedBy = me().nombre; W.nac = false;
+            weeks[k] = W; paintSlots(); compute();
+            await Evals.saveWeeks(nacional ? allZ : scopedZones(), mk(), { [k]: W }, { uploadedBy: me().nombre, uploadedById: me().userId });
+            W.saved = true; if (nacional) { W.nac = true; weeks = { ...Evals.weeksFor(viewZonas(), mk()) }; }
+            paintSlots(); compute();
+            const unm = Object.keys(W.unmatched).length;
+            toast(`${nm(k)}${nacional ? ' (nacional)' : ''}: ${W.matchedN} de ${W.total} filas cruzadas${unm ? ` · ${unm} sin cruzar` : ''}`, unm ? 'warn' : 'ok', 6000);
+        } catch (e) { console.error(e); toast('No se pudo leer: ' + (e.message || e), 'error', 7000); $('#ei-status', box).textContent = 'No se pudo leer el archivo: ' + (e.message || e); }
+        finally { const i = $(`[data-wi="${k}"]`, box); if (i) i.value = ''; }
+    }
+    function editNota(key, k) {
+        const a = S && S.advisors.find(x => x.key === key); if (!a) return;
+        const s = a.weeks[k], o = Evals.ovr(mk(), key, k);
+        const m = openModal(`<h3 class="modal-title">✏️ ${esc(a.nombre)} · ${esc(nm(k))}</h3>
+            <p class="mute">${esc(a.tienda)} · ${o ? `ajustada a mano${o.by ? ' por ' + esc(o.by) : ''}` : s ? `según la data: ${s.best == null ? 'presentó (sin nota)' : 'nota ' + s.best}` : 'según la data: no la presentó'}</p>
+            <label class="lbl">Nota (0 a 100)</label><input class="input num" type="number" min="0" max="100" inputmode="numeric" id="ein-nota" value="${s && s.best != null ? s.best : ''}">
+            <div class="actions" style="margin-top:12px"><button class="btn btn-primary" data-ein="ok">💾 Guardar nota</button><button class="btn btn-ghost" data-ein="x">🚫 No la presentó</button>${o ? '<button class="btn btn-ghost" data-ein="del">↩️ Volver a la data</button>' : ''}</div>`);
+        const save = async val => { await Evals.setManual(mk(), key, k, val); closeModal(m); compute(); toast(val ? 'Nota ajustada ✅' : 'Ajuste quitado', 'ok'); };
+        $('[data-ein="ok"]', m).onclick = () => { const v = $('#ein-nota', m).value; if (v === '' || isNaN(+v)) return toast('Escribe la nota.', 'warn'); save({ nota: Math.max(0, Math.min(100, Math.round(+v))) }); };
+        $('[data-ein="x"]', m).onclick = () => save({ x: true });
+        if ($('[data-ein="del"]', m)) $('[data-ein="del"]', m).onclick = () => save(null);
+    }
+    function compute() {
+        const out = $('#ei-out', box); if (!out) return;
+        const loaded = keys.filter(k => weeks[k]);
+        if (!R.length) { out.innerHTML = '<div class="card empty">No hay asesores en el alcance.</div>'; return; }
+        if (!loaded.length) { S = null; out.innerHTML = `<p class="hint">Adjunta la data de al menos un producto. Asesores del mes en ${esc(label().toLowerCase())}: <b>${R.length}</b>${R.filter(a => a.retirado).length ? ` (${R.filter(a => a.retirado).length} retirados)` : ''}.</p>`; return; }
+        S = Evals.summarize(weeks, R, keys, mk());
+        const A = S.advisors.map(a => ({ ...a, hechas: loaded.filter(k => a.weeks[k]).length, faltan: loaded.filter(k => !a.weeks[k]) }));
+        const tot = A.length, comp = A.filter(a => !a.faltan.length).length, ret = A.filter(a => a.retirado), falt = sum(A.map(a => a.faltan.length));
+        const notas = A.flatMap(a => Object.values(a.weeks).map(x => x.best).filter(n => n != null)), prom = notas.length ? Math.round(sum(notas) / notas.length) : null;
+        const cls = n => n == null ? '' : n >= 80 ? 'ok' : n >= 70 ? 'warn' : 'bad', editor = me().rol === 'formador';
+        $('#ei-status', box).innerHTML = `${tot} asesores del mes (${tot - ret.length} activos · ${ret.length} retirados) · ${loaded.length} de ${keys.length} productos cargados`;
+        S.ini = { A, loaded, tot, comp, falt, prom, ret: ret.length };
+        out.innerHTML = `<section class="kpi-row">
+            <div class="kpi hl"><span>Asesores del mes</span><b>${tot}</b><small>${tot - ret.length} activos · ${ret.length} retirados</small></div>
+            <div class="kpi"><span>Al día</span><b>${comp}/${tot}</b><small>con las ${loaded.length} evaluaciones cargadas</small></div>
+            <div class="kpi ${falt ? 'warn' : ''}"><span>Evaluaciones faltantes</span><b>${falt}</b><small>en ${A.filter(a => a.faltan.length).length} asesores</small></div>
+            <div class="kpi"><span>Cumplimiento</span><b>${tot && loaded.length ? Math.round((tot * loaded.length - falt) / (tot * loaded.length) * 100) + '%' : '—'}</b><small>promedio de notas ${prom == null ? '—' : prom}</small></div></section>
+        <div class="grid2">
+            <section class="card"><h3 class="h3">Por producto</h3><div class="tbl-scroll"><table class="tbl compact"><thead><tr><th class="l">Producto</th><th>Presentaron</th><th>Faltan</th><th>Promedio</th></tr></thead><tbody>
+                ${S.perWeek.map(p => `<tr><td class="l"><b>${esc(nm(p.w))}</b></td><td>${p.done}/${tot}</td><td>${p.pend ? `<i class="pill warn">${p.pend}</i>` : '0'}</td><td>${p.prom == null ? '—' : `<i class="pill ${cls(p.prom)}">${p.prom}</i>`}</td></tr>`).join('')}</tbody></table></div></section>
+            <section class="card"><h3 class="h3">⏳ Quiénes faltan (${A.filter(a => a.faltan.length).length})</h3>
+                ${A.filter(a => a.faltan.length).length ? `<ul class="insights">${A.filter(a => a.faltan.length).sort((x, y) => y.faltan.length - x.faltan.length).map(a => `<li class="${a.retirado ? 'ei-ret-li' : ''}"><b>${esc(a.nombre)}</b> <small class="mute">${esc(a.tienda)}${a.retirado ? ' · retirado' : ''}</small>: faltan ${a.faltan.length} (${a.faltan.map(nm).map(esc).join(', ')})</li>`).join('')}</ul>` : '<p class="mute">✅ Todos llevan las evaluaciones cargadas.</p>'}</section>
+        </div>
+        <section class="card"><div class="row between wrap" style="gap:8px"><h3 class="h3">Detalle por asesor</h3><input class="input" id="ei-q" placeholder="🔎 Buscar asesor o tienda" style="max-width:260px"></div>
+            <p class="hint"><span class="ei-ret-tag">Retirado</span> = asesor que estuvo en el mes y ya se retiró: sí cuenta para tu medición.${editor ? ' ✏️ Toca una nota para corregirla.' : ''}</p>
+            <div class="tbl-scroll"><table class="tbl compact" id="ei-det"><thead><tr><th>PDV</th><th>Asesor</th><th>Cédula</th>${loaded.map(k => `<th title="${esc(nm(k))}">${esc(nm(k).replace(/^(NOTE|Note|HOT|SMART|GT|XPAD|XBUDS) /, m => m.charAt(0) + '. ').slice(0, 12))}</th>`).join('')}<th>Llevan</th></tr></thead><tbody>
+            ${A.map(a => `<tr class="${a.retirado ? 'ei-ret' : ''}" data-q="${esc(slug(a.nombre + ' ' + a.tienda))}"><td class="l"><small>${esc(a.tienda)}</small></td><td class="l"><b>${esc(a.nombre)}</b>${a.retirado ? ` <span class="ei-ret-tag">Retirado${a.retiroFecha ? ' ' + esc(a.retiroFecha.slice(8)) + '/' + esc(a.retiroFecha.slice(5, 7)) : ''}</span>` : ''}</td><td><small>${esc(a.cedula || '—')}</small></td>${loaded.map(k => { const s = a.weeks[k]; const t = !s ? '<b class="r">FALTA</b>' : s.best == null ? '✓' : `<i class="pill ${cls(s.best)}">${s.best}</i>`; return `<td>${editor ? `<button class="ev-n" data-eki="${esc(a.key)}" data-ewi="${k}">${t}${s && s.manual ? ' ✏️' : ''}</button>` : t}</td>`; }).join('')}<td><b class="${a.faltan.length ? 'r' : 'g'}">${a.hechas}/${loaded.length}</b></td></tr>`).join('')}
+            </tbody></table></div></section>
+        <div class="actions" id="ei-act"><button class="btn btn-ghost" data-act="preview">👁️ Vista previa</button><button class="btn btn-wa" data-act="share">📲 WhatsApp</button><button class="btn btn-primary" data-act="save">⬇️ Descargar</button></div>`;
+        const q = $('#ei-q', out); q.oninput = () => { const t = slug(q.value); $$('#ei-det tbody tr', out).forEach(tr => { tr.hidden = !!t && !tr.dataset.q.includes(t); }); };
+        if (editor) $$('[data-eki]', out).forEach(b => b.onclick = () => editNota(b.dataset.eki, b.dataset.ewi));
+        ReportActions.bind($('#ei-act', out), {
+            title: 'Evaluaciones iniciales · Central de Operaciones', noStore: true,
+            filename: () => `Evaluaciones_iniciales_${slug(label())}_${month}.png`,
+            build: stage => buildEvalsIniCanvas(stage, { label: label(), month, S, autor: me() })
+        });
+    }
+    return { mount };
+})();
+function buildEvalsIniCanvas(stage, d) {
+    const { A, loaded, tot, comp, falt, prom, ret } = d.S.ini, nm = EVAL_INI_NAME, cls = n => n == null ? '' : n >= 80 ? 'g' : n >= 70 ? 'a' : 'r';
+    const el = document.createElement('div'); el.className = 'rp sp aud';
+    el.innerHTML = `<div class="rp-bar"></div>
+    <header class="rp-head"><img class="rp-logo" src="${LOGO_INFINIX}" alt="Infinix">
+        <div class="rp-head-mid"><div class="rp-kicker">EVALUACIONES INICIALES DE PRODUCTO · FORMACIÓN</div><div class="rp-title">${esc(d.label.toUpperCase())}</div><div class="rp-sub">${esc(mesLargo(d.month))} · ${loaded.length} de ${EVAL_INICIAL.length} productos cargados · ${tot} asesores del mes (${ret} retirados)</div></div>
+        <div class="pl-who"><b>${esc(d.autor.nombre)}</b><small>${ROLES[d.autor.rol] ? ROLES[d.autor.rol].label : ''}</small></div></header>
+    <div class="sp-band">
+        <div class="hero ${falt ? 'r' : ''}"><span>CUMPLIMIENTO</span><b>${tot && loaded.length ? Math.round((tot * loaded.length - falt) / (tot * loaded.length) * 100) + '%' : '—'}</b><em>${tot * loaded.length - falt} de ${tot * loaded.length} evaluaciones</em></div>
+        <div class="ok"><span>Al día</span><b>${comp}<small style="font-size:20px">/${tot}</small></b><em>asesores completos</em></div>
+        <div class="${falt ? 'bad' : 'ok'}"><span>Faltantes</span><b>${falt}</b><em>en ${A.filter(a => a.faltan.length).length} asesores</em></div>
+        <div><span>Promedio</span><b>${prom == null ? '—' : prom}</b><em>de las notas</em></div>
+    </div>
+    <div class="rp-sec">DETALLE POR ASESOR (RETIRADOS EN ROJO CLARO)</div>
+    <table class="rp-tbl sp-tbl"><thead><tr><th class="l">PDV</th><th class="l">ASESOR</th>${loaded.map(k => `<th>${esc(nm(k))}</th>`).join('')}<th class="c-tot">LLEVA</th></tr></thead><tbody>
+    ${A.map(a => `<tr class="${a.retirado ? 'ei-ret' : ''}"><td class="l small">${esc(a.tienda)}</td><td class="l"><b>${esc(a.nombre)}</b>${a.retirado ? ' <small>(retirado)</small>' : ''}</td>${loaded.map(k => { const s = a.weeks[k]; return `<td class="${!s ? 'r' : cls(s.best)}">${!s ? 'FALTA' : s.best == null ? '✓' : s.best}</td>`; }).join('')}<td class="c-tot ${a.faltan.length ? 'r' : 'g'}"><b>${a.hechas}/${loaded.length}</b></td></tr>`).join('')}</tbody></table>
+    <footer class="rp-foot"><span>Cuentan todos los asesores que estuvieron en el mes, también los retirados. Cruce por cédula y nombre; con varias presentaciones se toma la mejor nota (0–100).</span><b>Infinix · Central de Operaciones</b></footer><div class="rp-bar"></div>`;
+    stage.appendChild(el); return el;
+}
 
 // ----------------------------------------------------------------------------
 // LIENZO · REPORTE DE EVALUACIONES (1080 px, vertical)

@@ -3,7 +3,7 @@
 // Todo lo editable por negocio vive en este archivo.
 // ============================================================================
 
-const OPS_VERSION = '1.20.2';
+const OPS_VERSION = '1.21.0';
 const APP_NAME = 'Central de Operaciones';
 
 // --- Firebase: proyecto propio de OpsCore -------------------------------------
@@ -59,7 +59,7 @@ const ROLES = {
     asesor:      { label: 'Tienda (PDV)',  modules: ['m1', 'parcial', 'central', 'calc', 'obseq', 'adm', 'm5'] },
     supervisor:  { label: 'Supervisor',    modules: ['zona', 'reportes', 'm2', 'm3', 'datos', 'ventas', 'm4', 'm5', 'admin'] },      // sin evaluaciones
     formador:    { label: 'Formador',      modules: ['zona', 'reportes', 'm2', 'm3', 'evals', 'datos', 'ventas', 'm4', 'm5', 'admin'] },
-    coordinador: { label: 'Coordinador',   modules: ['zona', 'reportes', 'evals', 'datos', 'ventas', 'm4', 'm5', 'admin'] },          // no hace plan ni visita: analiza y consulta reportes
+    coordinador: { label: 'Coordinador',   modules: ['zona', 'reportes', 'evals', 'm3', 'datos', 'ventas', 'm4', 'm5', 'admin'] },          // no hace plan ni visita: analiza y consulta reportes
     gerente:     { label: 'Gerente',       modules: ['reportes', 'zona', 'datos', 'ventas', 'm4', 'm5', 'admin'] },
     admin:       { label: 'Administrador', modules: ['zona', 'reportes', 'm2', 'm3', 'evals', 'datos', 'ventas', 'm4', 'm5', 'admin'] }
 };
@@ -124,6 +124,9 @@ const INFINIX_ACCESSORIES = [
 
 // Catálogo completo para elegir en listas (samples, exhibición): portafolio vigente, accesorios y referencias anteriores
 // que algunas tiendas aún tienen en sample o inventario. En los reportes solo salen las referencias con target.
+// Evaluaciones iniciales de producto (las 12 que presenta cada asesor al llegar): una carga por producto.
+const EVAL_INICIAL = [['P01', 'SMART 20'], ['P02', 'HOT 70'], ['P03', 'HOT 70 Pro 5G'], ['P04', 'Note EDGE'], ['P05', 'NOTE 60'], ['P06', 'Note 60 Pro'], ['P07', 'GT 50 PRO'], ['P08', 'NOTE 60 ULTRA'], ['P09', 'HOT 60 Pro+'], ['P10', 'XPAD 30E'], ['P11', 'XBUDS H5'], ['P12', 'GT WATCH 5 PRO']];
+const EVAL_INI_NAME = k => (EVAL_INICIAL.find(x => x[0] === k) || [k, k])[1];
 // Referencias que ya no se venden (sin target). Si la tienda aún tiene unidades, se registran como "referencia obsoleta".
 const REFS_OBSOLETAS = ['SMART 10', 'NOTE 50S', 'NOTE 50 PRO', 'NOTE 50', 'HOT 60 Pro+', 'HOT 60i', 'HOT 50', 'GT 30', 'GT 30 Pro'];
 const CATALOGO_INFINIX = INFINIX_MODELS.map(m => m.name).concat(['XPAD 30E', 'XBUDS H5', 'GT WATCH 5 PRO', 'HOT 60i', 'SMART 10', 'GT 30', 'GT 30 Pro']);

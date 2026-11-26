@@ -9,7 +9,7 @@ registerModule('m3', (() => {
     let fecha = todayStr(), modo = 'supervisor', storeId = '', fotos = [null, null, null], minis = [null, null, null];
     let F = null;                                   // estado del formulario
     // Visitas del plan de trabajo de hoy: la tienda, los asesores y las acciones ya vienen del plan (modo rápido)
-    let plan = null, planRow = null, quick = false, visHoy = [];
+    let plan = null, planRow = null, quick = false, visHoy = [], stCl = [];
     const me = () => State.session;
     const fresh = () => ({
         promotores: [], promExtra: '', auto: false, corte: '',
@@ -28,15 +28,15 @@ registerModule('m3', (() => {
     function render(view) {
         fecha = todayStr(); F = fresh(); fotos = [null, null, null]; minis = [null, null, null]; storeId = '';
         const rol = me().rol;
-        modo = rol === 'formador' ? 'formador' : 'supervisor';
-        const canSwitch = ['coordinador', 'admin'].includes(rol);
+        modo = rol === 'formador' ? 'formador' : rol === 'coordinador' ? 'coord' : 'supervisor';
+        const canSwitch = rol === 'admin';
         view.innerHTML = `
         <section class="card">
             <div class="row between wrap">
                 <div><h2 class="h2">Reporte de visita en PDV</h2><p class="mute">${esc(me().nombre)} · ${ROLES[rol].label}</p></div>
                 <label class="field-inline"><span class="lbl">Fecha</span><input type="date" id="m3-fecha" class="input" value="${fecha}" max="${todayStr()}"></label>
             </div>
-            ${canSwitch ? `<div class="seg" style="margin-top:12px"><button class="seg-btn" data-modo="supervisor">Modo Supervisión</button><button class="seg-btn" data-modo="formador">Modo Formación</button></div>` : ''}
+            ${canSwitch ? `<div class="seg" style="margin-top:12px"><button class="seg-btn" data-modo="supervisor">Modo Supervisión</button><button class="seg-btn" data-modo="formador">Modo Formación</button><button class="seg-btn" data-modo="coord">Modo Coordinador</button></div>` : ''}
             <div id="m3-plan"></div>
             <label class="lbl" id="m3-store-l">Punto de venta visitado</label>
             <select id="m3-store" class="input"><option value="">Selecciona una tienda…</option>${scopedStores().map(s => `<option value="${esc(s.id)}">${esc(s.tienda)} · ${esc(s.ciudad || '')}</option>`).join('')}</select>
@@ -105,6 +105,7 @@ registerModule('m3', (() => {
     }
     function paintPlan() {
         const box = $('#m3-plan'); if (!box) return;
+        if (modo === 'coord') { box.innerHTML = ''; return; }
         const L = plan && plan.stores ? plan.stores.filter(r => !(plan.visitOff || []).includes(r.storeId) && storeById(r.storeId)) : [];
         const lbl = $('#m3-store-l'); if (lbl) lbl.textContent = L.length ? '¿Visitaste otra tienda que no estaba en el plan? Agrégala aquí' : 'Punto de venta visitado';
         if (!L.length) { box.innerHTML = `<div class="pv-empty">📋 ${plan ? 'Ya quitaste todas las tiendas del plan de hoy.' : 'Aún no tienes plan de trabajo para esta fecha.'} Con el plan armado, aquí te aparecen las visitas listas: solo fotos, venta del día y si hiciste lo planeado. ${plan ? '' : '<button type="button" class="btn btn-link sm" id="m3-gotoplan">Armar plan →</button>'}</div>`; return; }
@@ -127,7 +128,7 @@ registerModule('m3', (() => {
             // completan competencia, share e inventario. Antes, con un solo cierre en el mes se ignoraba la DCR.
             let Z = null; try { await ZoneData.load(st.zona, ym); Z = ZoneData.forStore(st.id); } catch (e) { }
             const zOk = !!(Z && Z.month === ym);
-            const cl = await fetchStoreClosures(id, fecha);
+            const cl = await fetchStoreClosures(id, fecha); stCl = cl;
             const last = cl.filter(c => c.storeId === id && c.fecha <= fecha && c.fecha.slice(0, 7) === ym).map(c => c.fecha).sort().pop();
             const c = last ? computeStore(st, cl, last) : null;
             const m = st.manual && st.manual.month === ym ? st.manual : null;
@@ -204,6 +205,7 @@ registerModule('m3', (() => {
         const body = $('#m3-body'); if (!body) return;
         const st = storeById(storeId);
         if (!st) { body.innerHTML = `<div class="card empty">${plan && (plan.stores || []).length ? 'Toca arriba la tienda que estás visitando.' : 'Selecciona el punto de venta para iniciar el reporte.'}</div>`; return; }
+        if (modo === 'coord') return paintCoord(body, st);
         if (quick && F.planAcciones) return paintQuick(body, st);
         const n = (f, v, ro) => `<input class="input num" type="number" inputmode="numeric" min="0" data-f="${f}" value="${v ?? 0}" ${ro ? 'readonly tabindex="-1"' : ''}>`;
         const rng = (f, v) => `<div class="rng"><input type="range" min="1" max="5" step="1" data-f="${f}" value="${v}"><output data-out="${f}">${v}</output></div>`;
@@ -282,6 +284,49 @@ registerModule('m3', (() => {
             build: stage => buildVisitCanvas(stage, buildDoc(), fotos),
             persist,
             noStore: true                       // la visita ya tiene su propio botón de guardar
+        });
+    }
+
+    // ---- Visita del coordinador: corta, solo la radiografía de la tienda y de sus asesores + 3 fotos -------------
+    function coordData(st) {
+        const ym = fecha.slice(0, 7), Z = ZoneData.forStore(st.id), dim = daysInMonth(ym), day = Z && Z.corte ? Math.max(1, int(Z.corte.slice(8))) : Math.max(1, int(fecha.slice(8)));
+        const meta = storeMetaMes(st), venta = Z ? int(Z.total) : int(F.ventaMes), proy = Math.round(venta / day * dim), hc = +(st.hc && st.hc.INFINIX) || Math.max(1, activeAdvisors(st).length);
+        const D = (typeof Advisor !== 'undefined' ? Advisor.forStore(st) : []).slice().sort((a, b) => b.pacing.venta - a.pacing.venta);
+        const refs = storeRefs(st).map(m => { const mt = int((st.metas || {})[m.key]), v = int(((Z || {}).ventas || {})[m.key]); return { name: m.name, meta: mt, v, c: mt ? v / mt : null }; });
+        const top = refs.slice().sort((a, b) => b.v - a.v)[0], rez = refs.filter(r => r.meta).sort((a, b) => a.c - b.c)[0];
+        // Infinix vs competencia: lo que reportan los asesores en sus cierres del mes
+        const rep = {}; stCl.filter(c => c.storeId === st.id && (c.fecha || '').slice(0, 7) === ym).forEach(c => { rep.INFINIX = (rep.INFINIX || 0) + closureInfinix(c); Object.entries(c.competencia || {}).forEach(([b, v]) => { rep[b] = (rep[b] || 0) + int(v); }); });
+        const vs = RealData.shareOf(rep);
+        // Share real (data de la cadena) y referencias más vendidas de la tienda
+        const R = typeof RealData !== 'undefined' ? RealData.forStore(st, ym) : null, real = R ? RealData.shareOf(R.marcas) : null;
+        const topReal = R ? Object.entries(R.refs || {}).map(([k, q]) => { const [marca, ref] = k.split('|'); return { marca, ref, q }; }).sort((a, b) => b.q - a.q).slice(0, 5) : [];
+        return { st, ym, Z, meta, venta, proy, hc, roi: venta / hc, roiP: proy / hc, cumpl: meta ? venta / meta : null, cumplP: meta ? proy / meta : null, D, top, rez, vs, real, topReal, R, corte: Z && Z.corte };
+    }
+    function paintCoord(body, st) {
+        const C = coordData(st), pc = v => v == null ? '—' : Math.round(v * 100) + '%';
+        body.innerHTML = `
+        <section class="card"><div class="row">${storeLogo(st)}<div class="grow"><b>${esc(st.tienda)}</b><p class="mute">${esc(st.ciudad || '')} · ${esc(st.zona || '')}${C.corte ? ` · venta DCR al ${esc(C.corte.slice(8))}/${esc(C.corte.slice(5, 7))}` : ''}</p></div></div></section>
+        <section class="kpi-row">
+            <div class="kpi hl"><span>Venta del mes</span><b>${C.venta}</b><small>meta ${C.meta || '—'} · ${pc(C.cumpl)}</small></div>
+            <div class="kpi"><span>Proyección</span><b>${C.proy}</b><small>${pc(C.cumplP)} de la meta</small></div>
+            <div class="kpi"><span>ROI</span><b>${fmt1(C.roi)}</b><small>proyectado ${fmt1(C.roiP)} · HC ${fmt1(C.hc)}</small></div>
+            <div class="kpi"><span>Share (cierres)</span><b>${pc(C.vs.share)}</b><small>${C.vs.pos ? `Infinix #${C.vs.pos} de ${C.vs.rank.length}` : 'sin cierres con competencia'}</small></div>
+        </section>
+        <section class="card"><h3 class="h3">👥 Asesores</h3><div class="cv-ads">${C.D.map(d => `<div class="cv-ad">${advisorAvatar(st.id, d.nombre, 46)}<div><b>${esc(d.nombre.split(' ').slice(0, 2).join(' '))}</b><small>${d.pacing.venta} de ${d.pacing.meta || '—'} · ${pc(d.pacing.cumpl)} · proy. ${pc(d.pacing.proyCumpl)}</small>${typeof incentivoTag === 'function' ? incentivoTag(d) : ''}</div></div>`).join('') || '<p class="mute">Sin asesores con venta en la data.</p>'}</div></section>
+        <div class="grid2">
+            <section class="card"><h3 class="h3">⚔️ Infinix vs competencia <small class="mute">cierres</small></h3>${C.vs.tot ? brandBars(C.vs.rank, C.vs.tot, 6) : '<p class="mute">Sin cierres con venta de la competencia este mes.</p>'}</section>
+            ${C.real ? `<section class="card"><h3 class="h3">📊 Share real <small class="mute">data ${esc(C.R.chain)}</small></h3><p><b>${pc(C.real.share)}</b> · Infinix #${C.real.pos || '—'} de ${C.real.rank.length} marcas</p>${C.topReal.length ? `<ol class="cv-top">${C.topReal.map(r => `<li class="${r.marca === 'INFINIX' ? 'inf' : ''}"><b>${esc(r.ref)}</b> <small>${esc(r.marca)}</small> <em>${r.q}</em></li>`).join('')}</ol>` : ''}</section>` : ''}
+        </div>
+        <section class="card"><h3 class="h3">📱 Referencias Infinix</h3><p>🏆 Más vendida: <b>${C.top && C.top.v ? `${esc(C.top.name)} (${C.top.v})` : '—'}</b> · 🐢 Más rezagada: <b class="r">${C.rez ? `${esc(C.rez.name)} (${C.rez.v} de ${C.rez.meta})` : '—'}</b></p></section>
+        <section class="card"><h3 class="h3">📷 Fotos de la visita (hasta 3)</h3>
+            <div class="foto-grid">${[0, 1, 2].map(i => fotos[i] ? `<div class="foto"><img src="${fotos[i]}" alt="Foto ${i + 1}"><button type="button" data-rmfoto="${i}">✕</button></div>` : `<label class="foto add"><input type="file" accept="image/*" data-foto="${i}" hidden><span>＋<small>Foto ${i + 1}</small></span></label>`).join('')}</div>
+            <textarea class="input" rows="2" style="margin-top:8px" data-f="notaRapida" placeholder="Comentario (opcional)">${esc(F.notaRapida || '')}</textarea></section>
+        ${actionBarHTML()}`;
+        ReportActions.bind(body, {
+            title: 'Visita del coordinador · Central de Operaciones',
+            filename: () => `Visita_coordinador_${slug(st.tienda)}_${fecha}.png`,
+            build: stage => buildCoordVisitCanvas(stage, coordData(st), fotos, { fecha, autor: me(), nota: F.notaRapida || '' }),
+            persist: async () => { F.gestion = F.gestion || `Visita del coordinador. ${F.notaRapida || ''}`.trim(); return persist(); }
         });
     }
 
@@ -540,4 +585,33 @@ function buildVisitCanvas(stage, doc, fotos) {
         Charts.ring($('#rv-eval', el), [p, 100 - p], [p >= 80 ? THEME.green : p >= 60 ? THEME.amber : THEME.red, THEME.line]);
     }
     return el;
+}
+
+// Lienzo · visita del coordinador (una sola imagen, corta)
+function buildCoordVisitCanvas(stage, C, fotos, o) {
+    const pc = v => v == null ? '—' : Math.round(v * 100) + '%', st = C.st, cls = v => v == null ? '' : v >= 1 ? 'g' : v >= .85 ? 'g2' : v >= .7 ? 'a' : 'r';
+    const el = document.createElement('div'); el.className = 'rp sp cvr';
+    el.innerHTML = `<div class="rp-bar"></div>
+    <header class="rp-head"><img class="rp-logo" src="${LOGO_INFINIX}" alt="Infinix">
+        <div class="rp-head-mid"><div class="rp-kicker">VISITA DEL COORDINADOR · RADIOGRAFÍA DEL PDV</div><div class="rp-title">${esc(st.tienda.toUpperCase())}</div><div class="rp-sub">${esc(fechaLarga(o.fecha))} · ${esc(st.zona || '')}${C.corte ? ' · venta DCR al ' + esc(C.corte.slice(8)) + '/' + esc(C.corte.slice(5, 7)) : ''}</div></div>
+        <div class="pl-who"><b>${esc(o.autor.nombre)}</b><small>${ROLES[o.autor.rol] ? ROLES[o.autor.rol].label : ''}</small></div></header>
+    <div class="sp-band">
+        <div class="hero"><span>VENTA DEL MES</span><b>${C.venta}<small style="font-size:26px;color:#CBD5E1">/${C.meta || '—'}</small></b><em>${pc(C.cumpl)} de la meta · proyección ${C.proy} (${pc(C.cumplP)})</em></div>
+        <div><span>ROI</span><b>${fmt1(C.roi)}</b><em>proyectado ${fmt1(C.roiP)}</em></div>
+        <div><span>Share cierres</span><b>${pc(C.vs.share)}</b><em>${C.vs.pos ? 'Infinix #' + C.vs.pos + ' de ' + C.vs.rank.length : 'sin cierres'}</em></div>
+        ${C.real ? `<div><span>Share real</span><b>${pc(C.real.share)}</b><em>Infinix #${C.real.pos || '—'} de ${C.real.rank.length}</em></div>` : ''}
+        <div><span>Más vendida</span><b style="font-size:20px">${C.top && C.top.v ? esc(C.top.name) : '—'}</b><em>${C.top && C.top.v ? C.top.v + ' uds' : ''}</em></div>
+        <div class="bad"><span>Más rezagada</span><b style="font-size:20px">${C.rez ? esc(C.rez.name) : '—'}</b><em>${C.rez ? `${C.rez.v} de ${C.rez.meta}` : ''}</em></div>
+    </div>
+    <div class="rp-sec">ASESORES</div>
+    <table class="rp-tbl sp-tbl"><thead><tr><th class="l">ASESOR</th><th>META</th><th>VENTA</th><th>CUMPL.</th><th>PROY.</th><th class="l">INCENTIVOS</th></tr></thead><tbody>
+    ${C.D.map(d => `<tr><td class="l"><div class="sp-pdv">${advisorAvatar(st.id, d.nombre, 34)}<b>${esc(d.nombre.split(' ').slice(0, 3).join(' '))}</b></div></td><td>${d.pacing.meta || '—'}</td><td><b>${d.pacing.venta}</b></td><td class="c-tot ${cls(d.pacing.cumpl)}">${pc(d.pacing.cumpl)}</td><td>${Math.round(d.pacing.proy || 0)} <small>(${pc(d.pacing.proyCumpl)})</small></td><td class="l">${typeof incentivoTag === 'function' ? incentivoTag(d) : ''}</td></tr>`).join('')}</tbody></table>
+    <div class="cv-two">
+        <div><div class="rp-sec">INFINIX VS COMPETENCIA · CIERRES</div>${C.vs.tot ? brandBars(C.vs.rank, C.vs.tot, 6) : '<p class="rp-pad mute">Sin cierres con competencia.</p>'}</div>
+        ${C.topReal.length ? `<div><div class="rp-sec">TOP 5 REFERENCIAS · DATA REAL</div><ol class="cv-top rp-pad">${C.topReal.map(r => `<li class="${r.marca === 'INFINIX' ? 'inf' : ''}"><b>${esc(r.ref)}</b> <small>${esc(r.marca)}</small> <em>${r.q}</em></li>`).join('')}</ol></div>` : ''}
+    </div>
+    ${(fotos || []).filter(Boolean).length ? `<div class="rp-sec">FOTOS DE LA VISITA</div><div class="cv-fotos">${fotos.filter(Boolean).map(f => `<img src="${f}" alt="Foto">`).join('')}</div>` : ''}
+    ${o.nota ? `<p class="rp-pad"><b>Comentario:</b> ${esc(o.nota)}</p>` : ''}
+    <footer class="rp-foot"><span>Venta y ROI de la data DCR; share de los cierres de los asesores y, si la cadena la envía, de la data real.</span><b>Infinix · Central de Operaciones</b></footer><div class="rp-bar"></div>`;
+    stage.appendChild(el); return el;
 }

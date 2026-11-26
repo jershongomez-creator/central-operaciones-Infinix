@@ -6,6 +6,7 @@ registerModule('reportes', (() => {
     const GROUPS = [
         ['📈 Venta', [
             ['ventas', 'refs', '📱', 'Venta por referencia e inventario', 'Cada asesor con inventario y venta por referencia, meta del día y cumplimiento.'],
+            ['ventas', 'explorar', '🔎', 'Explorador de venta (piloto)', 'Arma tu reporte: asesores, tiendas, cadenas o zonas por referencia y rango de fechas.'],
             ['ventas', 'dia', '📅', 'Venta día a día', 'Venta de hoy o de un rango por asesor, con meta del día y crecimiento vs semana anterior.'],
             ['m4', 'resumen', '🧮', 'Resumen de venta por tienda, cadena y zona', 'Indicadores, ranking de tiendas y tablas por cadena y por zona.'],
             ['zona', 'reportes', '🖼️', 'Reporte de zona (imagen para WhatsApp)', 'El resumen de la zona listo para compartir.']
